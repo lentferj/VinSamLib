@@ -35,22 +35,24 @@ from . import workers
 from .bank_pane import _FORMAT_EXT, _sanitize_bank_name
 from .convert_options_dialog import ConvertOptionsDialog
 from ..banks import e4b, krz
-from ..build.convert import ConversionOptions, apply_conversion
+from ..build.convert import apply_conversion
 
 _PENDING_TEMP_PREFIX = "vinsamlib_pending_"
 
 
-def _assemble_all(pending: list[dict], convert_opts: Optional[ConversionOptions] = None) -> list[str]:
+def _assemble_all(pending: list[dict]) -> list[str]:
     """Runs off the GUI thread: assemble every pending bank's real bytes
     and write each to its own throwaway temp file, in order. Raising here
     (e.g. one bank's selection no longer resolves) aborts the whole build
     rather than handing the Image column a partial, out-of-order set.
 
-    convert_opts, when set, is run through build/convert.py's own
-    parse -> Bank -> resample/reduce -> write round trip on top of the
-    just-assembled E4B temp file, replacing it with the processed
-    version before it's handed onward -- never applied to KRZ (mpc2emu
-    has no .krz *input* parser, so there is no round trip possible)."""
+    Each entry carries its own "convert_opts" (per-bank, not global --
+    see pending_pane.py's _show_convert_options()); when set, it's run
+    through build/convert.py's own parse -> Bank -> resample/reduce ->
+    write round trip on top of the just-assembled E4B temp file,
+    replacing it with the processed version before it's handed onward
+    -- never applied to KRZ (mpc2emu has no .krz *input* parser, so
+    there is no round trip possible)."""
     paths: list[str] = []
     for entry in pending:
         fmt = entry["format"]
@@ -63,6 +65,7 @@ def _assemble_all(pending: list[dict], convert_opts: Optional[ConversionOptions]
         tmp_path = tmp_dir / f"{name}.{ext}"
         tmp_path.write_bytes(data)
         final_path = str(tmp_path)
+        convert_opts = entry.get("convert_opts")
         if fmt == "E4B" and convert_opts is not None:
             final_path = apply_conversion(final_path, convert_opts)
         paths.append(final_path)
@@ -79,7 +82,6 @@ class PendingBanksPane(QWidget):
 
         self._pending: list[dict[str, Any]] = []
         self._format: Optional[str] = None
-        self._convert_opts: Optional[ConversionOptions] = None
         self._live_workers: list[workers.Worker] = []
 
         layout = QVBoxLayout(self)
@@ -210,8 +212,10 @@ class PendingBanksPane(QWidget):
             return False
         if self._format is None:
             self._format = fmt
-        self._pending.append({"name": name or "NewBank", "format": fmt, "items": list(items)})
+        self._pending.append({"name": name or "NewBank", "format": fmt, "items": list(items),
+                               "convert_opts": None})
         self._refresh()
+        self._list.setCurrentRow(len(self._pending) - 1)
         self.statusMessage.emit(f'Added "{name}" to the pending queue')
         return True
 
@@ -230,13 +234,14 @@ class PendingBanksPane(QWidget):
         self._convert_btn.setToolTip(
             "mpc2emu has no KRZ reader; vintage resample/reduce is E4B-only" if is_krz
             else "Choose vintage resample / sample-count reduction to apply "
-                 "to every E4B bank on the next Build Image")
-        if is_krz and self._convert_opts is not None:
-            self._convert_opts = None
+                 "to the SELECTED pending bank's next Build Image (per bank, "
+                 "not the whole queue)")
         self._update_contents_preview()
 
     def _make_item(self, entry: dict) -> QListWidgetItem:
         label = f"{entry['name']}  [{entry['format']}]  — {len(entry['items'])} preset(s)"
+        if entry.get("convert_opts") is not None:
+            label += "  · processing set"
         widget_item = QListWidgetItem(label)
         widget_item.setData(Qt.ItemDataRole.UserRole, entry)
         return widget_item
@@ -375,14 +380,21 @@ class PendingBanksPane(QWidget):
     # -- conversion options -------------------------------------------------------
 
     def _show_convert_options(self) -> None:
-        opts = ConvertOptionsDialog.get_options(self)
+        row = self._list.currentRow()
+        if row < 0:
+            self.statusMessage.emit("Select a pending bank first")
+            return
+        entry = self._pending[row]
+        opts = ConvertOptionsDialog.get_options(self, initial=entry.get("convert_opts"))
         if opts is None:
-            return   # Cancel -- leave whatever was already chosen untouched
-        self._convert_opts = None if opts.is_noop() else opts
+            return   # Cancel -- leave whatever was already chosen for this bank untouched
+        entry["convert_opts"] = None if opts.is_noop() else opts
+        self._refresh()
+        self._list.setCurrentRow(row)
         self.statusMessage.emit(
-            "Will apply vintage resample/reduce to E4B banks on the next Build Image"
-            if self._convert_opts is not None
-            else "Conversion options cleared — building unprocessed banks again")
+            f'Will apply vintage resample/reduce to "{entry["name"]}" on the next Build Image'
+            if entry["convert_opts"] is not None
+            else f'Conversion options cleared for "{entry["name"]}"')
 
     # -- build ------------------------------------------------------------------
 
@@ -393,7 +405,7 @@ class PendingBanksPane(QWidget):
         pending_snapshot = list(self._pending)
         self._build_btn.setEnabled(False)
         self.statusMessage.emit(f"Assembling {len(pending_snapshot)} pending bank(s)…")
-        w = workers.Worker(_assemble_all, pending_snapshot, self._convert_opts)
+        w = workers.Worker(_assemble_all, pending_snapshot)
         w.signals.finished.connect(lambda paths, f=fmt: self._on_build_assembled(paths, f))
         w.signals.error.connect(self._on_build_error)
         w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)

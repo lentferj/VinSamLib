@@ -33,7 +33,7 @@ _DEFAULT_REDUCE_PCT = 30
 
 
 class ConvertOptionsDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial: Optional[ConversionOptions] = None):
         super().__init__(parent)
         self.setWindowTitle("Convert Options")
         self.setMinimumWidth(420)
@@ -58,6 +58,29 @@ class ConvertOptionsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+        if initial is not None:
+            self._apply_initial(initial)
+
+    def _apply_initial(self, opts: ConversionOptions) -> None:
+        """Re-opening for a bank that already has options set (per-bank
+        storage, see pending_pane.py) should show its current choice, not
+        silently reset to defaults."""
+        if opts.resample_profile is not None:
+            self._resample_group.setChecked(True)
+            idx = self._profile_keys.index(opts.resample_profile)
+            self._profile_box.setCurrentIndex(idx)
+            self._bandpass_check.setChecked(not opts.no_bandpass)
+            self._keep_gain_check.setChecked(opts.resample_keep_gain)
+            if opts.max_sample_rate:
+                self._max_rate_check.setChecked(True)
+                self._max_rate_spin.setValue(opts.max_sample_rate)
+        if opts.reduce_key_zones_pct > 0:
+            self._key_zone_group.setChecked(True)
+            self._key_zone_slider.setValue(int(opts.reduce_key_zones_pct))
+        if opts.reduce_velocity_layers_pct > 0:
+            self._velocity_group.setChecked(True)
+            self._velocity_slider.setValue(int(opts.reduce_velocity_layers_pct))
 
     # -- Group A: Vintage Resample --------------------------------------------
 
@@ -179,11 +202,14 @@ class ConvertOptionsDialog(QDialog):
         )
 
     @staticmethod
-    def get_options(parent=None) -> Optional[ConversionOptions]:
+    def get_options(parent=None, initial: Optional[ConversionOptions] = None) -> Optional[ConversionOptions]:
         """Modal convenience entry point, matching this codebase's other
         static dialog helpers (QInputDialog.getText(), QFileDialog.get...).
-        Returns None on Cancel, a populated ConversionOptions on OK."""
-        dialog = ConvertOptionsDialog(parent)
+        Returns None on Cancel, a populated ConversionOptions on OK.
+        `initial`, when given, pre-fills the dialog with an already-chosen
+        set of options (e.g. reopening for a pending bank that already has
+        its own conversion choice -- see pending_pane.py)."""
+        dialog = ConvertOptionsDialog(parent, initial=initial)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog._to_options()
