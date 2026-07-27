@@ -420,7 +420,8 @@ def parse(path: str) -> EIIIFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
-def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x") -> bytes:
+def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x",
+             bank_name: str | None = None) -> bytes:
     """Build a new EIII bank from selected (source_bank, preset) pairs.
 
     Each preset's every linked segment is copied verbatim; only each
@@ -434,6 +435,11 @@ def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x"
     `variant`: 'e3x' (EMULATOR_3X, default — also what the E4XT's backward-
     compatibility loader reads) or 'esi' (ESI_32_V3). EMULATOR_THREE is
     never a write target here (see WRITE_FORMATS / the module docstring).
+
+    `bank_name`: written into the new bank's own internal name field
+    (offset `BANK_NAME` — unlike E4B/KRZ, whose only "name" a real device
+    ever shows is the filename, EIII stores one on disk). Defaults to the
+    first selected preset's source bank's own name when not given.
     """
     if not selections:
         raise ValueError("no presets selected")
@@ -441,7 +447,8 @@ def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x"
     if fmt is None:
         raise ValueError(f"unknown EIII write variant {variant!r}, expected one of {sorted(WRITE_FORMATS)}")
 
-    bank_name = selections[0][0].name or "NewBank"
+    if bank_name is None:
+        bank_name = selections[0][0].name or "NewBank"
 
     new_sample_bodies: list[bytes] = []
     new_sample_names: list[str] = []

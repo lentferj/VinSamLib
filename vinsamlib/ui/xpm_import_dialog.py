@@ -1,6 +1,7 @@
 """
-Import-with-format-choice dialog: target format (E4B/KRZ) picker on top of
-the exact same resample/reduce section ConvertOptionsDialog already built
+Import-with-format-choice dialog: target format (E4B/KRZ/EIII) picker on
+top of the exact same resample/reduce section ConvertOptionsDialog already
+built
 for the Pending pane's "Process before building..." -- reused via
 subclassing rather than duplicated, since both features share the exact
 same ConversionOptions shape (build/convert.py) now that target_format
@@ -68,7 +69,7 @@ class XpmImportDialog(ConvertOptionsDialog):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.addWidget(QLabel("Import as:"))
         self._format_box = QComboBox()
-        self._format_box.addItems(["E4B", "KRZ"])
+        self._format_box.addItems(["E4B", "KRZ", "EIII"])
         default_fmt = locked_format or (initial.target_format if initial else "E4B")
         self._format_box.setCurrentText(default_fmt)
         self._format_box.currentTextChanged.connect(self._on_target_format_changed)

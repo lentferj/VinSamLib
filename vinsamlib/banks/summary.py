@@ -2,16 +2,18 @@
 Plain-data summaries of a bank/preset for the UI (Detail pane, Samples pane).
 
 No Qt, no printing/ANSI — just dataclasses the UI renders directly. Two very
-different strategies per format, because only one of them has an existing
+different strategies per format, because only some of them have an existing
 semantic reader to lean on:
 
-- **E4B**: `banks/e4b.py`'s own container objects don't carry zone semantics
-  (key/vel range, root, loop) — only what's needed for byte-level assembly.
-  Rather than re-deriving that from raw bytes a second time, this reuses
-  `banks.e4b.assemble()` to build a throwaway one-preset E4B file, then hands
-  it to mpc2emu's own `parsers.e4b_parser.parse_e4b()` for the rich,
-  hardware-accurate `models.common` zone model — the same reuse-not-reinvent
-  approach the rest of this project takes toward mpc2emu.
+- **E4B** and **EIII**: neither `banks/e4b.py`'s nor `banks/eiii.py`'s own
+  container objects carry zone semantics (key/vel range, root, loop) — only
+  what's needed for byte-level assembly. Rather than re-deriving that from
+  raw bytes a second time, this reuses `banks.e4b.assemble()`/
+  `banks.eiii.assemble()` to build a throwaway one-preset bank file, then
+  hands it to mpc2emu's own `parsers.e4b_parser.parse_e4b()`/
+  `parsers.eiii_parser.parse_eiii()` for the rich, hardware-accurate
+  `models.common` zone model — the same reuse-not-reinvent approach the rest
+  of this project takes toward mpc2emu.
 - **KRZ**: mpc2emu has no semantic KRZ reader (it's write-only), so this walks
   `banks/krz.py`'s own reference graph directly: each referenced keymap's 128
   raw key entries are collapsed into runs of consecutive keys pointing at the
@@ -26,8 +28,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import e4b, krz
-from ..mpc2emu_bridge import e4b_parser
+from . import e4b, eiii, krz
+from ..mpc2emu_bridge import e4b_parser, eiii_parser
 
 _LOOP_NAMES = {0: "none", 1: "forward", 2: "alternating", 3: "forward (release)"}
 
@@ -84,8 +86,8 @@ def zone_stats(zones: list[ZoneSummary]) -> ZoneStats | None:
 @dataclass
 class PresetSummary:
     name: str
-    format: str                      # 'E4B' | 'KRZ'
-    voice_count: int                 # voices (E4B) / keymaps referenced (KRZ)
+    format: str                      # 'E4B' | 'KRZ' | 'EIII'
+    voice_count: int                 # voices (E4B/EIII) / keymaps referenced (KRZ)
     zones: list[ZoneSummary] = field(default_factory=list)
     total_sample_bytes: int = 0      # unique samples referenced by this preset's zones
 
@@ -260,6 +262,65 @@ def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int) -> ZoneSumm
                         lo_vel=0, hi_vel=127, root_key=root_key, loop=loop)
 
 
+# ── EIII ─────────────────────────────────────────────────────────────────────
+
+def summarize_eiii_bank(bank: eiii.EIIIFile) -> BankSummary:
+    # No E4Ma/EMSt-style bank-wide chunk to add in here -- EMPTY_BANK_SIZE
+    # (the header + address tables + device master-settings block every
+    # EIII bank carries) stands in for that fixed overhead, same role
+    # e4ma_body/emst_body play in summarize_e4b_bank's total.
+    total = eiii.EMPTY_BANK_SIZE
+    total += sum(len(p.body) for p in bank.presets)
+    total += sum(s.size for s in bank.samples.values())
+    return BankSummary(
+        name=bank.path,
+        format="EIII",
+        preset_count=len(bank.presets),
+        sample_count=len(bank.samples),
+        total_size=total,
+        preset_names=[p.name.strip() for p in bank.presets],
+    )
+
+
+def summarize_eiii_preset(bank: eiii.EIIIFile, preset: eiii.EIIIPreset) -> PresetSummary:
+    data = eiii.assemble([(bank, preset)])
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".e3x", delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+        parsed = eiii_parser.parse_eiii(tmp_path)
+    finally:
+        if tmp_path is not None:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    mpc_preset = parsed.presets[0] if parsed.presets else None
+    zones: list[ZoneSummary] = []
+    voice_count = 0
+    sample_sizes: dict[str, int] = {}   # dedupe -- a preset's zones can share one sample
+    if mpc_preset is not None:
+        voice_count = len(mpc_preset.voices)
+        for voice in mpc_preset.voices:
+            for z in voice.zones:
+                if not z.sample_name:
+                    continue
+                sample = parsed.find_sample(z.sample_name)
+                if sample is not None and z.sample_name not in sample_sizes:
+                    sample_sizes[z.sample_name] = len(sample.data)
+                zones.append(ZoneSummary(
+                    sample_name=z.sample_name,
+                    lo_key=z.lo_key, hi_key=z.hi_key,
+                    lo_vel=z.lo_vel, hi_vel=z.hi_vel,
+                    root_key=z.root_key,
+                    loop=_LOOP_NAMES.get(int(sample.loop_type), "?") if sample else "?",
+                    sample_rate=sample.sample_rate if sample else None,
+                    bit_depth=sample.bit_depth if sample else None,
+                ))
+    return PresetSummary(name=preset.name.strip(), format="EIII",
+                          voice_count=voice_count, zones=zones,
+                          total_sample_bytes=sum(sample_sizes.values()))
+
+
 # ── generic dispatch (what the UI actually calls) ───────────────────────────
 
 def summarize_bank(bank) -> BankSummary:
@@ -267,6 +328,8 @@ def summarize_bank(bank) -> BankSummary:
         return summarize_e4b_bank(bank)
     if isinstance(bank, krz.KrzFile):
         return summarize_krz_bank(bank)
+    if isinstance(bank, eiii.EIIIFile):
+        return summarize_eiii_bank(bank)
     raise TypeError(f"not a recognised bank type: {type(bank)!r}")
 
 
@@ -275,6 +338,8 @@ def summarize_preset(bank, obj) -> PresetSummary:
         return summarize_e4b_preset(bank, obj)
     if isinstance(bank, krz.KrzFile):
         return summarize_krz_program(bank, obj)
+    if isinstance(bank, eiii.EIIIFile):
+        return summarize_eiii_preset(bank, obj)
     raise TypeError(f"not a recognised bank type: {type(bank)!r}")
 
 
@@ -289,15 +354,20 @@ def _main(argv: list[str]) -> int:
         bank = e4b.parse_bytes(data, path)
     elif data[:4] == b"PRAM":
         bank = krz.parse_bytes(data, path)
+    elif eiii.detect_format(data) is not None:
+        bank = eiii.parse_bytes(data, path)
     else:
-        print(f"{path}: not a recognised bank (no FORM...E4B0 or PRAM header)")
+        print(f"{path}: not a recognised bank (no FORM...E4B0, PRAM or EIII header)")
         return 1
 
     bs = summarize_bank(bank)
     print(f"{path}: {bs.format}, {bs.preset_count} preset(s), "
           f"{bs.sample_count} sample(s), {bs.total_size:,} bytes")
 
-    presets = bank.presets if isinstance(bank, e4b.E4BFile) else list(bank.programs.values())
+    if isinstance(bank, e4b.E4BFile) or isinstance(bank, eiii.EIIIFile):
+        presets = bank.presets
+    else:
+        presets = list(bank.programs.values())
     for p in presets[:3]:
         ps = summarize_preset(bank, p)
         print(f"\n  {ps.name!r} — {ps.voice_count} voice(s)/keymap(s), {len(ps.zones)} zone(s)")

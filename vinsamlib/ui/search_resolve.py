@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from .models import TreeNode
-from ..banks import e4b, krz
+from ..banks import e4b, eiii, krz
 from ..index.db import SearchResult
 from ..vfs.detect import open_volume, sniff
 
@@ -85,7 +85,7 @@ def _find_preset(bank, fmt: str, native_id: Optional[str]):
     if native_id is None:
         return None
     try:
-        if fmt == "E4B":
+        if fmt == "E4B" or fmt == "EIII":
             idx = int(native_id)
             return next((p for p in bank.presets if p.index == idx), None)
         if fmt == "KRZ":
@@ -106,4 +106,9 @@ def _parse_bank_bytes(data: bytes, label: str):
             return "KRZ", krz.parse_bytes(data, label)
         except Exception:
             return "KRZ", None
+    if eiii.detect_format(data) is not None:
+        try:
+            return "EIII", eiii.parse_bytes(data, label)
+        except Exception:
+            return "EIII", None
     return "", None

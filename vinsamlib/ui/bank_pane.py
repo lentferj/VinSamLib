@@ -27,6 +27,7 @@ frozen copy of already-assembled bytes.
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -39,19 +40,27 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QFrame, QHBoxLayo
 
 from . import dnd, workers
 from .detail_pane import _escape, zone_stats_lines
-from ..banks import e4b, krz, summary
+from ..banks import e4b, eiii, krz, summary
 from ..config import Config
 
 _RECOMPUTE_DEBOUNCE_MS = 250
-# Hard format-technical ceilings (writers/bank_splitter.py) -- these are
-# real write-format limits banks/e4b.py's assemble() itself enforces via
-# raise, not adjustable here. The separate, lower, user-configurable
-# per-format byte limit (Config.e4b_bank_limit_mb/krz_bank_limit_mb) is a
-# soft "will this fit MY hardware's actual RAM" warning underneath this.
+# Hard format-technical ceilings (writers/bank_splitter.py for E4B/KRZ,
+# docs/EIII_FORMAT.md's "Device requirements when writing" for EIII) --
+# these are real write-format limits banks/e4b.py's/banks/krz.py's/
+# banks/eiii.py's own assemble() enforces via raise, not adjustable here.
+# The separate, lower, user-configurable per-format byte limit
+# (Config.e4b_bank_limit_mb/krz_bank_limit_mb) is a soft "will this fit MY
+# hardware's actual RAM" warning underneath this.
 _E4B_MAX_PRESETS = 1000
 _KRZ_MAX_PRESETS = 1000
+_EIII_MAX_PRESETS = 256   # EMULATOR_3X/ESI_32_V3 -- the tighter of the two
+                           # write targets; eiii.assemble() itself enforces
+                           # the exact physical-preset-slot count (a preset
+                           # with several linked layers can use more than
+                           # one slot), this is just the meter's proxy.
 
-_FORMAT_EXT = {"E4B": "e4b", "KRZ": "krz"}
+_ASSEMBLE_FNS = {"E4B": e4b.assemble, "KRZ": krz.assemble, "EIII": eiii.assemble}
+_FORMAT_EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
 _DEFAULT_BANK_NAME = "NewBank"
 
 
@@ -59,9 +68,13 @@ def _sanitize_bank_name(name: str) -> str:
     """Neither E4B nor KRZ has an internal 'bank name' field — the name a
     real E4XT/K2000 shows for a bank is always taken from its *filename*
     (mpc2emu's own convert.py derives output names the same way: `f"{bank
-    .name}{ext}"`). So whatever the user types here has to survive as a
-    real filename on every target platform, hence stripping the characters
-    Windows forbids even though this app also runs on Linux/macOS."""
+    .name}{ext}"`). EIII is the exception (it has a real on-disk name
+    field, threaded through via banks.eiii.assemble()'s `bank_name`
+    parameter — see _recompute()/_save_as() below), but the sanitized
+    result is used as this bank's *filename* everywhere regardless of
+    format, so it has to survive as a real filename on every target
+    platform either way, hence stripping the characters Windows forbids
+    even though this app also runs on Linux/macOS."""
     name = name.strip()
     if not name:
         return _DEFAULT_BANK_NAME
@@ -193,6 +206,10 @@ class BankPane(QWidget):
         if not self._items or self._format is None or self._last_bytes is None:
             self.statusMessage.emit(
                 "Nothing ready to send yet — wait for the size to finish calculating")
+            return
+        if self._format == "EIII":
+            self.statusMessage.emit(
+                "EIII banks aren't placed on a disk image from here yet — use Save as…")
             return
         if not self._save_btn.isEnabled():
             self.statusMessage.emit("Can't send an over-limit bank — remove some presets first")
@@ -431,6 +448,18 @@ class BankPane(QWidget):
             widget_item.setData(Qt.ItemDataRole.UserRole, item)
             self._list.addItem(widget_item)
         self._stack.setCurrentIndex(1 if self._items else 0)
+        # No image target exists for a raw EIII bank yet (Pending for
+        # Image / the Image column only build E4B EMU3 images and KRZ
+        # K2000 disks -- see build/images.py's IMAGE_KINDS) -- Save As…
+        # still works for EIII (a real .e3x/.esi file), same as every
+        # other format, so only this one button is gated.
+        is_eiii = self._format == "EIII"
+        self._send_to_image_btn.setEnabled(not is_eiii)
+        self._send_to_image_btn.setToolTip(
+            "EIII banks aren't placed on a disk image from here yet — use "
+            "Save as… to write a real .e3x/.esi file" if is_eiii
+            else "Add this bank to the Pending for Image queue — nothing is "
+                 "written to a real image until Build Image → is clicked there")
         if self._items:
             self._meter_label.setText("Calculating…")
             self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
@@ -475,7 +504,7 @@ class BankPane(QWidget):
     def _apply_preset_info(self, gen: int, name: str, ps: summary.PresetSummary) -> None:
         if gen != self._info_gen:
             return
-        voice_label = "Voices" if ps.format == "E4B" else "Keymaps"
+        voice_label = "Keymaps" if ps.format == "KRZ" else "Voices"
         self._info_label.setText(
             f"<b>{_escape(name)}</b><br>"
             f"{voice_label}: {ps.voice_count} &middot; "
@@ -496,7 +525,7 @@ class BankPane(QWidget):
         self._gen += 1
         gen = self._gen
         selections = [(bank, preset) for bank, preset, _name in self._items]
-        fn = e4b.assemble if self._format == "E4B" else krz.assemble
+        fn = self._assemble_fn()
         w = workers.Worker(fn, selections)
         w.signals.finished.connect(lambda data, g=gen: self._apply_size(g, data))
         w.signals.error.connect(lambda msg, g=gen: self._apply_size_error(g, msg))
@@ -504,6 +533,18 @@ class BankPane(QWidget):
         w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
         self._live_workers.append(w)
         workers.run(w)
+
+    def _assemble_fn(self):
+        """The real assemble() to call for the currently-locked format,
+        pre-bound with the user's typed bank name for EIII (the one format
+        of the three with a real on-disk name field — see
+        _sanitize_bank_name()'s docstring). Returned as a plain callable
+        taking just `selections`, so it drops straight into
+        `workers.Worker(fn, selections)` the same way as before."""
+        fn = _ASSEMBLE_FNS[self._format]
+        if self._format == "EIII":
+            fn = functools.partial(fn, bank_name=_sanitize_bank_name(self._name_edit.text()))
+        return fn
 
     def _apply_size(self, gen: int, data: bytes) -> None:
         if gen != self._gen:
@@ -517,6 +558,21 @@ class BankPane(QWidget):
             over = len(data) > limit_bytes or n > _E4B_MAX_PRESETS
             detail = (f"{n} presets exceed the E4XT's {_E4B_MAX_PRESETS}-preset limit."
                       if n > _E4B_MAX_PRESETS else
+                      f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
+                      f"E4XT RAM limit (Settings…).")
+        elif self._format == "EIII":
+            # No dedicated EIII RAM-limit setting (Settings only offers
+            # E4XT/K2000) -- EIII banks load on the same E4XT hardware E4B
+            # does (via its backward-compatibility loader, EIII_FORMAT.md),
+            # so the E4XT setting doubles as EIII's soft warning threshold
+            # too rather than adding a third near-identical spinbox.
+            limit_bytes = self._config.e4b_bank_limit_mb * 1024 * 1024
+            self._meter_label.setText(
+                f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}")
+            over = len(data) > limit_bytes or n > _EIII_MAX_PRESETS
+            detail = (f"{n} presets may exceed the EIIIX/ESI {_EIII_MAX_PRESETS}-preset "
+                      f"limit (some presets use more than one preset slot)."
+                      if n > _EIII_MAX_PRESETS else
                       f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
                       f"E4XT RAM limit (Settings…).")
         else:
@@ -586,7 +642,7 @@ class BankPane(QWidget):
         if not self._items or self._format is None:
             return
         selections = [(bank, preset) for bank, preset, _name in self._items]
-        fn = e4b.assemble if self._format == "E4B" else krz.assemble
+        fn = self._assemble_fn()
         try:
             data = fn(selections)
         except Exception as ex:
@@ -615,6 +671,8 @@ def _preset_key(bank: Any, preset_obj: Any, fmt: Optional[str]) -> tuple:
     path = getattr(bank, "path", None)
     if fmt == "KRZ":
         return ("KRZ", path, getattr(preset_obj, "id", None))
+    if fmt == "EIII":
+        return ("EIII", path, getattr(preset_obj, "index", None))
     return ("E4B", path, getattr(preset_obj, "index", None))
 
 

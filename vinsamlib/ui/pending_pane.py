@@ -32,9 +32,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDia
                              QPushButton, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import workers
-from .bank_pane import _FORMAT_EXT, _sanitize_bank_name
+from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _sanitize_bank_name
 from .convert_options_dialog import ConvertOptionsDialog
-from ..banks import e4b, krz
 from ..build.convert import apply_conversion
 
 _PENDING_TEMP_PREFIX = "vinsamlib_pending_"
@@ -58,7 +57,13 @@ def _assemble_all(pending: list[dict]) -> list[str]:
     paths: list[str] = []
     for entry in pending:
         fmt = entry["format"]
-        fn = e4b.assemble if fmt == "E4B" else krz.assemble
+        if fmt not in ("E4B", "KRZ"):
+            # No image target exists for EIII yet (see bank_pane.py's own
+            # "Send to Image Column" gating, which should make this
+            # unreachable in practice) -- fail loudly rather than
+            # mis-assembling through the wrong format's assemble().
+            raise ValueError(f"Pending for Image doesn't support building a {fmt} queue")
+        fn = _ASSEMBLE_FNS[fmt]
         selections = [(bank, preset) for bank, preset, _name in entry["items"]]
         data = fn(selections)
         ext = _FORMAT_EXT[fmt]

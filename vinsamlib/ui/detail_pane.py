@@ -87,7 +87,7 @@ class DetailPane(QWidget):
     def _apply_preset(self, gen: int, ps: summary.PresetSummary) -> None:
         if gen != self._gen:
             return
-        voice_label = "Voices" if ps.format == "E4B" else "Keymaps"
+        voice_label = "Keymaps" if ps.format == "KRZ" else "Voices"
         html = (f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br>"
                 f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
                 f"{zone_stats_lines(ps.zones)}")

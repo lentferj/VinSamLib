@@ -20,7 +20,7 @@ from PySide6.QtCore import QAbstractItemModel, QMimeData, QModelIndex, QSortFilt
 from PySide6.QtGui import QColor
 
 from . import dnd, workers
-from ..banks import e4b, krz
+from ..banks import e4b, eiii, krz
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
@@ -37,7 +37,8 @@ _KIND_ICON = {
     "unsupported": "\U00002753",   # ❓
 }
 
-_BANK_EXT_FORMAT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ"}
+_BANK_EXT_FORMAT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ",
+                     ".e3x": "EIII", ".esi": "EIII", ".e3b": "EIII"}
 _XPM_EXT = ".xpm"
 
 
@@ -46,10 +47,10 @@ def _guess_format(name: str, meta_format: str = "") -> str:
     accurate for EMU3 entries (meta already carries a magic-sniffed value),
     a plausible guess from the extension otherwise (corrected once the bank
     node is actually fetched and its own magic bytes are checked)."""
-    if meta_format == "E4B":
-        return "E4B"
+    if meta_format in ("E4B", "EIII"):
+        return meta_format
     if meta_format and meta_format != "system":
-        return ""   # e.g. "EIII (unsupported)" — not a format this app shows as a bank
+        return ""   # an unrecognised detected format — not one this app shows as a bank
     return _BANK_EXT_FORMAT.get(Path(name).suffix.lower(), "")
 
 
@@ -177,13 +178,16 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
         elif data[:4] == b"PRAM":
             node.handle = krz.parse_bytes(data, entry.name)
             node.format_label = "KRZ"
+        elif eiii.detect_format(data) is not None:
+            node.handle = eiii.parse_bytes(data, entry.name)
+            node.format_label = "EIII"
         else:
-            node.error = "not an E4B or KRZ bank"
+            node.error = "not an E4B, KRZ or EIII bank"
             return []
 
     bank = node.handle
     out: list[TreeNode] = []
-    if isinstance(bank, e4b.E4BFile):
+    if isinstance(bank, e4b.E4BFile) or isinstance(bank, eiii.EIIIFile):
         for p in bank.presets:
             out.append(TreeNode("preset", p.name.strip() or "(untitled)", node, (bank, p)))
     else:
@@ -370,7 +374,7 @@ class LibraryTreeModel(QAbstractItemModel):
 
 class BankFormatFilterProxy(QSortFilterProxyModel):
     """Sits between LibraryTreeModel and the tree view to implement the
-    All/E4B/KRZ/XPM filter dropdown, without teaching the lazy tree model
+    All/E4B/KRZ/EIII/XPM filter dropdown, without teaching the lazy tree model
     itself anything about filtering. Confirmed empirically (this project's
     running rule for anything PySide6-specific) that QSortFilterProxyModel
     correctly forwards canFetchMore()/fetchMore() *and* flags()/mimeData()

@@ -30,7 +30,7 @@ from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
 from .settings_dialog import SettingsDialog
 from .xpm_import_dialog import XpmImportDialog
-from ..banks import e4b, krz
+from ..banks import e4b, eiii, krz
 from ..build import convert, xpm_import
 from ..config import Config, user_data_dir
 from ..index.db import IndexDB
@@ -332,6 +332,9 @@ class MainWindow(QMainWindow):
             if opts.target_format == "KRZ":
                 bank = krz.parse_bytes(data, label_path)
                 preset = next(iter(bank.programs.values()))
+            elif opts.target_format == "EIII":
+                bank = eiii.parse_bytes(data, label_path)
+                preset = bank.presets[0]
             else:
                 bank = e4b.parse_bytes(data, label_path)
                 preset = bank.presets[0]
@@ -349,9 +352,10 @@ class MainWindow(QMainWindow):
         real presets (see explorer_pane.py's convertPresetRequested) --
         the same resample/reduce/target-format dialog and pipeline XPM
         import already uses, just starting from already-native preset(s)
-        instead of a foreign XPM. Works for both E4B and KRZ sources now
-        (mpc2emu's parsers.krz_parser, added 2026-07-27, made KRZ a real
-        *input* format too -- see build/convert.py's module docstring).
+        instead of a foreign XPM. Works for E4B, KRZ and EIII sources now
+        (mpc2emu's parsers.krz_parser, added 2026-07-27, and
+        parsers.eiii_parser, added 2026-07-28, made KRZ/EIII real *input*
+        formats too -- see build/convert.py's module docstring).
 
         A multi-selection shares ONE Convert Options dialog -- the same
         chosen options are applied to every preset in the list, converted
@@ -460,9 +464,9 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self, "About VinSamLib",
-            "VinSamLib — a librarian for E-mu E4B and Kurzweil KRZ sample banks.\n\n"
+            "VinSamLib — a librarian for E-mu E4B/EIII and Kurzweil KRZ sample banks.\n\n"
             "Built on mpc2emu's format-writing code, with its own read path "
-            "for EMU3/FAT images and E4B/KRZ banks.",
+            "for EMU3/FAT images and E4B/KRZ/EIII banks.",
         )
 
     # -- background indexing ---------------------------------------------------

@@ -22,7 +22,7 @@ from .detail_pane import DetailPane
 from .models import BankFormatFilterProxy, LibraryTreeModel, TreeNode
 from ..index.db import IndexDB, SearchResult
 
-_FORMAT_FILTERS = ["All", "E4B", "KRZ", "XPM"]
+_FORMAT_FILTERS = ["All", "E4B", "KRZ", "EIII", "XPM"]
 
 
 class _ResultsListWidget(QListWidget):
@@ -282,10 +282,11 @@ class ExplorerPane(QWidget):
         if convertible:
             # One shared Convert Options dialog covers the whole
             # selection -- same options applied to every preset, not one
-            # dialog per preset. Both E4B and KRZ presets get this now --
-            # mpc2emu's parsers.krz_parser (added 2026-07-27) made KRZ a
-            # real *input* format too, so a KRZ preset can be converted
-            # the same way an E4B one can, to either target format.
+            # dialog per preset. E4B, KRZ and EIII presets all get this
+            # now -- mpc2emu's parsers.krz_parser (added 2026-07-27) and
+            # parsers.eiii_parser (added 2026-07-28) made KRZ/EIII real
+            # *input* formats too, so a preset from any of the three can
+            # be converted the same way, to any target format.
             label = "Import via mpc2emu…" if len(convertible) == 1 \
                 else f"Import {len(convertible)} presets via mpc2emu…"
             convert_action = menu.addAction(label)
