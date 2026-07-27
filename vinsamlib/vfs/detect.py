@@ -68,6 +68,22 @@ def sniff(path: str) -> Optional[type[Volume]]:
             return Fat12Volume
         return None
 
+    # No boot signature at all -- could still be a genuine FAT12/16 K2000
+    # disk. mpc2emu's own Fat16/Fat12 readers never check the 55/AA
+    # signature or the FS-type label to open a volume (see fat16.py's
+    # _part_offset()/_read_bpb() -- only the numeric BPB fields matter),
+    # and real vintage K2000-format CDs predating mpc2emu's own writer
+    # (e.g. third-party "Best Service"/Kurzweil-branded sample discs from
+    # the 1990s) can be missing both cosmetic fields while every numeric
+    # BPB field otherwise matches the documented K2000 form exactly
+    # (KRZ_FORMAT.md §5.1) -- confirmed byte-for-byte against a real
+    # BestServiceGigaSetCD1.iso. Validating several BPB fields together
+    # (not just one) keeps this from false-triggering on an arbitrary file
+    # that happens to start with the same jump opcode.
+    cls = _sniff_fat_without_signature(head, p)
+    if cls is not None:
+        return cls
+
     # ISO 9660: "CD001" at byte 1 of the Primary Volume Descriptor, sector 16
     try:
         with open(path, "rb") as f:
@@ -78,6 +94,64 @@ def sniff(path: str) -> Optional[type[Volume]]:
     if len(pvd_head) == 6 and pvd_head[0] == 1 and pvd_head[1:6] == b"CD001":
         return Iso9660Volume
 
+    return None
+
+
+def _sniff_fat_without_signature(head: bytes, path: Path) -> Optional[type[Volume]]:
+    """FAT12/16 detection for a BPB with no 55/AA boot signature and no
+    FS-type label -- classifies FAT12 vs FAT16 the authoritative way (by
+    computed cluster count, the same convention every real FAT
+    implementation uses) rather than trusting an absent label. Never
+    guesses FAT32: a real FAT32 BPB stores root_ents=0 and its sectors/FAT
+    in a separate 32-bit field the 16-bit fatsz16 read here would show as
+    0 for, which this deliberately treats as "not enough to go on" rather
+    than trying to also parse FAT32's differently-shaped BPB blind."""
+    if head[0] not in (0xE9, 0xEB):   # a real x86 jump opcode at offset 0
+        return None
+    bps = struct.unpack_from("<H", head, 11)[0]
+    spc = head[13]
+    rsvd = struct.unpack_from("<H", head, 14)[0]
+    nfats = head[16]
+    root_ents = struct.unpack_from("<H", head, 17)[0]
+    total16 = struct.unpack_from("<H", head, 19)[0]
+    media = head[21] if len(head) > 21 else 0
+    fatsz16 = struct.unpack_from("<H", head, 22)[0]
+    total32 = struct.unpack_from("<I", head, 32)[0]
+
+    if bps != 512 or spc not in (1, 2, 4, 8, 16, 32, 64, 128):
+        return None
+    if rsvd < 1 or nfats not in (1, 2):
+        return None
+    if media not in (0xF0, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF):
+        return None
+    if fatsz16 == 0 or root_ents == 0:
+        return None
+
+    total_sectors = total16 or total32
+    if total_sectors == 0:
+        return None
+    try:
+        actual_size = path.stat().st_size
+    except OSError:
+        return None
+    # The BPB's own claimed size must actually fit inside the real file
+    # (never smaller -- that would mean this isn't really this volume);
+    # bigger is fine and common (CD lead-in/session padding beyond the
+    # logical filesystem, e.g. ~600 KB extra on the real disc this was
+    # written against).
+    if actual_size < total_sectors * bps:
+        return None
+
+    root_dir_sectors = (root_ents * 32 + bps - 1) // bps
+    data_sectors = total_sectors - (rsvd + nfats * fatsz16 + root_dir_sectors)
+    if data_sectors <= 0:
+        return None
+    cluster_count = data_sectors // spc
+
+    if cluster_count < 4085:
+        return Fat12Volume
+    if cluster_count < 65525:
+        return Fat16Volume
     return None
 
 
