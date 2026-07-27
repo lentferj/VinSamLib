@@ -31,7 +31,7 @@ from .samples_pane import SamplesPane
 from .settings_dialog import SettingsDialog
 from .xpm_import_dialog import XpmImportDialog
 from ..build import xpm_import
-from ..config import Config, user_data_dir
+from ..config import Config, user_data_dir, xpm_imports_dir
 from ..index.db import IndexDB
 from ..index.scanner import scan
 
@@ -239,35 +239,29 @@ class MainWindow(QMainWindow):
         workers.run(w)
 
     def _on_xpm_imported(self, tmp_path: str, opts: xpm_import.XpmImportOptions) -> None:
-        ext = "krz" if opts.target_format == "KRZ" else "e4b"
-        dest, _filter = QFileDialog.getSaveFileName(
-            self, "Save Imported Bank", Path(tmp_path).name,
-            f"{opts.target_format} bank (*.{ext})",
-            options=QFileDialog.Option.DontUseNativeDialog)
-        if not dest:
-            self.statusBar().showMessage("Import cancelled before saving")
-            return
+        # No save dialog, no "add to library?" prompt -- the result just
+        # becomes part of the library automatically, in a VinSamLib-
+        # managed folder rather than a location the user has to pick.
+        imports_dir = xpm_imports_dir()
+        imports_dir.mkdir(parents=True, exist_ok=True)
+        dest = imports_dir / Path(tmp_path).name
+        if dest.exists():
+            stem, suffix, i = dest.stem, dest.suffix, 2
+            while dest.exists():
+                dest = imports_dir / f"{stem}_{i}{suffix}"
+                i += 1
         try:
-            Path(dest).write_bytes(Path(tmp_path).read_bytes())
+            dest.write_bytes(Path(tmp_path).read_bytes())
         except OSError as ex:
             QMessageBox.warning(self, "Import XPM", f"Couldn't save to {dest}: {ex}")
             return
-        self.statusBar().showMessage(f"Imported to {dest}", 8000)
+        self.statusBar().showMessage(f"Imported to {dest.name} in your library", 8000)
 
-        dest_dir = Path(dest).resolve().parent
-        already_covered = any(
-            dest_dir == root or dest_dir.is_relative_to(root) for root in self._config.library_roots)
-        if not already_covered:
-            add_it = QMessageBox.question(
-                self, "Add to Library",
-                f"Add {dest_dir} to your library so the imported bank shows up in Explorer?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes) == QMessageBox.StandardButton.Yes
-            if add_it:
-                self._config.library_roots.append(dest_dir)
-                self._config.save()
-                self._model.add_root(dest_dir)
-                self._start_scan([dest_dir])
+        if imports_dir not in self._config.library_roots:
+            self._config.library_roots.append(imports_dir)
+            self._config.save()
+            self._model.add_root(imports_dir)
+        self._start_scan([imports_dir])
 
     def _on_xpm_import_error(self, message: str) -> None:
         last_line = message.strip().splitlines()[-1] if message else "error"

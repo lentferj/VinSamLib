@@ -4,10 +4,9 @@ All/E4B/KRZ/XPM format filter actually includes/excludes it, it's
 indexed for search (index/scanner.py's _scan_xpm_container), a search hit
 resolves back into a real xpm TreeNode (ui/search_resolve.py), and
 double-clicking either a tree row or a search-result row for it triggers
-the same import flow as File > Import XPM... Same in-process-call
-approach as every other smoke test here (no X11 input automation
-available); the modal points are stubbed the same way the other smoke
-tests stub QMessageBox/QFileDialog.
+the same import flow as File > Import XPM... (auto-saved into
+Config.xpm_imports_dir(), no save dialog). Same in-process-call approach
+as every other smoke test here (no X11 input automation available).
 """
 import sys
 import tempfile
@@ -18,11 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtCore import QCoreApplication, QModelIndex, Qt, QThreadPool
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from vinsamlib import mpc2emu_bridge
 from vinsamlib.build.xpm_import import XpmImportOptions
-from vinsamlib.config import Config
+from vinsamlib.config import Config, xpm_imports_dir
 from vinsamlib.index.db import IndexDB
 from vinsamlib.index.scanner import scan
 from vinsamlib.ui import search_resolve
@@ -31,8 +30,6 @@ from vinsamlib.ui.models import BankFormatFilterProxy, LibraryTreeModel
 from vinsamlib.ui.xpm_import_dialog import XpmImportDialog
 
 XPM_DIR = Path.home() / "Samples/MPC/Roland Alpha Juno 2"
-
-QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.No)
 
 
 def _fetch_and_wait(model, index, timeout=10):
@@ -90,13 +87,12 @@ def main():
     assert Path(resolved.payload).exists()
 
     # 4) Full MainWindow: double-clicking the tree row triggers the same
-    #    import flow as File > Import XPM...
+    #    import flow as File > Import XPM... -- auto-saved into
+    #    Config.xpm_imports_dir(), no save dialog, no "add to library?"
+    #    prompt (see MainWindow._on_xpm_imported()).
     config2 = Config.load()
     mpc2emu_bridge.install(config2)
     config2.library_roots = [XPM_DIR]
-    dest_dir = Path(tempfile.mkdtemp(prefix="vinsamlib_xpm_filter_smoke_"))
-    dest_path = str(dest_dir / "imported.e4b")
-    QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (dest_path, ""))
     XpmImportDialog.get_import_options = staticmethod(
         lambda parent=None, initial=None: XpmImportOptions(target_format="E4B"))
 
@@ -106,6 +102,10 @@ def main():
     _fetch_and_wait(tmodel, troot)
     xpm_row = next(r for r in range(tmodel.rowCount(troot))
                     if tmodel.index(r, 0, troot).data(Qt.ItemDataRole.UserRole).kind == "xpm")
+    xpm_node = tmodel.index(xpm_row, 0, troot).data(Qt.ItemDataRole.UserRole)
+    dest = xpm_imports_dir() / f"{Path(xpm_node.payload).stem}.e4b"
+    dest.unlink(missing_ok=True)   # idempotent re-runs
+
     proxy_index = win._explorer._tree_proxy.mapFromSource(tmodel.index(xpm_row, 0, troot))
     win._explorer._on_tree_double_clicked(proxy_index)
 
@@ -113,8 +113,9 @@ def main():
     while win._xpm_import_worker is not None and time.time() < deadline:
         QCoreApplication.processEvents()
         time.sleep(0.1)
-    print("double-click-triggered import wrote:", Path(dest_path).exists())
-    assert Path(dest_path).exists()
+    print("double-click-triggered import wrote:", dest.exists())
+    assert dest.exists()
+    assert xpm_imports_dir() in win._config.library_roots
 
     print("\nALL XPM FILTER SMOKE CHECKS PASSED")
 

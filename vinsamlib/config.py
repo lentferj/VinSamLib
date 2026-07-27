@@ -41,6 +41,15 @@ def user_data_dir() -> Path:
     return Path(base) / _APP_NAME
 
 
+def xpm_imports_dir() -> Path:
+    """Where File > Import XPM… / Explorer's "Import…" write the resulting
+    E4B/KRZ bank -- a VinSamLib-managed folder, not a user-picked location,
+    so importing an XPM never has to interrupt the user with a save
+    dialog: the result just becomes part of the library automatically
+    (see MainWindow._on_xpm_imported())."""
+    return user_data_dir() / "imported_xpm"
+
+
 def _default_mpc2emu_path() -> Path:
     """mpc2emu is a sibling checkout by convention (../mpc2emu relative to
     this repo). Used only as a fallback default; always overridable."""
