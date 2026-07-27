@@ -445,7 +445,7 @@ the list.
 
 ### Settings
 
-![Settings dialog showing a found mpc2emu checkout and its live status line](docs/screenshots/06_settings.png)
+![Settings dialog showing a found mpc2emu checkout with its live status line, and the New Bank size-warning threshold fields for E4B and KRZ](docs/screenshots/06_settings.png)
 
 **File → Settings…** — the mpc2emu checkout path, with a live status
 line: whether the path itself is even a usable mpc2emu checkout, and
@@ -453,14 +453,17 @@ separately whether the specific modules the conversion feature needs
 are present (a checkout could exist but be an incompatible or partial
 version). Changing the path needs a restart to take effect.
 
-Also here: **New Bank size-warning thresholds**, in MB, one each for
-E4B and KRZ (defaults 64 MB / 32 MB — the most common real E4XT/K2000
-RAM configurations, not the format's own absolute technical maximum:
-128 MB for E4B, and the K2000 has no hard byte ceiling at all, only its
-1000-program limit). This is a *soft* warning New Bank's size meter
-uses to flag a bank that's probably too big for your actual hardware —
-"Keep Anyway" is still offered in the over-limit dialog if you genuinely
-have more RAM installed. Takes effect immediately, no restart needed.
+**New Bank size-warning thresholds** (bottom of the dialog, pictured
+above) — one editable field in MB each for E4B and KRZ, defaulting to
+**64 MB / 32 MB**: the most common real E4XT/K2000 RAM configurations,
+*not* the format's own absolute technical maximum (128 MB for E4B; the
+K2000 has no hard byte ceiling at all, only its 1000-program limit —
+see New Bank above). This is a **soft**
+warning New Bank's size meter and over-limit dialog use to flag a bank
+that's probably too big for *your* actual hardware, before you find out
+the hard way — raise it if you genuinely have more RAM installed;
+"Keep Anyway" in the over-limit dialog still lets you build past it
+either way. Takes effect immediately on OK, no restart needed.
 
 ### Keyboard Shortcuts
 
