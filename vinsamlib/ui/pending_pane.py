@@ -33,16 +33,24 @@ from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDia
 
 from . import workers
 from .bank_pane import _FORMAT_EXT, _sanitize_bank_name
+from .convert_options_dialog import ConvertOptionsDialog
 from ..banks import e4b, krz
+from ..build.convert import ConversionOptions, apply_conversion
 
 _PENDING_TEMP_PREFIX = "vinsamlib_pending_"
 
 
-def _assemble_all(pending: list[dict]) -> list[str]:
+def _assemble_all(pending: list[dict], convert_opts: Optional[ConversionOptions] = None) -> list[str]:
     """Runs off the GUI thread: assemble every pending bank's real bytes
     and write each to its own throwaway temp file, in order. Raising here
     (e.g. one bank's selection no longer resolves) aborts the whole build
-    rather than handing the Image column a partial, out-of-order set."""
+    rather than handing the Image column a partial, out-of-order set.
+
+    convert_opts, when set, is run through build/convert.py's own
+    parse -> Bank -> resample/reduce -> write round trip on top of the
+    just-assembled E4B temp file, replacing it with the processed
+    version before it's handed onward -- never applied to KRZ (mpc2emu
+    has no .krz *input* parser, so there is no round trip possible)."""
     paths: list[str] = []
     for entry in pending:
         fmt = entry["format"]
@@ -54,7 +62,10 @@ def _assemble_all(pending: list[dict]) -> list[str]:
         tmp_dir = Path(tempfile.mkdtemp(prefix=_PENDING_TEMP_PREFIX))
         tmp_path = tmp_dir / f"{name}.{ext}"
         tmp_path.write_bytes(data)
-        paths.append(str(tmp_path))
+        final_path = str(tmp_path)
+        if fmt == "E4B" and convert_opts is not None:
+            final_path = apply_conversion(final_path, convert_opts)
+        paths.append(final_path)
     return paths
 
 
@@ -68,6 +79,7 @@ class PendingBanksPane(QWidget):
 
         self._pending: list[dict[str, Any]] = []
         self._format: Optional[str] = None
+        self._convert_opts: Optional[ConversionOptions] = None
         self._live_workers: list[workers.Worker] = []
 
         layout = QVBoxLayout(self)
@@ -174,6 +186,10 @@ class PendingBanksPane(QWidget):
         row1.addWidget(clear_btn)
         layout.addLayout(row1)
 
+        self._convert_btn = QPushButton("Process before building…")
+        self._convert_btn.clicked.connect(self._show_convert_options)
+        layout.addWidget(self._convert_btn)
+
         self._build_btn = QPushButton("Build Image →")
         self._build_btn.setToolTip(
             "Assemble every pending bank, in the order shown, and hand them "
@@ -209,6 +225,14 @@ class PendingBanksPane(QWidget):
         n = len(self._pending)
         self._summary_label.setText(f"{n} bank{'s' if n != 1 else ''} pending")
         self._build_btn.setEnabled(bool(self._pending))
+        is_krz = self._format == "KRZ"
+        self._convert_btn.setEnabled(not is_krz)
+        self._convert_btn.setToolTip(
+            "mpc2emu has no KRZ reader; vintage resample/reduce is E4B-only" if is_krz
+            else "Choose vintage resample / sample-count reduction to apply "
+                 "to every E4B bank on the next Build Image")
+        if is_krz and self._convert_opts is not None:
+            self._convert_opts = None
         self._update_contents_preview()
 
     def _make_item(self, entry: dict) -> QListWidgetItem:
@@ -348,6 +372,18 @@ class PendingBanksPane(QWidget):
         self._format = None
         self._refresh()
 
+    # -- conversion options -------------------------------------------------------
+
+    def _show_convert_options(self) -> None:
+        opts = ConvertOptionsDialog.get_options(self)
+        if opts is None:
+            return   # Cancel -- leave whatever was already chosen untouched
+        self._convert_opts = None if opts.is_noop() else opts
+        self.statusMessage.emit(
+            "Will apply vintage resample/reduce to E4B banks on the next Build Image"
+            if self._convert_opts is not None
+            else "Conversion options cleared — building unprocessed banks again")
+
     # -- build ------------------------------------------------------------------
 
     def _build_image(self) -> None:
@@ -357,7 +393,7 @@ class PendingBanksPane(QWidget):
         pending_snapshot = list(self._pending)
         self._build_btn.setEnabled(False)
         self.statusMessage.emit(f"Assembling {len(pending_snapshot)} pending bank(s)…")
-        w = workers.Worker(_assemble_all, pending_snapshot)
+        w = workers.Worker(_assemble_all, pending_snapshot, self._convert_opts)
         w.signals.finished.connect(lambda paths, f=fmt: self._on_build_assembled(paths, f))
         w.signals.error.connect(self._on_build_error)
         w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
