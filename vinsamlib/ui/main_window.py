@@ -169,7 +169,9 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def _add_library_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Add Library Folder")
+        path = QFileDialog.getExistingDirectory(
+            self, "Add Library Folder", "",
+            options=QFileDialog.Option.DontUseNativeDialog)
         if not path:
             return
         p = Path(path)
