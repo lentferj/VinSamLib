@@ -2,7 +2,7 @@
 Hardware-test bank image batch generator (E4B + KRZ).
 
 Drives a REAL `MainWindow` instance (offscreen, PySide6) through the real GUI
-code paths (BankPane -> PendingBanksPane -> ImagePane) to build 16 separate
+code paths (BankPane -> PendingBanksPane -> ImagePane) to build 20 separate
 disk images on local disk -- one image per mpc2emu conversion-option
 combination -- so a human can load each one, one at a time, onto real E4XT
 or K2000R hardware and confirm by ear/by eye that each option actually does
@@ -40,9 +40,26 @@ deliverable. A conservative 1.4 MB size guard skips the floppy build (and
 notes it in the manifest) if a combo's assembled `.krz` would never fit --
 not expected to trigger for these 4 small-source combos, but cheap insurance.
 
-Output: `~/temp/VinSamLib_Test/NN_slug.hda` (Groups A/B) or `.img` (Group C)
-+ `00_MANIFEST.txt` (a plain ASCII table: filename, source, options applied,
-and what to listen/look for on real hardware).
+Group D (rows 17-20) demonstrates KRZ as a conversion SOURCE, now possible
+since mpc2emu's parsers.krz_parser (added 2026-07-27, corpus-verified against
+593 real .KRZ files) made KRZ a real *input* format -- previously only E4B
+could be a source. Source: a real Patchman commercial preset,
+"*>Flugelhorn" from PMVOL002.KRZ (single-voice, no octave-slice-stack
+"coverage remap" needed -- see mpc2emu/TODO.md for a real krz_writer bug that
+crashes on presets that DO need that rebuild; this fixture avoids it).
+Rows 17-18 convert KRZ -> E4B (cross-format, the new direction); rows 19-20
+convert KRZ -> KRZ ("same format, with options" -- applying DSP without
+changing format, exactly what Explorer's "Import via mpc2emu..." now offers
+for a KRZ preset same as an E4B one). Unlike Groups A-C, each Group D row
+converts FIRST via build/convert.py's convert_preset() directly (the same
+function Explorer's per-preset action calls), THEN stages the
+ALREADY-CONVERTED result into New Bank/Pending/Image -- there is no
+further per-bank conversion step, since Pending's own "Process before
+building..." is still E4B-queue-only (a scope decision, not fixed here).
+
+Output: `~/temp/VinSamLib_Test/NN_slug.hda` (Groups A/B/D-E4B) or `.img`
+(Group C, Group D-KRZ) + `00_MANIFEST.txt` (a plain ASCII table: filename,
+source, options applied, and what to listen/look for on real hardware).
 
 Critical guard: `assert win._image_pane._path is not None` right before
 every `_build_image()` call -- an unset image path routes into the modal
@@ -68,8 +85,9 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from vinsamlib import mpc2emu_bridge
 from vinsamlib.banks import e4b as vs_e4b
+from vinsamlib.banks import krz as vs_krz
 from vinsamlib.build import images
-from vinsamlib.build.convert import ConversionOptions
+from vinsamlib.build.convert import ConversionOptions, convert_preset
 from vinsamlib.config import Config
 from vinsamlib.ui.main_window import MainWindow
 from vinsamlib.vfs.detect import open_volume
@@ -89,13 +107,17 @@ SRC_SIMPLE = (Path.home() / "Dokumente/SYNTHS/E4XT/E4Bs/"
 SRC_MULTI = (Path.home() / "Dokumente/SYNTHS/E4XT/E4Bs/"
              "Kirk.Hunter.Virtuoso.Series.Strings1.E4/KH Violins/"
              "B.003-2_8Violins128MB.e4b")
+SRC_KRZ = (Path.home() / "Dokumente/SYNTHS/K2000R/Soundsets/Patchman/"
+           "2000 Series v114/PMVOL002.KRZ")
+SRC_KRZ_PROGRAM = "*>Flugelhorn"   # single-voice, no coverage-remap needed (see module docstring)
 
 DEFAULT_OUT_DIR = Path.home() / "temp" / "VinSamLib_Test"
 
-GROUP_SIZE_MB = {"A": 32, "B": 128}
+GROUP_SIZE_MB = {"A": 32, "B": 128, "D": 32}
 GROUP_SOURCE_LABEL = {
     "A": "Dance Organ E4B (SRC_SIMPLE, 4 presets, ~22KB)",
     "B": "KH Strings 8VnEsHdMrcFat/SL (SRC_MULTI, 1 preset, ~27.5MB)",
+    "D": f"Patchman {SRC_KRZ_PROGRAM!r} (SRC_KRZ, KRZ source)",
 }
 GROUP_SOURCE_LABEL["C"] = GROUP_SOURCE_LABEL["A"]   # Group C reuses SRC_SIMPLE, KRZ target
 
@@ -110,7 +132,7 @@ class Row:
     num: int
     slug: str
     bank_name: str          # exact name expected on the device
-    group: str               # "A" | "B"
+    group: str               # "A" | "B" | "C" | "D"
     opts: ConversionOptions
     listen_for: str          # what to check by ear/eye on real E4XT hardware
 
@@ -170,6 +192,26 @@ ROWS: list[Row] = [
     Row(16, "krz_max_rate_22050", "K16RATE", "C",
         ConversionOptions(target_format="KRZ", max_sample_rate=22050),
         "KRZ bandwidth-limited to 22.05 kHz. Confirm the K2000R reports a sane sample rate."),
+
+    # -- Group D: SRC_KRZ (Patchman *>Flugelhorn) -- KRZ as a SOURCE ---------
+    Row(17, "krz_to_e4b_plain", "17 KRZ2E4B", "D",
+        ConversionOptions(target_format="E4B"),
+        "KRZ->E4B baseline, no DSP -- confirm it loads on the E4XT and sounds "
+        "like the original K2000 Flugelhorn patch (format-converted only)."),
+    Row(18, "krz_to_e4b_emax1", "18 KRZ2E4B EX", "D",
+        ConversionOptions(target_format="E4B", resample_profile="emax1"),
+        "KRZ->E4B + Emax I character. Compare vs #17 -- should sound vintage-"
+        "resampled on the E4XT, same as any E4B-sourced #03-style conversion."),
+    Row(19, "krz_krz_emulator2", "K19OPT", "D",
+        ConversionOptions(target_format="KRZ", resample_profile="emulator2"),
+        "KRZ->KRZ, SAME format, WITH options -- this is the 'Import via "
+        "mpc2emu' case a plain 'Add' can't do. Confirm the K2000R plays it "
+        "with audible Emulator II grit, distinct from the plain source."),
+    Row(20, "krz_krz_rate22050", "K20RATE", "D",
+        ConversionOptions(target_format="KRZ", max_sample_rate=22050),
+        "KRZ->KRZ, bandwidth-limited to 22.05 kHz. Confirm the K2000R loads "
+        "it and reports a sane sample rate, same check as #16 via a "
+        "different (KRZ-sourced) path."),
 ]
 
 
@@ -201,8 +243,10 @@ def wait_workers(pane) -> None:
 
 
 def _image_filename(row: Row) -> str:
-    ext = "img" if row.group == "C" else "hda"
-    return f"{row.num:02d}_{row.slug}.{ext}"
+    # Group C is always KRZ/floppy. Group D's extension depends on this row's
+    # own target_format (rows 17-18 -> E4B/.hda, 19-20 -> KRZ/.img).
+    is_floppy = row.group == "C" or (row.group == "D" and row.opts.target_format == "KRZ")
+    return f"{row.num:02d}_{row.slug}.{'img' if is_floppy else 'hda'}"
 
 
 def stage_group(win: MainWindow, group: str) -> None:
@@ -416,6 +460,162 @@ def build_one_floppy(win: MainWindow, out_dir: Path, row: Row, recorder: dict) -
             "skipped": False}
 
 
+def build_one_from_krz_source(win: MainWindow, out_dir: Path, row: Row) -> dict:
+    """Group D: KRZ as a conversion SOURCE. Unlike Groups A-C (stage a raw
+    preset once per group, then vary convert_opts per row at the Pending
+    stage), each Group D row converts FIRST via convert_preset() directly --
+    the same function Explorer's real "Import via mpc2emu..." action calls
+    for a KRZ preset -- THEN stages the ALREADY-CONVERTED result into New
+    Bank/Pending/Image with no further processing (entry["convert_opts"]
+    stays None), since Pending's own per-bank conversion is still
+    E4B-queue-only.
+
+    Branches on row.opts.target_format:
+      E4B (rows 17-18): stage into an emu3_hd_emu .hda, same as build_one().
+      KRZ (rows 19-20): same "prove via a scratch k2000_fat16 .hda, then
+      build the real floppy" two-step as build_one_floppy() -- except the
+      real KRZ bytes are already sitting in convert_preset()'s own return
+      path here, so there's no need to fish them back out of a
+      buildRequested signal the way Group C's Pending-driven conversion
+      required."""
+    win._pending_pane._clear()
+    win._bank_pane._clear()
+
+    src_bank = vs_krz.parse(str(SRC_KRZ))
+    src_preset = next(p for p in src_bank.programs.values()
+                       if p.name.strip() == SRC_KRZ_PROGRAM)
+    converted_tmp = convert_preset(src_bank, src_preset, row.opts)
+    data = Path(converted_tmp).read_bytes()
+
+    if row.opts.target_format == "KRZ":
+        conv_bank = vs_krz.parse_bytes(data, str(SRC_KRZ))
+        conv_preset = next(iter(conv_bank.programs.values()))
+        fmt = "KRZ"
+    else:
+        conv_bank = vs_e4b.parse_bytes(data, str(SRC_KRZ))
+        conv_preset = conv_bank.presets[0]
+        fmt = "E4B"
+
+    ok = win._bank_pane.add_presets([(conv_bank, conv_preset, fmt, row.bank_name)])
+    assert ok, f"row {row.num}: failed to stage the converted KRZ-source preset into New Bank"
+    qwait(300)
+    wait_workers(win._bank_pane)
+    win._bank_pane._send_to_pending()
+    qwait(200)
+    assert len(win._pending_pane._pending) == 1, (
+        f"row {row.num}: expected exactly one staged pending entry")
+    entry = win._pending_pane._pending[0]
+    entry["convert_opts"] = None   # already converted -- no further processing at build time
+    entry["name"] = row.bank_name
+
+    if fmt == "E4B":
+        img_path = out_dir / _image_filename(row)
+        if img_path.exists():
+            img_path.unlink()
+        images.create_image("emu3_hd_emu", str(img_path), [], volume_label="EMU_DISK",
+                             size_mb=GROUP_SIZE_MB["D"])
+        win._image_pane._close_image()
+        win._image_pane._open_image(str(img_path), known_kind="emu3_hd_emu")
+        assert win._image_pane._path is not None, (
+            f"row {row.num}: image path unset before _build_image() -- would hang")
+        win._pending_pane._build_image()
+        wait_workers(win._pending_pane)
+        while win._image_pane._busy:
+            qwait(50)
+        qwait(150)
+
+        entries = win._image_pane._entries
+        assert len(entries) == 1, (
+            f"row {row.num}: expected exactly one bank on {img_path.name}, "
+            f"found {[e.name for e in entries]}")
+        device_name = entries[0].name.strip()
+        assert device_name.upper().startswith(row.bank_name.upper()[:16]), (
+            f"row {row.num}: expected bank name starting with {row.bank_name!r}, got {device_name!r}")
+        vol = open_volume(str(img_path))
+        try:
+            built_data = vol.read(entries[0])
+        finally:
+            vol.close()
+        assert built_data[:4] == b"FORM" and built_data[8:12] == b"E4B0", (
+            f"row {row.num}: built bank has no FORM...E4B0 magic")
+        print(f"  [{row.num:02d}] {row.slug}: built {img_path.name} "
+              f"({len(built_data):,} bytes on-disk bank, device name {device_name!r})")
+        return {"path": img_path, "device_name": device_name, "built_bytes": len(built_data)}
+
+    # -- KRZ target: prove via scratch k2000_fat16 .hda, then build the real floppy --
+    scratch_path = out_dir / f"_scratch_{row.num:02d}.hda"
+    if scratch_path.exists():
+        scratch_path.unlink()
+    images.create_image("k2000_fat16", str(scratch_path), [], volume_label="K2000")
+    win._image_pane._close_image()
+    win._image_pane._open_image(str(scratch_path), known_kind="k2000_fat16")
+    assert win._image_pane._path is not None, (
+        f"row {row.num}: scratch image path unset before _build_image() -- would hang")
+    win._pending_pane._build_image()
+    wait_workers(win._pending_pane)
+    while win._image_pane._busy:
+        qwait(50)
+    qwait(150)
+
+    scratch_entries = win._image_pane._entries
+    assert len(scratch_entries) == 1, (
+        f"row {row.num}: expected exactly one bank on scratch image, "
+        f"found {[e.name for e in scratch_entries]}")
+    scratch_device_name = scratch_entries[0].name.strip()
+    assert scratch_device_name.upper().startswith(row.bank_name.upper()), (
+        f"row {row.num}: expected scratch bank name starting with {row.bank_name!r}, "
+        f"got {scratch_device_name!r}")
+    vol = open_volume(str(scratch_path))
+    try:
+        scratch_data = vol.read(scratch_entries[0])
+    finally:
+        vol.close()
+    assert scratch_data[:4] == b"PRAM", (
+        f"row {row.num}: scratch bank has no PRAM (KRZ) magic")
+    scratch_path.unlink()
+
+    img_path = out_dir / _image_filename(row)
+    if img_path.exists():
+        img_path.unlink()
+    krz_size = len(data)
+    if krz_size > FLOPPY_SIZE_GUARD_BYTES:
+        msg = (f"SKIPPED (too large for a 1.44 MB floppy: {krz_size:,} bytes "
+               f"> {FLOPPY_SIZE_GUARD_BYTES:,})")
+        print(f"  [{row.num:02d}] {row.slug}: {msg}")
+        return {"path": None, "device_name": None, "built_bytes": krz_size,
+                "skipped": True, "skip_reason": msg}
+
+    # fat12_floppy's bank name on-device comes from the INPUT file's own
+    # filename (unlike _assemble_all()'s E4B/append path, which sanitizes
+    # entry["name"] into the temp filename first) -- convert_preset()'s
+    # own temp file is still named after the SOURCE preset ("*>Flugelhorn"
+    # sanitized), not row.bank_name, so rename a copy before building.
+    renamed_tmp = Path(converted_tmp).with_name(f"{row.bank_name}.krz")
+    renamed_tmp.write_bytes(Path(converted_tmp).read_bytes())
+    images.create_image("fat12_floppy", str(img_path), [str(renamed_tmp)],
+                         volume_label="K2000", floppy_kind="1440")
+    win._image_pane._close_image()
+    win._image_pane._open_image(str(img_path), known_kind="fat12_floppy")
+    entries = win._image_pane._entries
+    assert len(entries) == 1, (
+        f"row {row.num}: expected exactly one bank on {img_path.name}, "
+        f"found {[e.name for e in entries]}")
+    device_name = entries[0].name.strip()
+    assert device_name.upper().startswith(row.bank_name.upper()), (
+        f"row {row.num}: expected bank name starting with {row.bank_name!r}, got {device_name!r}")
+    vol = open_volume(str(img_path))
+    try:
+        built_data = vol.read(entries[0])
+    finally:
+        vol.close()
+    assert built_data[:4] == b"PRAM", (
+        f"row {row.num}: built floppy has no PRAM (KRZ) magic")
+    print(f"  [{row.num:02d}] {row.slug}: built {img_path.name} "
+          f"({len(built_data):,} bytes on-disk bank, device name {device_name!r})")
+    return {"path": img_path, "device_name": device_name, "built_bytes": len(built_data),
+            "skipped": False}
+
+
 MANIFEST_NOTES = """\
 Notes:
 - Rows 01 and 07 are byte-verbatim (no mpc2emu round-trip -- is_noop() short-
@@ -431,12 +631,24 @@ Notes:
   appended to, so each combo is proven via a throwaway scratch k2000_fat16
   .hda first (real ImagePane append/validate path against real KRZ PRAM
   magic), then rebuilt as the actual floppy from the recorded temp .krz path.
+- Group D (rows 17-20) demonstrates KRZ as a conversion SOURCE (new as of
+  2026-07-27, via mpc2emu's parsers.krz_parser) -- a real Patchman commercial
+  preset ("*>Flugelhorn", PMVOL002.KRZ), converted KRZ->E4B (17-18) and
+  KRZ->KRZ-with-options (19-20, the "same format, with options" case a plain
+  "Add" can't do). This fixture was deliberately chosen because it does NOT
+  need writers/krz_writer's octave-slice-stack "coverage remap" rebuild --
+  a real mpc2emu bug (see mpc2emu/TODO.md, 2026-07-27) crashes on writing
+  back a KRZ preset that DOES need that rebuild, found while building this
+  matrix. Rows 17-20 stage their ALREADY-CONVERTED preset directly (via
+  build/convert.py's convert_preset(), the same function Explorer's
+  "Import via mpc2emu..." calls), not through Pending's per-bank conversion
+  (still E4B-queue-only).
 """
 
 
 def write_manifest(out_dir: Path, rows: list[Row], skip_reasons: Optional[dict] = None) -> str:
     """Simple ASCII text table -- plain columns, readable in a terminal or a
-    plain editor. One row per image (16 rows), a header row, and the image
+    plain editor. One row per image (20 rows), a header row, and the image
     filename as its own column."""
     skip_reasons = skip_reasons or {}
     headers = ["#", "Filename", "Input", "Import Options", "What to look out for in testing"]
@@ -468,11 +680,11 @@ def write_manifest(out_dir: Path, rows: list[Row], skip_reasons: Optional[dict] 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR),
-                    help="directory to write the 16 .hda/.img files + manifest into")
+                    help="directory to write the 20 .hda/.img files + manifest into")
     p.add_argument("--only", default=None,
                     help="comma-separated row numbers to (re)build, e.g. 3,8,12")
-    p.add_argument("--groups", default="a,b,c",
-                    help="comma-separated groups to run, e.g. a or a,b,c")
+    p.add_argument("--groups", default="a,b,c,d",
+                    help="comma-separated groups to run, e.g. a or a,b,c,d")
     return p.parse_args(argv)
 
 
@@ -518,9 +730,21 @@ def main() -> int:
 
     results = []
     skip_reasons: dict[int, str] = {}
-    for group in ("A", "B", "C"):
+    for group in ("A", "B", "C", "D"):
         group_rows = [r for r in selected_rows if r.group == group]
         if not group_rows:
+            continue
+        if group == "D":
+            # Group D stages per-row (each row converts BEFORE staging --
+            # see build_one_from_krz_source()'s own docstring), not once
+            # per group like A/B/C.
+            print(f"\n=== Group D source: {GROUP_SOURCE_LABEL['D']} ===")
+            for row in group_rows:
+                print(f"--- Building #{row.num:02d} {row.slug} ---")
+                result = build_one_from_krz_source(win, out_dir, row)
+                if result.get("skipped"):
+                    skip_reasons[row.num] = result["skip_reason"]
+                results.append(result)
             continue
         print(f"\n=== Staging group {group} source ({GROUP_SOURCE_LABEL[group]}) ===")
         stage_group(win, group)
