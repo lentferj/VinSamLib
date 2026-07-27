@@ -234,35 +234,45 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
         w = workers.Worker(xpm_import.import_xpm, path, opts)
-        w.signals.finished.connect(lambda tmp_path: self._on_xpm_imported(tmp_path, opts))
+        w.signals.finished.connect(lambda tmp_path, p=path: self._on_xpm_imported(tmp_path, p, opts))
         w.signals.error.connect(self._on_xpm_import_error)
         w.signals.finished.connect(lambda *_: setattr(self, "_xpm_import_worker", None))
         w.signals.error.connect(lambda *_: setattr(self, "_xpm_import_worker", None))
         self._xpm_import_worker = w
         workers.run(w)
 
-    def _on_xpm_imported(self, tmp_path: str, opts: xpm_import.XpmImportOptions) -> None:
+    def _on_xpm_imported(self, tmp_path: str, xpm_path: str,
+                          opts: xpm_import.XpmImportOptions) -> None:
         # No save dialog, no library folder at all -- an XPM always holds
         # exactly one preset (mpc2emu's own parse_xpm() appends exactly
-        # one Preset, never more; see its docstring), so there's nothing
-        # to pick from and no reason to make it independently browsable
-        # first. Re-read the just-converted temp file with VinSamLib's
-        # own reader (same round-trip pattern as build/convert.py) to get
-        # a real (bank, preset) pair, and hand it straight to Pending for
-        # Image -- same shape a drag from Explorer would produce.
+        # one Preset, never more; see its docstring), so it belongs in New
+        # Bank as a single program/preset, the same as dragging one preset
+        # in from Explorer -- not a whole one-preset "bank" of its own in
+        # Pending for Image.
+        #
+        # Read the just-converted temp file's bytes but label the result
+        # with the ORIGINAL xpm_path, not the (freshly, uniquely,
+        # per-import) generated temp path -- BankPane's duplicate check
+        # keys on bank.path + preset index/id (see bank_pane.py's
+        # _preset_key()), and every import of the *same* source XPM
+        # should be recognized as the same preset, not a new one each time
+        # just because its throwaway temp file happened to land somewhere
+        # else. index/id are already stable for a fresh single-preset
+        # bank, so this is the only piece that needed fixing.
         try:
+            data = Path(tmp_path).read_bytes()
             if opts.target_format == "KRZ":
-                bank = krz.parse(tmp_path)
+                bank = krz.parse_bytes(data, xpm_path)
                 preset = next(iter(bank.programs.values()))
             else:
-                bank = e4b.parse(tmp_path)
+                bank = e4b.parse_bytes(data, xpm_path)
                 preset = bank.presets[0]
         except Exception as ex:
             QMessageBox.warning(
                 self, "Import XPM", f"Couldn't read back the converted bank:\n\n{ex}")
             return
-        name = preset.name.strip() or Path(tmp_path).stem
-        self._pending_pane.add_pending(name, opts.target_format, [(bank, preset, name)])
+        name = preset.name.strip() or Path(xpm_path).stem
+        self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
 
     def _on_xpm_import_error(self, message: str) -> None:
         last_line = message.strip().splitlines()[-1] if message else "error"

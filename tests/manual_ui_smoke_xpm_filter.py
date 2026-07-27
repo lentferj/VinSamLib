@@ -4,10 +4,10 @@ All/E4B/KRZ/XPM format filter actually includes/excludes it, it's
 indexed for search (index/scanner.py's _scan_xpm_container), a search hit
 resolves back into a real xpm TreeNode (ui/search_resolve.py), and
 double-clicking either a tree row or a search-result row for it triggers
-the same import flow as File > Import XPM... (lands directly in Pending
-for Image, no save dialog, no library folder). Same in-process-call
-approach as every other smoke test here (no X11 input automation
-available).
+the same import flow as File > Import XPM... (lands in New Bank as a
+single program/preset, no save dialog, no library folder). Same
+in-process-call approach as every other smoke test here (no X11 input
+automation available).
 """
 import sys
 import tempfile
@@ -88,9 +88,10 @@ def main():
     assert Path(resolved.payload).exists()
 
     # 4) Full MainWindow: double-clicking the tree row triggers the same
-    #    import flow as File > Import XPM... -- lands directly in
-    #    Pending for Image as a one-preset bank recipe, no save dialog
-    #    and no library folder (see MainWindow._on_xpm_imported()).
+    #    import flow as File > Import XPM... -- lands in New Bank as a
+    #    single program/preset, same as dragging a preset in from
+    #    Explorer, no save dialog and no library folder
+    #    (see MainWindow._on_xpm_imported()).
     config2 = Config.load()
     mpc2emu_bridge.install(config2)
     config2.library_roots = [XPM_DIR]
@@ -111,10 +112,10 @@ def main():
     while win._xpm_import_worker is not None and time.time() < deadline:
         QCoreApplication.processEvents()
         time.sleep(0.1)
-    print("pending queue after double-click import:",
-          [(e["name"], e["format"], len(e["items"])) for e in win._pending_pane._pending])
-    assert len(win._pending_pane._pending) == 1
-    assert len(win._pending_pane._pending[0]["items"]) == 1
+    print("New Bank items after double-click import:",
+          [(name, type(b).__name__, type(p).__name__) for b, p, name in win._bank_pane._items])
+    assert len(win._bank_pane._items) == 1
+    assert not win._pending_pane._pending, "should not have created a Pending entry"
 
     print("\nALL XPM FILTER SMOKE CHECKS PASSED")
 
