@@ -55,6 +55,10 @@ class Config:
     # Browse…, Open…) — persisted across restarts so each one doesn't start
     # back at some default location every time.
     last_image_dir: Optional[Path] = None
+    # Same idea for File > Add Library Folder… — the parent of the last
+    # folder added, so picking a sibling library folder next time doesn't
+    # start back at the dialog's platform default every time.
+    last_library_dir: Optional[Path] = None
 
     CONFIG_FILE = "config.toml"
 
@@ -69,7 +73,10 @@ class Config:
         roots = [Path(p) for p in data.get("library_roots", [])]
         last_image_dir_str = data.get("last_image_dir")
         last_image_dir = Path(last_image_dir_str) if last_image_dir_str else None
-        return cls(mpc2emu_path=mpc2emu_path, library_roots=roots, last_image_dir=last_image_dir)
+        last_library_dir_str = data.get("last_library_dir")
+        last_library_dir = Path(last_library_dir_str) if last_library_dir_str else None
+        return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
+                    last_image_dir=last_image_dir, last_library_dir=last_library_dir)
 
     def save(self, path: Path | None = None) -> None:
         path = path or (user_config_dir() / self.CONFIG_FILE)
@@ -79,6 +86,8 @@ class Config:
         lines.append(f"library_roots = [{roots_str}]")
         if self.last_image_dir is not None:
             lines.append(f'last_image_dir = "{self.last_image_dir.as_posix()}"')
+        if self.last_library_dir is not None:
+            lines.append(f'last_library_dir = "{self.last_library_dir.as_posix()}"')
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def validate_mpc2emu_path(self) -> None:

@@ -185,15 +185,23 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
 class LibraryTreeModel(QAbstractItemModel):
     def __init__(self, roots: list[Path], parent=None):
         super().__init__(parent)
-        self._roots: list[TreeNode] = [TreeNode("directory", str(p), None, p) for p in roots]
+        sorted_roots = sorted(roots, key=lambda p: str(p).lower())
+        self._roots: list[TreeNode] = [TreeNode("directory", str(p), None, p) for p in sorted_roots]
         self._live_workers: list[workers.Worker] = []   # keep references alive until done
 
     # -- growing/shrinking the tree from the outside (File > Add/Remove
     # Library Folder…) -----------------------------------------------------
 
     def add_root(self, path: Path) -> None:
-        self.beginInsertRows(QModelIndex(), len(self._roots), len(self._roots))
-        self._roots.append(TreeNode("directory", str(path), None, path))
+        # Kept sorted alphabetically by path, not by insertion order --
+        # otherwise a folder added later would always show up last
+        # regardless of where it belongs alongside the others.
+        key = str(path).lower()
+        insert_at = 0
+        while insert_at < len(self._roots) and str(self._roots[insert_at].payload).lower() < key:
+            insert_at += 1
+        self.beginInsertRows(QModelIndex(), insert_at, insert_at)
+        self._roots.insert(insert_at, TreeNode("directory", str(path), None, path))
         self.endInsertRows()
 
     def remove_root(self, path: Path) -> bool:

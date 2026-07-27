@@ -183,8 +183,9 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def _add_library_folder(self) -> None:
+        start_dir = str(self._config.last_library_dir) if self._config.last_library_dir else ""
         path = QFileDialog.getExistingDirectory(
-            self, "Add Library Folder", "",
+            self, "Add Library Folder", start_dir,
             options=QFileDialog.Option.DontUseNativeDialog)
         if not path:
             return
@@ -193,6 +194,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{p} is already in the library")
             return
         self._config.library_roots.append(p)
+        self._config.last_library_dir = p.parent
         self._config.save()
         self._model.add_root(p)
         self._start_scan([p])
