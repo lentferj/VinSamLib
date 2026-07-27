@@ -59,6 +59,7 @@ class MainWindow(QMainWindow):
         self._bank_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
         self._explorer.addToBankRequested.connect(self._add_node_to_bank)
         self._explorer.importXpmRequested.connect(self._import_xpm)
+        self._explorer.removeLibraryRootRequested.connect(self._remove_library_root)
 
         self._pending_pane = PendingBanksPane()
         self._pending_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
@@ -69,7 +70,19 @@ class MainWindow(QMainWindow):
         self._image_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
         self._pending_pane.buildRequested.connect(self._image_pane.receive_bank_files)
 
+        # Minimum widths so dragging one handle can't crush a neighboring
+        # column all the way to zero -- QSplitter's default
+        # childrenCollapsible=True lets any pane vanish once its neighbor's
+        # growth passes it, which is also what made dragging feel "steppy"
+        # (the collapse threshold, not a smooth width all the way down).
+        self._explorer.setMinimumWidth(200)
+        self._samples.setMinimumWidth(150)
+        self._bank_pane.setMinimumWidth(180)
+        self._pending_pane.setMinimumWidth(180)
+        self._image_pane.setMinimumWidth(180)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
         splitter.addWidget(self._explorer)
         splitter.addWidget(self._samples)
         splitter.addWidget(self._bank_pane)
@@ -185,6 +198,11 @@ class MainWindow(QMainWindow):
         self._start_scan([p])
 
     def _remove_library_folder(self) -> None:
+        """File > Remove Library Folder…: picks a folder from the current
+        list first. Explorer's own right-click "Remove ... from Library"
+        on a root row (see importXpmRequested's sibling signal,
+        removeLibraryRootRequested) already knows which one and skips
+        straight to _remove_library_root()."""
         if not self._config.library_roots:
             self.statusBar().showMessage("No library folders to remove")
             return
@@ -193,7 +211,9 @@ class MainWindow(QMainWindow):
             self, "Remove Library Folder", "Folder to remove:", items, 0, False)
         if not ok or not choice:
             return
-        path = Path(choice)
+        self._remove_library_root(Path(choice))
+
+    def _remove_library_root(self, path: Path) -> None:
         if QMessageBox.question(
                 self, "Remove Library Folder",
                 f"Remove {path} from your library?\n\n"

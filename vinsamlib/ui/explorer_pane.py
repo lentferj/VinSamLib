@@ -57,6 +57,7 @@ class ExplorerPane(QWidget):
     selectionChanged = Signal(object)   # TreeNode | None
     addToBankRequested = Signal(list)   # list[TreeNode] (always kind == "preset")
     importXpmRequested = Signal(str)    # absolute path to a .xpm file
+    removeLibraryRootRequested = Signal(object)   # Path of a root "directory" node
 
     def __init__(self, model: LibraryTreeModel, index_db: Optional[IndexDB] = None, parent=None):
         super().__init__(parent)
@@ -258,11 +259,16 @@ class ExplorerPane(QWidget):
     def _show_context_menu(self, nodes: list[Optional[TreeNode]], global_pos) -> None:
         presets = [n for n in nodes if n is not None and n.kind == "preset"]
         xpms = [n for n in nodes if n is not None and n.kind == "xpm"]
-        if not presets and not xpms:
+        # A library root is a top-level "directory" node (no parent) --
+        # only those are individually tracked in Config.library_roots and
+        # thus removable; a plain subdirectory isn't its own library entry.
+        roots = [n for n in nodes if n is not None and n.kind == "directory" and n.parent is None]
+        if not presets and not xpms and not roots:
             return
         menu = QMenu(self)
         add_action = None
         import_action = None
+        remove_action = None
         if presets:
             label = f'Add "{presets[0].label}" to New Bank' if len(presets) == 1 \
                 else f"Add {len(presets)} presets to New Bank"
@@ -271,11 +277,17 @@ class ExplorerPane(QWidget):
             # Multi-XPM import isn't supported yet -- only offered for a
             # single selected .xpm row.
             import_action = menu.addAction(f'Import "{xpms[0].label}"…')
+        if len(roots) == 1:
+            # Multi-root removal isn't offered either -- same reasoning,
+            # keep the one-item-at-a-time pattern consistent.
+            remove_action = menu.addAction(f'Remove "{roots[0].label}" from Library…')
         chosen = menu.exec(global_pos)
         if add_action is not None and chosen == add_action:
             self.addToBankRequested.emit(presets)
         elif import_action is not None and chosen == import_action:
             self.importXpmRequested.emit(str(xpms[0].payload))
+        elif remove_action is not None and chosen == remove_action:
+            self.removeLibraryRootRequested.emit(roots[0].payload)
 
 
 def _format_hit(hit: SearchResult) -> str:
