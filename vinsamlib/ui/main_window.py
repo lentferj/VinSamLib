@@ -28,6 +28,8 @@ from .models import LibraryTreeModel
 from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
 from .settings_dialog import SettingsDialog
+from .xpm_import_dialog import XpmImportDialog
+from ..build import xpm_import
 from ..config import Config, user_data_dir
 from ..index.db import IndexDB
 from ..index.scanner import scan
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
 
         self._index_db = IndexDB(user_data_dir() / "index.db")
         self._scan_worker: workers.Worker | None = None
+        self._xpm_import_worker: workers.Worker | None = None
 
         self._model = LibraryTreeModel(list(config.library_roots))
 
@@ -112,6 +115,16 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        import_xpm_action = QAction("Import XPM…", self)
+        import_xpm_action.triggered.connect(self._import_xpm)
+        xpm_ok, xpm_reason = self._config.check_xpm_import_support()
+        import_xpm_action.setEnabled(xpm_ok)
+        import_xpm_action.setToolTip(
+            xpm_reason if xpm_ok else f"Unavailable: {xpm_reason}")
+        file_menu.addAction(import_xpm_action)
+
+        file_menu.addSeparator()
+
         settings_action = QAction("Settings…", self)
         settings_action.triggered.connect(self._show_settings)
         file_menu.addAction(settings_action)
@@ -167,6 +180,65 @@ class MainWindow(QMainWindow):
         if dialog.exec() == SettingsDialog.DialogCode.Accepted and dialog.path_changed:
             self.statusBar().showMessage(
                 "mpc2emu path updated — restart VinSamLib to apply", 8000)
+
+    # -- XPM import ---------------------------------------------------------------
+
+    def _import_xpm(self) -> None:
+        if self._xpm_import_worker is not None:
+            self.statusBar().showMessage("An XPM import is already running")
+            return
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Import XPM", "", "Akai XPM programs (*.xpm)",
+            options=QFileDialog.Option.DontUseNativeDialog)
+        if not path:
+            return
+        opts = XpmImportDialog.get_import_options(self)
+        if opts is None:
+            return
+        self.statusBar().showMessage(f"Importing {Path(path).name}…")
+        w = workers.Worker(xpm_import.import_xpm, path, opts)
+        w.signals.finished.connect(lambda tmp_path: self._on_xpm_imported(tmp_path, opts))
+        w.signals.error.connect(self._on_xpm_import_error)
+        w.signals.finished.connect(lambda *_: setattr(self, "_xpm_import_worker", None))
+        w.signals.error.connect(lambda *_: setattr(self, "_xpm_import_worker", None))
+        self._xpm_import_worker = w
+        workers.run(w)
+
+    def _on_xpm_imported(self, tmp_path: str, opts: xpm_import.XpmImportOptions) -> None:
+        ext = "krz" if opts.target_format == "KRZ" else "e4b"
+        dest, _filter = QFileDialog.getSaveFileName(
+            self, "Save Imported Bank", Path(tmp_path).name,
+            f"{opts.target_format} bank (*.{ext})",
+            options=QFileDialog.Option.DontUseNativeDialog)
+        if not dest:
+            self.statusBar().showMessage("Import cancelled before saving")
+            return
+        try:
+            Path(dest).write_bytes(Path(tmp_path).read_bytes())
+        except OSError as ex:
+            QMessageBox.warning(self, "Import XPM", f"Couldn't save to {dest}: {ex}")
+            return
+        self.statusBar().showMessage(f"Imported to {dest}", 8000)
+
+        dest_dir = Path(dest).resolve().parent
+        already_covered = any(
+            dest_dir == root or dest_dir.is_relative_to(root) for root in self._config.library_roots)
+        if not already_covered:
+            add_it = QMessageBox.question(
+                self, "Add to Library",
+                f"Add {dest_dir} to your library so the imported bank shows up in Explorer?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes) == QMessageBox.StandardButton.Yes
+            if add_it:
+                self._config.library_roots.append(dest_dir)
+                self._config.save()
+                self._model.add_root(dest_dir)
+                self._start_scan([dest_dir])
+
+    def _on_xpm_import_error(self, message: str) -> None:
+        last_line = message.strip().splitlines()[-1] if message else "error"
+        self.statusBar().showMessage(f"XPM import failed: {last_line}", 8000)
+        QMessageBox.warning(self, "Import XPM", f"Import failed:\n\n{last_line}")
 
     def _toggle_samples_column(self, checked: bool) -> None:
         self._samples.setVisible(checked)

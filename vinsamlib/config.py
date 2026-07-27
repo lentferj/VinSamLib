@@ -119,3 +119,16 @@ class Config:
         if missing:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Vintage resample/reduce is available"
+
+    def check_xpm_import_support(self) -> tuple[bool, str]:
+        """XPM import (build/xpm_import.py) needs mpc2emu's own Akai XPM
+        program parser specifically -- a checkout could satisfy
+        check_conversion_support() and still be missing this (or vice
+        versa), so it gets its own check rather than being folded in."""
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        marker = self.mpc2emu_path / "parsers" / "xpm_parser.py"
+        if not marker.exists():
+            return False, f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}"
+        return True, "XPM import is available"

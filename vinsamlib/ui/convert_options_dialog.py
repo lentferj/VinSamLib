@@ -4,11 +4,15 @@ and/or sample-count reduction passes before "Build Image ->" assembles a
 pending E4B bank (see build/convert.py -- this dialog only builds the
 data, it never touches mpc2emu itself).
 
-Two independent top-level toggles (Vintage Resample / Reduce Sample
-Count), each collapsing its own body when unchecked: QGroupBox's built-in
-checkable behavior enables/disables children for free but doesn't hide
-them, so each group's real content lives in an inner QWidget whose
-setVisible() is wired to the group's own toggled(bool) too.
+Three independent top-level toggles (Vintage Resample / Limit Maximum
+Sample Rate / Reduce Sample Count), each collapsing its own body when
+unchecked: QGroupBox's built-in checkable behavior enables/disables
+children for free but doesn't hide them, so each group's real content
+lives in an inner QWidget whose setVisible() is wired to the group's own
+toggled(bool) too. Max sample rate used to be nested inside Vintage
+Resample (matching convert.py's own CLI grouping) but that made it
+impossible to apply on its own even though convert.py itself treats it as
+a fully independent pipeline stage -- it's its own toggle now.
 """
 
 from __future__ import annotations
@@ -40,16 +44,17 @@ class ConvertOptionsDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        warning = QLabel(
+        self._warning_label = QLabel(
             "Applying vintage resample/reduce re-encodes this bank through "
             "mpc2emu's own model; a few advanced parameters not covered by "
             "that model may reset to defaults, and the final bank size may "
             "differ from what New Bank's meter showed.")
-        warning.setWordWrap(True)
-        warning.setStyleSheet("color: palette(mid); font-size: 11px;")
-        layout.addWidget(warning)
+        self._warning_label.setWordWrap(True)
+        self._warning_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+        layout.addWidget(self._warning_label)
 
         layout.addWidget(self._build_resample_group())
+        layout.addWidget(self._build_max_rate_group())
         layout.addWidget(self._build_reduce_group())
         layout.addStretch()
 
@@ -72,9 +77,9 @@ class ConvertOptionsDialog(QDialog):
             self._profile_box.setCurrentIndex(idx)
             self._bandpass_check.setChecked(not opts.no_bandpass)
             self._keep_gain_check.setChecked(opts.resample_keep_gain)
-            if opts.max_sample_rate:
-                self._max_rate_check.setChecked(True)
-                self._max_rate_spin.setValue(opts.max_sample_rate)
+        if opts.max_sample_rate:
+            self._max_rate_group.setChecked(True)
+            self._max_rate_spin.setValue(opts.max_sample_rate)
         if opts.reduce_key_zones_pct > 0:
             self._key_zone_group.setChecked(True)
             self._key_zone_slider.setValue(int(opts.reduce_key_zones_pct))
@@ -111,18 +116,36 @@ class ConvertOptionsDialog(QDialog):
         self._keep_gain_check.setChecked(False)
         form.addRow("", self._keep_gain_check)
 
-        self._max_rate_check = QCheckBox("Limit maximum sample rate")
-        self._max_rate_check.setChecked(False)
-        form.addRow("", self._max_rate_check)
+        outer.addWidget(body)
+        return group
+
+    # -- Independent: max sample rate ------------------------------------------
+    # convert.py treats --max-sample-rate as its own pipeline stage, entirely
+    # independent of --resample (it ran unconditionally in convert.py's own
+    # main(), before this dialog existed the plan doc already flagged this:
+    # "grouped [with Resample] for UX only" -- so it needs to be checkable
+    # on its own, not gated behind Vintage Resample also being checked.
+
+    def _build_max_rate_group(self) -> QGroupBox:
+        group = QGroupBox("Limit Maximum Sample Rate")
+        group.setCheckable(True)
+        group.setChecked(False)
+        self._max_rate_group = group
+        outer = QVBoxLayout(group)
+
+        body = QWidget()
+        body.setVisible(False)
+        group.toggled.connect(body.setVisible)
+        row = QHBoxLayout(body)
+        row.setContentsMargins(0, 0, 0, 0)
 
         self._max_rate_spin = QSpinBox()
         self._max_rate_spin.setRange(_MIN_HZ, _MAX_HZ)
         self._max_rate_spin.setSingleStep(1000)
         self._max_rate_spin.setValue(_DEFAULT_HZ)
         self._max_rate_spin.setSuffix(" Hz")
-        self._max_rate_spin.setVisible(False)
-        self._max_rate_check.toggled.connect(self._max_rate_spin.setVisible)
-        form.addRow("", self._max_rate_spin)
+        row.addWidget(self._max_rate_spin)
+        row.addStretch()
 
         outer.addWidget(body)
         return group
@@ -179,13 +202,12 @@ class ConvertOptionsDialog(QDialog):
         resample_profile = None
         no_bandpass = False
         resample_keep_gain = False
-        max_sample_rate = None
         if self._resample_group.isChecked():
             resample_profile = self._profile_keys[self._profile_box.currentIndex()]
             no_bandpass = not self._bandpass_check.isChecked()
             resample_keep_gain = self._keep_gain_check.isChecked()
-            if self._max_rate_check.isChecked():
-                max_sample_rate = self._max_rate_spin.value()
+
+        max_sample_rate = self._max_rate_spin.value() if self._max_rate_group.isChecked() else None
 
         reduce_key_zones_pct = (
             float(self._key_zone_slider.value()) if self._key_zone_group.isChecked() else 0.0)
