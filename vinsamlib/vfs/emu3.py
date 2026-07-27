@@ -7,10 +7,13 @@ lives buried inside ``writers.iso_builder.emu_hdd_append()``. That parsing
 here into a standalone, importable reader — see
 ``mpc2emu/docs/EMU3_ISO_FORMAT.md`` §2-3 for the on-disk layout this mirrors.
 
-Per the project's scope decision, only entries whose type marker is ``E4B0``
-(an E-mu E4B bank) are surfaced as BANK entries; other EMU3 content (e.g. the
-EIII-era `.EFE`/ROM special files) is listed but left untyped, since E-mu
-support in VinSamLib is E4B-only.
+Entries whose type marker is ``E4B0`` (an E-mu E4B bank) or whose content
+starts with one of the three EIII/ESI identifier strings are surfaced as
+BANK entries — the EMU3 *filesystem* is shared by EIII/ESI/EIV alike
+(emu3fs), so an EMU3-filesystem disc commonly holds EIII-format bank data
+alongside (or instead of) E4B banks, and ``banks/eiii.py`` can read it now.
+Other EMU3 content (e.g. the EIII-era `.EFE`/ROM special files) is still
+listed but left untyped.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import struct
 from typing import Optional
 
 from .base import Entry, EntryKind, WritableVolume
+from ..banks import eiii as vs_eiii
 
 BSIZE = 512
 BSIZE_BITS = 9
@@ -211,24 +215,20 @@ class Emu3Volume(WritableVolume):
                 # others (e.g. "Formula 4000") — not a reliable tag. And the
                 # EMU3 *filesystem* is shared by EIII/ESI/EIV alike (emu3fs),
                 # so an EMU3-filesystem disc can hold EIII-format bank data
-                # (header 'EMULATOR 3X ') rather than E4B ('FORM'...'E4B0')
-                # even when the directory-entry file type is regular
-                # STD/UPD. Per the E4B-only scope decision, only content
-                # whose actual header says E4B is surfaced as a BANK; other
-                # STD/UPD content (EIII banks, etc.) is listed but tagged
-                # with its detected format instead.
+                # rather than E4B ('FORM'...'E4B0') even when the directory-
+                # entry file type is regular STD/UPD — check the actual
+                # content header rather than trusting either.
                 is_bank = False
                 detected_format = "system"
                 if fields["ftype"] in (EMU3_FTYPE_STD, EMU3_FTYPE_UPD) and fields["start_cluster"]:
                     f.seek(data_off + (fields["start_cluster"] - 1) * bpc * BSIZE)
-                    head = f.read(12)
+                    head = f.read(16)
                     if head[:4] == b"FORM" and head[8:12] == b"E4B0":
                         is_bank = True
                         detected_format = "E4B"
-                    elif head[:3] == b"EMU":
-                        # EIII-family bank headers seen in the wild: "EMULATOR 3X",
-                        # "EMU SI-32 v3" (ESI-32), plausibly others — all begin "EMU".
-                        detected_format = "EIII (unsupported)"
+                    elif vs_eiii.detect_format(head) is not None:
+                        is_bank = True
+                        detected_format = "EIII"
                     else:
                         detected_format = "unknown"
                 out.append(Entry(

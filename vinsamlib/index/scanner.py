@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .db import IndexDB
-from ..banks import e4b, krz
+from ..banks import e4b, eiii, krz
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
@@ -77,7 +77,7 @@ def _scan_bank_container(path: str, size: int, db: IndexDB, progress: ProgressCB
     fmt, bank = _parse_bank_bytes(data, path)
     cid = db.begin_container(path, "bank", fmt, size, mtime)
     if bank is None:
-        db.finish_container(cid, error="not a recognised E4B or KRZ bank")
+        db.finish_container(cid, error="not a recognised E4B, KRZ or EIII bank")
         return
     _index_bank_presets(db, cid, None, bank, fmt)
     db.finish_container(cid)
@@ -149,7 +149,7 @@ def _scan_vfs_listing(vol, folder_entry, db: IndexDB, container_id: int,
             fmt, bank = _parse_bank_bytes(data, e.name)
             if bank is not None:
                 _index_bank_presets(db, container_id, item_id, bank, fmt)
-        # OTHER_FILE (EIII banks, system entries, ...): out of scope, not indexed
+        # OTHER_FILE (system/ROM entries, unrecognised content, ...): out of scope, not indexed
 
 
 def _parse_bank_bytes(data: bytes, label: str):
@@ -163,6 +163,11 @@ def _parse_bank_bytes(data: bytes, label: str):
             return "KRZ", krz.parse_bytes(data, label)
         except Exception:
             return "KRZ", None
+    if eiii.detect_format(data) is not None:
+        try:
+            return "EIII", eiii.parse_bytes(data, label)
+        except Exception:
+            return "EIII", None
     return "", None
 
 
@@ -176,3 +181,7 @@ def _index_bank_presets(db: IndexDB, container_id: int, parent_item_id: Optional
         for ordinal, prog in enumerate(bank.programs.values()):
             db.add_item(container_id, parent_item_id, "preset", prog.name.strip() or "(untitled)",
                         native_id=str(prog.id), format="KRZ", ordinal=ordinal)
+    elif fmt == "EIII":
+        for ordinal, p in enumerate(bank.presets):
+            db.add_item(container_id, parent_item_id, "preset", p.name.strip() or "(untitled)",
+                        native_id=str(p.index), format="EIII", ordinal=ordinal)

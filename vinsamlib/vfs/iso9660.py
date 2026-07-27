@@ -17,7 +17,7 @@ from typing import Optional
 from .base import Entry, EntryKind, Volume
 
 SECTOR = 2048
-_BANK_EXTS = {".krz", ".k25", ".k26", ".e4b"}
+_BANK_EXTS = {".krz", ".k25", ".k26", ".e4b", ".e3x", ".esi", ".e3b"}
 
 
 class Iso9660FormatError(ValueError):

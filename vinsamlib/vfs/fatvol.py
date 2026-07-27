@@ -32,7 +32,7 @@ _DELETED = 0xE5
 _FAT16_EOC = 0xFFF8
 _FAT32_EOC = 0x0FFFFFF8
 
-_BANK_EXTS = {".krz", ".k25", ".k26", ".e4b"}
+_BANK_EXTS = {".krz", ".k25", ".k26", ".e4b", ".e3x", ".esi", ".e3b"}
 
 
 def _classify(name: str) -> EntryKind:
