@@ -27,6 +27,7 @@ from .image_pane import ImagePane
 from .models import LibraryTreeModel
 from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
+from .settings_dialog import SettingsDialog
 from ..config import Config, user_data_dir
 from ..index.db import IndexDB
 from ..index.scanner import scan
@@ -111,6 +112,12 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        settings_action = QAction("Settings…", self)
+        settings_action.triggered.connect(self._show_settings)
+        file_menu.addAction(settings_action)
+
+        file_menu.addSeparator()
+
         quit_action = QAction("Quit", self)
         quit_action.setShortcut("Ctrl+Q")
         quit_action.triggered.connect(self.close)
@@ -154,6 +161,12 @@ class MainWindow(QMainWindow):
         self._config.save()
         self._model.add_root(p)
         self._start_scan([p])
+
+    def _show_settings(self) -> None:
+        dialog = SettingsDialog(self._config, self)
+        if dialog.exec() == SettingsDialog.DialogCode.Accepted and dialog.path_changed:
+            self.statusBar().showMessage(
+                "mpc2emu path updated — restart VinSamLib to apply", 8000)
 
     def _toggle_samples_column(self, checked: bool) -> None:
         self._samples.setVisible(checked)

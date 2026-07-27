@@ -89,3 +89,33 @@ class Config:
                 f"(expected {marker} to exist). Set mpc2emu_path in "
                 f"{user_config_dir() / self.CONFIG_FILE}."
             )
+
+    def check_mpc2emu_path(self) -> tuple[bool, str]:
+        """Non-raising counterpart to validate_mpc2emu_path(), for a
+        Settings dialog that wants a live "found"/"not found: <reason>"
+        status without wrapping every keystroke in try/except."""
+        try:
+            self.validate_mpc2emu_path()
+        except FileNotFoundError as ex:
+            return False, str(ex)
+        return True, f"Found mpc2emu checkout at {self.mpc2emu_path}"
+
+    def check_conversion_support(self) -> tuple[bool, str]:
+        """Stricter check for the vintage resample/reduce feature: proves
+        the specific modules it needs are present, not just that *some*
+        mpc2emu checkout exists (an old/partial checkout during
+        development could plausibly have iso_builder.py but be missing
+        one of these)."""
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        required = [
+            Path("processors") / "resampler.py",
+            Path("processors") / "zone_reducer.py",
+            Path("parsers") / "e4b_parser.py",
+            Path("writers") / "e4b_writer.py",
+        ]
+        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        if missing:
+            return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
+        return True, "Vintage resample/reduce is available"
