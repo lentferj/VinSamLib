@@ -341,20 +341,25 @@ class MainWindow(QMainWindow):
     # -- convert an existing E4B preset via mpc2emu --------------------------------
 
     def _convert_preset_via_mpc2emu(self, node) -> None:
-        """Explorer's right-click "Import via mpc2emu..." on a real E4B
-        preset (see explorer_pane.py's convertPresetRequested) -- the same
+        """Explorer's right-click "Import via mpc2emu..." on a real preset
+        (see explorer_pane.py's convertPresetRequested) -- the same
         resample/reduce/target-format dialog and pipeline XPM import
         already uses, just starting from an already-native preset instead
-        of a foreign XPM. E4B-only, gated in explorer_pane.py's context
-        menu: mpc2emu has no KRZ *input* parser at all (see
-        build/convert.py's module docstring), so a KRZ preset can never
-        reach this path."""
+        of a foreign XPM. Works for both E4B and KRZ sources now (mpc2emu's
+        parsers.krz_parser, added 2026-07-27, made KRZ a real *input*
+        format too -- see build/convert.py's module docstring)."""
         if self._preset_convert_worker is not None:
             self.statusBar().showMessage("A conversion is already running")
             return
         bank, preset_obj = node.payload
+        # Default the target-format picker to the preset's OWN format --
+        # "same format, with options" (the common case: apply resample/
+        # reduce without converting) is a better default than always
+        # landing on E4B, now that a KRZ source is just as valid a start.
+        source_fmt = node.parent.format_label if node.parent is not None else "E4B"
         opts = XpmImportDialog.get_import_options(
-            self, title="Import via mpc2emu",
+            self, initial=convert.ConversionOptions(target_format=source_fmt or "E4B"),
+            title="Import via mpc2emu",
             warning_text=(
                 "Converting goes through mpc2emu's own model, same as any "
                 "other conversion here; a few advanced parameters may not "

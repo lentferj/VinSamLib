@@ -2,13 +2,20 @@
 KRZ bank container: parse and assemble at the raw-object level.
 
 A `.KRZ` file is a flat object database, not a chunk hierarchy — see
-``mpc2emu/docs/KRZ_FORMAT.md`` §1-2 and ``mpc2emu/writers/krz_writer.py``
-(the only place this layout is otherwise implemented, as a *writer* from a
-``models.common.Bank``; mpc2emu has no KRZ reader at all). As with
-``banks/e4b.py``, this module works directly on the on-disk bytes rather
-than through mpc2emu's model — **container-level surgery, not
-parse-and-re-serialize** — so that every parameter a real soundset carries
-(including any this project's own RE hasn't covered) survives untouched.
+``mpc2emu/docs/KRZ_FORMAT.md`` §1-2 and ``mpc2emu/writers/krz_writer.py``.
+mpc2emu also has its own KRZ *reader* now (``parsers/krz_parser.py``,
+added 2026-07-27) — used for the vintage resample/reduce conversion
+pipeline (``build/convert.py``), where going through its semantic
+``models.common.Bank`` is the whole point. But `assemble()` below still
+works directly on the on-disk bytes rather than through that model —
+**container-level surgery, not parse-and-re-serialize** — because the
+two have different jobs: assembling a new bank from browsed presets must
+preserve every parameter a real soundset carries byte-for-byte,
+including any this project's own RE (or mpc2emu's Bank model) hasn't
+covered, which a parse-and-rebuild through *any* semantic model would
+silently lose. Same reasoning as ``banks/e4b.py``, which keeps its own
+container-level reader for the identical reason even though mpc2emu's
+E4B parser has existed all along.
 
 Container layout (big-endian throughout; see KRZ_FORMAT.md §2):
     PRAM <osize> <rest[6]>          32-byte file header

@@ -1,5 +1,5 @@
 """Manual smoke test for "Import via mpc2emu..." on a single already-native
-E4B preset (Explorer's right-click, alongside "Add ... to New Bank" -- see
+preset (Explorer's right-click, alongside "Add ... to New Bank" -- see
 explorer_pane.py's convertPresetRequested, main_window.py's
 _convert_preset_via_mpc2emu()/_on_preset_converted(), build/convert.py's
 convert_preset()). This generalizes the exact same "assemble -> mpc2emu
@@ -7,13 +7,17 @@ convert -> re-parse -> add_presets()" pipeline XPM import already uses,
 just starting from a real preset already in the user's library instead of
 a foreign XPM file.
 
-Exercises three things:
-1. E4B preset -> E4B, with resample/reduce applied -> lands in New Bank,
-   smaller than an unconverted assemble() of the same preset.
-2. E4B preset -> KRZ (cross-format conversion, not just XPM import) --
-   confirms the resulting object is a real VinSamLib KrzFile/KrzObject.
-3. A KRZ-sourced preset is refused (mpc2emu has no KRZ *input* parser at
-   all) -- convert_preset() must raise, not silently do something wrong.
+Both E4B and KRZ are real mpc2emu *input* formats now (parsers.krz_parser,
+added 2026-07-27, corpus-verified against 593 real .KRZ files) -- this
+test exercises all four source/target combinations:
+1. E4B -> E4B, with resample/reduce applied -> lands in New Bank, smaller
+   than an unconverted assemble() of the same preset.
+2. E4B -> KRZ (cross-format) -- confirms a real VinSamLib KrzFile/KrzObject.
+3. KRZ -> E4B (cross-format, the new direction) -- confirms a real
+   VinSamLib E4BFile/E4BPreset.
+4. KRZ -> KRZ, with reduce applied ("same format, with options", not
+   just "Add") -- confirms it round-trips through mpc2emu's own model
+   and still produces a real, playable KrzFile.
 
 Same in-process-call approach as every other smoke test here (no X11
 input automation, and QMenu.exec() can't be stubbed -- see
@@ -35,7 +39,7 @@ from PySide6.QtWidgets import QApplication
 from vinsamlib import mpc2emu_bridge
 from vinsamlib.banks import e4b as vs_e4b
 from vinsamlib.banks import krz as vs_krz
-from vinsamlib.build.convert import ConversionOptions, ConvertOpError, convert_preset
+from vinsamlib.build.convert import ConversionOptions, convert_preset
 from vinsamlib.config import Config
 from vinsamlib.ui.main_window import MainWindow
 from vinsamlib.ui.models import TreeNode
@@ -78,19 +82,60 @@ def main():
     preset = bank.presets[0]
     print(f"using real preset: {preset.name.strip()!r} from {e4b_path.name}")
 
-    # -- context-menu gating: E4B preset offers the action, KRZ doesn't --------
     e4b_node = _preset_node(bank, preset, "E4B", preset.name.strip())
     assert e4b_node.parent.format_label == "E4B"
     krz_bank_for_gate = None
+    krz_preset_for_gate = None
     if KRZ_DIR.is_dir():
-        krz_path = next((p for p in KRZ_DIR.rglob("*") if p.suffix.lower() == ".krz"), None)
-        if krz_path is not None:
-            krz_bank_for_gate = vs_krz.parse(str(krz_path))
-            krz_prog = next(iter(krz_bank_for_gate.programs.values()))
-            krz_node = _preset_node(krz_bank_for_gate, krz_prog, "KRZ", "krz test")
-            assert krz_node.parent.format_label != "E4B", (
-                "a KRZ preset node must never satisfy explorer_pane.py's "
-                "E4B-only gate for the 'Import via mpc2emu...' action")
+        # Not just "the first .krz file with a nonzero zone count" -- many
+        # real K2000 discs are either entirely ROM-sample-based (e.g.
+        # KPOWER.KRZ: every program has keymap entries, but the referenced
+        # samples are all K2000 ROM, never present in the file) or, less
+        # obviously, program/keymap-only banks whose OWN samples are
+        # present as metadata objects but carry zero actual PCM bytes
+        # (e.g. LFOSET2.KRZ). VinSamLib's own summarize_krz_program()
+        # doesn't check PCM presence, only object presence, so either
+        # case silently passes a "has zones" filter without any real,
+        # convertible audio. mpc2emu's own krz_parser -- which DOES
+        # extract and require real PCM -- is the reliable ground truth:
+        # search with it first, then look up the matching program by
+        # name through VinSamLib's own reader for the actual test.
+        mpc2emu_bridge.install(config)
+        from parsers import krz_parser as mpc_krz_parser
+        for krz_path in sorted(KRZ_DIR.rglob("*")):
+            if krz_path.suffix.lower() != ".krz":
+                continue
+            try:
+                mpc_bank = mpc_krz_parser.parse_krz(str(krz_path))
+            except Exception:
+                continue
+            if sum(len(s.data) for s in mpc_bank.samples) == 0:
+                continue
+            real_preset = next((p for p in mpc_bank.presets
+                                 if p.voices and any(v.zones for v in p.voices)), None)
+            if real_preset is None:
+                continue
+            candidate_bank = vs_krz.parse(str(krz_path))
+            match = next((prog for prog in candidate_bank.programs.values()
+                          if prog.name.strip() == real_preset.name.strip()), None)
+            if match is None:
+                continue
+            # Validate with a real round trip, not just "has PCM" -- a
+            # preset needing writers.krz_writer's octave-slice-stack
+            # "coverage remap" rebuild can crash on write (a real mpc2emu
+            # bug, see mpc2emu/TODO.md's krz_writer entry, 2026-07-27);
+            # skip to the next candidate rather than fail this whole test
+            # on a bug outside VinSamLib's own code.
+            try:
+                convert_preset(candidate_bank, match, ConversionOptions(
+                    target_format="KRZ", resample_profile="emax1"))
+            except Exception as ex:
+                print(f"  (skipping {krz_path.name!r} {match.name.strip()!r} -- "
+                      f"doesn't survive a real round trip: {str(ex).splitlines()[0]})")
+                continue
+            krz_bank_for_gate = candidate_bank
+            krz_preset_for_gate = match
+            break
 
     # -- regression: a preset name containing "/" (a real, valid character
     # in vintage patch names, e.g. "CL EspHdFst/Sld") must not be used raw
@@ -155,16 +200,56 @@ def main():
     print("E4B->KRZ convert_preset() produced a real KrzFile with",
           len(krz_bank.programs), "program(s)")
 
-    # -- 3. A KRZ-sourced preset must be refused, not silently mishandled ------
-    if krz_bank_for_gate is not None:
-        krz_prog = next(iter(krz_bank_for_gate.programs.values()))
-        try:
-            convert_preset(krz_bank_for_gate, krz_prog, ConversionOptions(target_format="E4B"))
-            raise AssertionError("convert_preset() must refuse a KRZ-sourced preset")
-        except ConvertOpError as ex:
-            print("correctly refused KRZ-sourced preset:", ex)
+    # -- 3. KRZ -> E4B (cross-format, the new direction) -----------------------
+    if krz_preset_for_gate is not None:
+        print(f"using real KRZ program: {krz_preset_for_gate.name.strip()!r} "
+              f"from {krz_bank_for_gate.path}")
+        krz_baseline = vs_krz.assemble([(krz_bank_for_gate, krz_preset_for_gate)])
+        print("baseline (unconverted) KRZ single-program size:", len(krz_baseline))
+
+        e4b_tmp = convert_preset(krz_bank_for_gate, krz_preset_for_gate,
+                                  ConversionOptions(target_format="E4B"))
+        converted_e4b = vs_e4b.parse(e4b_tmp)
+        assert isinstance(converted_e4b, vs_e4b.E4BFile)
+        assert len(converted_e4b.presets) == 1
+        print("KRZ->E4B convert_preset() produced a real E4BFile with",
+              len(converted_e4b.presets), "preset(s)")
+
+        # -- 4. KRZ -> KRZ, with reduce applied ("same format, with options") --
+        krz_reduced_tmp = convert_preset(krz_bank_for_gate, krz_preset_for_gate,
+                                          ConversionOptions(target_format="KRZ",
+                                                             reduce_key_zones_pct=30.0))
+        reduced_krz = vs_krz.parse(krz_reduced_tmp)
+        assert isinstance(reduced_krz, vs_krz.KrzFile)
+        assert len(reduced_krz.programs) == 1
+        print("KRZ->KRZ (reduced) convert_preset() produced a real KrzFile with",
+              len(reduced_krz.programs), "program(s)")
+
+        # -- Explorer context-menu path end to end: right-click a KRZ preset,
+        # confirm "Import via mpc2emu..." works and defaults to same-format --
+        krz_node = _preset_node(krz_bank_for_gate, krz_preset_for_gate, "KRZ",
+                                 krz_preset_for_gate.name.strip())
+        seen_initial = {}
+
+        def _capture_initial(parent=None, initial=None, title="Import XPM", warning_text=None):
+            seen_initial["target_format"] = initial.target_format if initial else None
+            return ConversionOptions(target_format="KRZ", reduce_velocity_layers_pct=30.0)
+
+        XpmImportDialog.get_import_options = staticmethod(_capture_initial)
+        win._bank_pane._clear()
+        win._convert_preset_via_mpc2emu(krz_node)
+        _wait(win)
+        assert seen_initial["target_format"] == "KRZ", (
+            "the dialog should default its target-format picker to the "
+            "preset's OWN source format (KRZ here), not always E4B")
+        items = win._bank_pane._items
+        assert len(items) == 1
+        conv_bank, conv_preset, name = items[0]
+        assert isinstance(conv_bank, vs_krz.KrzFile) and isinstance(conv_preset, vs_krz.KrzObject)
+        assert name == f"{krz_preset_for_gate.name.strip()} (mpc2emu)"
+        print("Explorer 'Import via mpc2emu...' on a KRZ preset -> KRZ New Bank item:", name)
     else:
-        print("(skipped KRZ-source-refusal check: no .krz files found under", KRZ_DIR, ")")
+        print("(skipped KRZ-source checks: no .krz files found under", KRZ_DIR, ")")
 
     print("\nALL CONVERT-PRESET SMOKE CHECKS PASSED")
 

@@ -105,11 +105,15 @@ target format and optional vintage conversion, and it lands in New Bank
 as a single preset, ready to combine with anything else.
 
 **Run an existing preset through mpc2emu's vintage pipeline.**
-Right-click any real E4B preset in Explorer for a second option, "Import
-via mpc2emu…", offering the exact same resample/reduce dialog XPM import
-uses — apply the EMU Emulator II or Emax I character, or thin out an
-overly dense multisample, without leaving VinSamLib. (E4B sources only —
-mpc2emu has no KRZ *reader*, so a KRZ preset never offers this.)
+Right-click any real preset or program in Explorer — E4B or KRZ — for a
+second option, "Import via mpc2emu…", offering the exact same
+resample/reduce dialog XPM import uses: apply the EMU Emulator II or
+Emax I character, thin out an overly dense multisample, or convert to
+the other format entirely, without leaving VinSamLib. The dialog
+defaults its target format to the preset's own source format, so
+"same format, with options" (apply processing without converting) is
+one click away — the same "Add" a plain drag would do, plus optional
+processing.
 
 ---
 
@@ -188,9 +192,10 @@ library, not real commercial content.)*
 
 **Run an existing preset through mpc2emu (needs mpc2emu):**
 
-1. Find a real E4B preset anywhere in your library.
+1. Find a real E4B or KRZ preset/program anywhere in your library.
 2. Right-click it → **Import via mpc2emu…** — the same dialog as XPM
-   import.
+   import. The target-format picker defaults to the preset's own
+   format, so applying options without changing format is one click.
 3. Pick your options (say, the Emulator II profile with a 30% key-zone
    reduction) and confirm; the converted result lands in New Bank
    alongside anything already there, labeled `"<name> (mpc2emu)"`.
@@ -233,7 +238,7 @@ Right-click (or double-click) behavior depends on what you've selected:
 
 | Item | Double-click | Right-click menu |
 |---|---|---|
-| Preset/program | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B presets only) |
+| Preset/program | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B or KRZ) |
 | `.xpm` file | Import (opens the conversion dialog) | "Import …" |
 | Library root (top-level folder) | — | "Remove … from Library…" |
 
@@ -331,9 +336,11 @@ future enhancement, not yet built; the underlying technique, assembling
 temporary single-preset banks, is proven and documented for when it's
 picked up.)
 
-The conversion button is disabled for a KRZ-format entry with a tooltip
-explaining why — mpc2emu has no KRZ *reader*, so there's no round trip
-to apply DSP through for an already-KRZ bank.
+The conversion button is currently disabled for a KRZ-format queue (a
+scope decision, not a technical limitation any more — mpc2emu can read
+KRZ now too; per-bank KRZ conversion here just hasn't been wired up
+yet). Convert a KRZ preset individually via Explorer's "Import via
+mpc2emu…" in the meantime.
 
 **Build Image →** assembles every entry currently in the queue and hands
 the results to the Image column. Building does **not** empty the queue
@@ -345,8 +352,7 @@ iterating on conversion options).
 ![Convert Options dialog with Vintage Resample and Reduce Sample Count both expanded](docs/screenshots/05_convert_options.png)
 
 Shared by "Import via mpc2emu", Pending's per-bank conversion, and XPM
-import (which adds one more field on top — see below). Three
-independent, collapsible sections:
+import — three independent, collapsible sections:
 
 - **Vintage Resample** — pick `EMU Emulator II` (8-bit µ-law companded,
   27,777 Hz — the defining lo-fi grit) or `EMU Emax I` (12-bit linear,
@@ -369,8 +375,11 @@ The dialog auto-resizes as you check more sections, and the title/
 wording adapts to which feature opened it (e.g. "Import via mpc2emu" vs.
 "Import XPM") so it never says the wrong thing.
 
-**XPM import** adds an **Import as:** E4B/KRZ picker at the top.
-Switching to KRZ nudges (never forces) the max-sample-rate step to a
+**XPM import and "Import via mpc2emu"** both add an **Import as:** /
+target-format picker at the top (Pending's per-bank dialog doesn't —
+it's still E4B-queue-only, see Pending for Image above). "Import via
+mpc2emu" defaults this picker to the preset's own source format;
+switching it to KRZ nudges (never forces) the max-sample-rate step to a
 sane default of 24000 Hz if you haven't already set one yourself — the
 K2000 only has +1.46 semitones of up-pitch headroom at 44.1 kHz before
 wide key zones start clamping, while the E4XT has no such ceiling.
@@ -415,17 +424,21 @@ prefix would otherwise all show up under the same collapsed name.
 
 ### "Import via mpc2emu"
 
-Generalizes XPM import's exact same pipeline to a preset you already
-have natively in E4B: right-click it, choose options, and get a
-converted copy in New Bank — without exporting anything or leaving the
-app. **E4B sources only** (see Convert Options above for why); the menu
-option simply isn't offered for a KRZ preset. Converting the *same*
-source preset more than once (e.g. to compare two different option
-sets) gives each result a distinguishable name — `"<name> (mpc2emu)"`,
-then `"<name> (mpc2emu) 2"`, `"3"`, and so on — since two different
-conversions of one preset are deliberately **not** treated as
-duplicates by New Bank's dedup check (only an identical repeat would
-be), so nothing else would otherwise keep them apart in the list.
+Generalizes XPM import's exact same pipeline to a preset or program you
+already have natively in your library — E4B or KRZ, either can be the
+source and either can be the target: right-click it, choose options,
+and get a converted copy in New Bank — without exporting anything or
+leaving the app. This covers exactly the cases a plain "Add" can't:
+converting to the *other* format (source format ≠ New Bank's current
+format), or applying resample/reduce while keeping the *same* format
+(source format = target — the dialog defaults to this). Converting the
+*same* source preset more than once (e.g. to compare two different
+option sets) gives each result a distinguishable name —
+`"<name> (mpc2emu)"`, then `"<name> (mpc2emu) 2"`, `"3"`, and so on —
+since two different conversions of one preset are deliberately **not**
+treated as duplicates by New Bank's dedup check (only an identical
+repeat would be), so nothing else would otherwise keep them apart in
+the list.
 
 ### Settings
 
@@ -450,8 +463,10 @@ main queue and the per-bank contents list in Pending for Image.
 | Feature | Status |
 |---|---|
 | EIII / ESI-32 bank format | ❌ shown (greyed out, format-labeled), not readable — no reference implementation exists anywhere to build one from yet |
-| KRZ as a conversion *source* | ❌ mpc2emu has no KRZ reader — KRZ is always a conversion *target* only |
+| KRZ as a conversion *source* | ✅ mpc2emu's own KRZ reader (added 2026-07-27, corpus-verified against 593 real files) made this possible — KRZ presets/programs can now be converted the same way E4B ones can, via Explorer's "Import via mpc2emu…" |
+| Per-bank KRZ conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for KRZ now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ queues yet |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
+| Some coverage-remapped KRZ presets can't be re-processed | ⚠️ a real mpc2emu bug (`writers/krz_writer.py`, tracked in mpc2emu's own TODO): a preset needing the octave-slice-stack "coverage remap" rebuild can crash on write when reprocessed; most real content is unaffected — VinSamLib surfaces the real error if it happens rather than silently failing |
 | Gotek floppy images | ⚠️ create-only — not appendable (a real FAT12 floppy constraint, not a bug) |
 | Real hardware confirmation of VinSamLib's own new UI features | This app's own UI/workflow is verified by real use against the author's library; the underlying DSP claims it exposes (vintage resample character, reduction behavior) carry mpc2emu's own separately-documented hardware confirmation |
 

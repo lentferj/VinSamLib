@@ -1,20 +1,21 @@
 """
 Wraps mpc2emu's own parse -> Bank -> process -> write round trip for the
 vintage resample/reduce conversion options panel. Operates on an
-already-assembled, on-disk .E4B file (the output of banks.e4b.assemble())
--- never touches assemble() itself, which must stay byte-verbatim (see its
-own docstring: going through models.common.Bank would silently degrade
-real commercial banks). This is therefore always a full pre/post-
-processing pass on a whole bank file, producing a NEW temp file --
-e4b_path itself is never mutated.
+already-assembled, on-disk bank file (the output of banks.e4b.assemble()/
+banks.krz.assemble()) -- never touches assemble() itself, which must stay
+byte-verbatim (see its own docstring: going through models.common.Bank
+would silently degrade real commercial banks). This is therefore always
+a full pre/post-processing pass on a whole bank file, producing a NEW
+temp file -- the input file itself is never mutated.
 
-E4B-only *input*: mpc2emu has no .krz *input* parser (parsers/registry.py's
-INPUT_EXTS has no '.krz' -- KRZ is write-only in this project's own
-pipeline), so there is no parse -> Bank round trip possible for KRZ banks
-at all. Callers must not offer this for KRZ queues/presets. The *output*
-format is a free choice (target_format), same as build/xpm_import.py --
-an E4B source can be converted straight to a KRZ result in one step, which
-is exactly what convert_preset() below is for.
+Both E4B and KRZ are readable *inputs* now: mpc2emu's parsers.krz_parser
+(added 2026-07-27, corpus-verified against 593 real .KRZ files) made KRZ
+a real source format, alongside the E4B parser this module already used.
+The *output* format is a free, independent choice (target_format) either
+way -- same E4B source can go to E4B or KRZ, same KRZ source can go to
+E4B or KRZ, all through the identical reduce/resample/write pipeline.
+_sniff_format() below reads the real on-disk magic bytes to pick the
+right parser rather than trusting a file extension.
 
 Applying this re-encodes a bank through mpc2emu's own Bank model; a few
 advanced parameters not covered by that model may reset to defaults --
@@ -32,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from ..mpc2emu_bridge import e4b_parser, e4b_writer, krz_writer, resampler, zone_reducer
+from ..mpc2emu_bridge import e4b_parser, e4b_writer, krz_parser, krz_writer, resampler, zone_reducer
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
@@ -63,8 +64,16 @@ class ConversionOptions:
     reduce_key_zones_pct: float = 0.0
     reduce_velocity_layers_pct: float = 0.0
 
-    def is_noop(self) -> bool:
-        return (self.target_format == "E4B"
+    def is_noop(self, source_format: str = "E4B") -> bool:
+        """`source_format` matters now that KRZ can be a source too: a
+        KRZ->KRZ request with no other options set is just as much a
+        genuine no-op as an E4B->E4B one -- skipping the round trip in
+        that case avoids needlessly losing fidelity on any advanced
+        parameter mpc2emu's Bank model doesn't carry, for zero benefit.
+        Defaults to "E4B" for existing callers that only ever process
+        E4B sources (the Pending-pane per-bank feature, the HW test
+        matrix) and don't pass this explicitly."""
+        return (self.target_format == source_format
                 and self.resample_profile is None
                 and not self.max_sample_rate
                 and self.reduce_key_zones_pct <= 0
@@ -125,44 +134,64 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str) -> str:
     return str(out_path)
 
 
-def apply_conversion(e4b_path: str, opts: ConversionOptions) -> str:
+def _sniff_format(bank_path: str) -> str:
+    """Real on-disk magic bytes, never the file extension (same convention
+    as vfs/detect.py's own sniff())."""
+    with open(bank_path, "rb") as f:
+        head = f.read(16)
+    if head[:4] == b"FORM" and head[8:12] == b"E4B0":
+        return "E4B"
+    if head[:4] == b"PRAM":
+        return "KRZ"
+    raise ConvertOpError(f"not a recognized E4B or KRZ bank: {bank_path}")
+
+
+def _parse_by_format(bank_path: str, fmt: str) -> Any:
+    if fmt == "KRZ":
+        return _run_captured(krz_parser.parse_krz, bank_path)
+    return _run_captured(e4b_parser.parse_e4b, bank_path)
+
+
+def apply_conversion(bank_path: str, opts: ConversionOptions) -> str:
     """Runs mpc2emu's own parse -> Bank -> resample/reduce -> write round
-    trip on an already-assembled E4B file, producing a NEW temp file (the
-    original is never touched). Returns the new file's path -- or
-    e4b_path itself, unchanged, if every option is off and the target
-    format is still E4B (a genuine no-op)."""
-    if opts.is_noop():
-        return e4b_path
-    bank = _run_captured(e4b_parser.parse_e4b, e4b_path)
-    return _apply_and_write(bank, opts, Path(e4b_path).stem)
+    trip on an already-assembled E4B or KRZ file, producing a NEW temp
+    file (the original is never touched). Returns the new file's path --
+    or bank_path itself, unchanged, if every option is off and the target
+    format matches the source (a genuine no-op)."""
+    fmt = _sniff_format(bank_path)
+    if opts.is_noop(fmt):
+        return bank_path
+    bank = _parse_by_format(bank_path, fmt)
+    return _apply_and_write(bank, opts, Path(bank_path).stem)
 
 
 def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions) -> str:
     """Applies mpc2emu resample/reduce/format-conversion to a SINGLE
-    already-native preset, rather than a whole assembled bank -- the same
-    "convert via mpc2emu" pipeline offered for XPM import and for whole
-    Pending-pane banks, now also reachable from Explorer's right-click
-    "Import via mpc2emu..." on an individual preset.
+    already-native preset/program, rather than a whole assembled bank --
+    the same "convert via mpc2emu" pipeline offered for XPM import and
+    for whole Pending-pane banks, reachable from Explorer's right-click
+    "Import via mpc2emu..." on an individual preset or program.
 
-    `bank`/`preset_obj` must be a VinSamLib E4BFile/E4BPreset pair (from a
-    "preset" TreeNode's payload) -- E4B only, for the same reason
-    apply_conversion() is: mpc2emu has no KRZ *input* parser at all, so a
-    KRZ-sourced preset can never be round-tripped through it. Callers must
-    not offer this action for KRZ presets (see explorer_pane.py's
-    context-menu gating).
+    `bank`/`preset_obj` is a VinSamLib E4BFile/E4BPreset OR KrzFile/
+    KrzObject pair (from a "preset" TreeNode's payload) -- both are real
+    mpc2emu *input* formats now (parsers.krz_parser, added 2026-07-27).
 
-    Assembles a temporary single-preset E4B via VinSamLib's own
-    byte-verbatim banks.e4b.assemble() (the same call BankPane's "Save
-    As" and banks/summary.py's preset preview already make), then reuses
-    apply_conversion() unchanged on that real file. Returns the new
-    file's path."""
+    Assembles a temporary single-preset/program file via VinSamLib's own
+    byte-verbatim banks.e4b.assemble()/banks.krz.assemble() (the same
+    call BankPane's "Save As" and banks/summary.py's preset preview
+    already make), then reuses apply_conversion() unchanged on that real
+    file. Returns the new file's path."""
     from ..banks import e4b as vs_e4b
-    if not isinstance(bank, vs_e4b.E4BFile):
-        raise ConvertOpError(
-            "mpc2emu can only read E4B input -- this preset isn't from an E4B bank")
-    data = vs_e4b.assemble([(bank, preset_obj)])
+    from ..banks import krz as vs_krz
     tmp_dir = Path(tempfile.mkdtemp(prefix=_CONVERT_TEMP_PREFIX))
-    stem = _sanitize_stem(preset_obj.name or "")
-    tmp_path = tmp_dir / f"{stem}.e4b"
+    stem = _sanitize_stem(getattr(preset_obj, "name", "") or "")
+    if isinstance(bank, vs_e4b.E4BFile):
+        data = vs_e4b.assemble([(bank, preset_obj)])
+        tmp_path = tmp_dir / f"{stem}.e4b"
+    elif isinstance(bank, vs_krz.KrzFile):
+        data = vs_krz.assemble([(bank, preset_obj)])
+        tmp_path = tmp_dir / f"{stem}.krz"
+    else:
+        raise ConvertOpError(f"not a recognized E4B or KRZ bank: {type(bank)!r}")
     tmp_path.write_bytes(data)
     return apply_conversion(str(tmp_path), opts)

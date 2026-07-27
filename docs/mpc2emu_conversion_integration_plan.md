@@ -1,5 +1,22 @@
 # mpc2emu Conversion Integration Plan (Resample / Reduce options panel)
 
+> **UPDATE (2026-07-27, after this plan's original milestones shipped):**
+> §2's "no `.krz` input parser in mpc2emu at all" finding — the basis for
+> scoping the whole feature to E4B-only sources — is **no longer true**.
+> mpc2emu added a real KRZ reader (`parsers/krz_parser.py`, corpus-verified
+> against 593 real `.KRZ` files). `build/convert.py`'s `apply_conversion()`
+> and `convert_preset()` now sniff the real source format and support
+> **both E4B and KRZ as conversion sources**, matching what was already
+> true for target format. The rest of this document is kept as-written —
+> an accurate record of the original design reasoning and the constraint
+> that was real at the time — rather than rewritten; see `README.md`'s
+> own "Import via mpc2emu" section and `mpc2emu/TODO.md` for the current,
+> accurate state. One piece of this plan's scoping decision is **still**
+> true: Pending for Image's per-*bank* "Process before building…" convert
+> button remains E4B-queue-only (§2's Pending-pane recommendation below)
+> — only Explorer's per-*preset* "Import via mpc2emu…" was extended to
+> KRZ sources so far.
+
 ## 0. Confirming what's already in place (mpc2emu availability check)
 
 Read `vinsamlib/config.py` and `vinsamlib/mpc2emu_bridge.py` in full. Confirmed:

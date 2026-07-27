@@ -275,12 +275,12 @@ class ExplorerPane(QWidget):
             label = f'Add "{presets[0].label}" to New Bank' if len(presets) == 1 \
                 else f"Add {len(presets)} presets to New Bank"
             add_action = menu.addAction(label)
-        if len(presets) == 1 and presets[0].parent is not None \
-                and presets[0].parent.format_label == "E4B":
+        if len(presets) == 1 and presets[0].parent is not None:
             # Single-preset only (matching the xpm/root one-item-at-a-time
-            # pattern below), and E4B only -- mpc2emu has no KRZ *input*
-            # parser at all (build/convert.py's module docstring), so a
-            # KRZ preset simply never gets this option offered.
+            # pattern below). Both E4B and KRZ presets get this now --
+            # mpc2emu's parsers.krz_parser (added 2026-07-27) made KRZ a
+            # real *input* format too, so a KRZ preset can be converted
+            # the same way an E4B one can, to either target format.
             convert_action = menu.addAction("Import via mpc2emu…")
         if len(xpms) == 1:
             # Multi-XPM import isn't supported yet -- only offered for a

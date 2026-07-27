@@ -51,8 +51,10 @@ def _assemble_all(pending: list[dict]) -> list[str]:
     through build/convert.py's own parse -> Bank -> resample/reduce ->
     write round trip on top of the just-assembled E4B temp file,
     replacing it with the processed version before it's handed onward
-    -- never applied to KRZ (mpc2emu has no .krz *input* parser, so
-    there is no round trip possible)."""
+    -- not currently offered for a KRZ queue (see _refresh()'s
+    _convert_btn gating): mpc2emu CAN read KRZ now too, but per-bank
+    conversion for KRZ hasn't been wired up here yet, only per-preset
+    via Explorer's "Import via mpc2emu...")."""
     paths: list[str] = []
     for entry in pending:
         fmt = entry["format"]
@@ -232,7 +234,9 @@ class PendingBanksPane(QWidget):
         is_krz = self._format == "KRZ"
         self._convert_btn.setEnabled(not is_krz)
         self._convert_btn.setToolTip(
-            "mpc2emu has no KRZ reader; vintage resample/reduce is E4B-only" if is_krz
+            "Per-bank conversion isn't offered for a KRZ queue yet -- convert "
+            "a preset individually via Explorer's \"Import via mpc2emu...\" "
+            "instead" if is_krz
             else "Choose vintage resample / sample-count reduction to apply "
                  "to the SELECTED pending bank's next Build Image (per bank, "
                  "not the whole queue)")

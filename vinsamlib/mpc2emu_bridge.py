@@ -64,6 +64,7 @@ class _Lazy:
 models_common = _Lazy("models.common")
 e4b_parser = _Lazy("parsers.e4b_parser")
 e4b_writer = _Lazy("writers.e4b_writer")
+krz_parser = _Lazy("parsers.krz_parser")
 resampler = _Lazy("processors.resampler")
 zone_reducer = _Lazy("processors.zone_reducer")
 xpm_parser = _Lazy("parsers.xpm_parser")
