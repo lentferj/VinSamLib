@@ -27,7 +27,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from vinsamlib import mpc2emu_bridge
 from vinsamlib.banks.e4b import E4BFile, E4BPreset
-from vinsamlib.build.xpm_import import XpmImportOptions
+from vinsamlib.build.convert import ConversionOptions
 from vinsamlib.config import Config
 from vinsamlib.ui.main_window import MainWindow
 from vinsamlib.ui.xpm_import_dialog import XpmImportDialog
@@ -36,7 +36,7 @@ XPM_PATH = str(Path.home() / "Samples/MPC/Roland Alpha Juno 2/43 Floating.Keygro
 
 QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (XPM_PATH, ""))
 XpmImportDialog.get_import_options = staticmethod(
-    lambda parent=None, initial=None: XpmImportOptions(target_format="E4B"))
+    lambda parent=None, initial=None: ConversionOptions(target_format="E4B"))
 # BankPane's duplicate check defaults to "prompt before skipping" -- the
 # re-import check below deliberately exercises that path, so answering
 # "No" (don't add the duplicate) here is what makes it deterministic.

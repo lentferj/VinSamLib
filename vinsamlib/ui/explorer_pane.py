@@ -57,6 +57,7 @@ class ExplorerPane(QWidget):
     selectionChanged = Signal(object)   # TreeNode | None
     addToBankRequested = Signal(list)   # list[TreeNode] (always kind == "preset")
     importXpmRequested = Signal(str)    # absolute path to a .xpm file
+    convertPresetRequested = Signal(object)   # single "preset" TreeNode, always E4B
     removeLibraryRootRequested = Signal(object)   # Path of a root "directory" node
 
     def __init__(self, model: LibraryTreeModel, index_db: Optional[IndexDB] = None, parent=None):
@@ -267,12 +268,20 @@ class ExplorerPane(QWidget):
             return
         menu = QMenu(self)
         add_action = None
+        convert_action = None
         import_action = None
         remove_action = None
         if presets:
             label = f'Add "{presets[0].label}" to New Bank' if len(presets) == 1 \
                 else f"Add {len(presets)} presets to New Bank"
             add_action = menu.addAction(label)
+        if len(presets) == 1 and presets[0].parent is not None \
+                and presets[0].parent.format_label == "E4B":
+            # Single-preset only (matching the xpm/root one-item-at-a-time
+            # pattern below), and E4B only -- mpc2emu has no KRZ *input*
+            # parser at all (build/convert.py's module docstring), so a
+            # KRZ preset simply never gets this option offered.
+            convert_action = menu.addAction("Import via mpc2emu…")
         if len(xpms) == 1:
             # Multi-XPM import isn't supported yet -- only offered for a
             # single selected .xpm row.
@@ -284,6 +293,8 @@ class ExplorerPane(QWidget):
         chosen = menu.exec(global_pos)
         if add_action is not None and chosen == add_action:
             self.addToBankRequested.emit(presets)
+        elif convert_action is not None and chosen == convert_action:
+            self.convertPresetRequested.emit(presets[0])
         elif import_action is not None and chosen == import_action:
             self.importXpmRequested.emit(str(xpms[0].payload))
         elif remove_action is not None and chosen == remove_action:

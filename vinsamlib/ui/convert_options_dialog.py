@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QFormLayout, QGroupBox, QHBoxLayout, QLabel,
                              QSlider, QSpinBox, QVBoxLayout, QWidget)
@@ -40,7 +40,7 @@ class ConvertOptionsDialog(QDialog):
     def __init__(self, parent=None, initial: Optional[ConversionOptions] = None):
         super().__init__(parent)
         self.setWindowTitle("Convert Options")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(460)
 
         layout = QVBoxLayout(self)
 
@@ -50,7 +50,7 @@ class ConvertOptionsDialog(QDialog):
             "that model may reset to defaults, and the final bank size may "
             "differ from what New Bank's meter showed.")
         self._warning_label.setWordWrap(True)
-        self._warning_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self._warning_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(self._warning_label)
 
         layout.addWidget(self._build_resample_group())
@@ -87,6 +87,17 @@ class ConvertOptionsDialog(QDialog):
             self._velocity_group.setChecked(True)
             self._velocity_slider.setValue(int(opts.reduce_velocity_layers_pct))
 
+    def _wire_resize_on_toggle(self, group: QGroupBox) -> None:
+        """QDialog doesn't auto-grow when a child's visibility toggles after
+        the window is already shown -- checking just one reduce/resample
+        group fits fine at whatever size the dialog first appeared at, but
+        checking a SECOND one needs more vertical space than that now-fixed
+        window has, and nothing else tells Qt to grow it (the user would
+        have to notice and manually drag the edge). Deferred via
+        singleShot(0, ...) so this runs after the layout has actually
+        recalculated its sizeHint post-toggle, not before."""
+        group.toggled.connect(lambda _checked: QTimer.singleShot(0, self.adjustSize))
+
     # -- Group A: Vintage Resample --------------------------------------------
 
     def _build_resample_group(self) -> QGroupBox:
@@ -99,6 +110,7 @@ class ConvertOptionsDialog(QDialog):
         body = QWidget()
         body.setVisible(False)
         group.toggled.connect(body.setVisible)
+        self._wire_resize_on_toggle(group)
         form = QFormLayout(body)
         form.setContentsMargins(0, 0, 0, 0)
 
@@ -136,6 +148,7 @@ class ConvertOptionsDialog(QDialog):
         body = QWidget()
         body.setVisible(False)
         group.toggled.connect(body.setVisible)
+        self._wire_resize_on_toggle(group)
         row = QHBoxLayout(body)
         row.setContentsMargins(0, 0, 0, 0)
 
@@ -144,6 +157,10 @@ class ConvertOptionsDialog(QDialog):
         self._max_rate_spin.setSingleStep(1000)
         self._max_rate_spin.setValue(_DEFAULT_HZ)
         self._max_rate_spin.setSuffix(" Hz")
+        # QSpinBox's own sizeHint doesn't reliably reserve room for the
+        # widest value + suffix on every platform/theme -- explicit
+        # minimum width so e.g. "48000 Hz" never clips.
+        self._max_rate_spin.setMinimumWidth(90)
         row.addWidget(self._max_rate_spin)
         row.addStretch()
 
@@ -160,11 +177,11 @@ class ConvertOptionsDialog(QDialog):
         outer = QVBoxLayout(group)
 
         self._key_zone_group, self._key_zone_slider = self._build_reduce_subgroup(
-            "Reduce Key Zones")
+            "Reduce Key Zones by")
         outer.addWidget(self._key_zone_group)
 
         self._velocity_group, self._velocity_slider = self._build_reduce_subgroup(
-            "Reduce Velocity Layers")
+            "Reduce Velocity Layers by")
         outer.addWidget(self._velocity_group)
 
         return group
@@ -177,6 +194,7 @@ class ConvertOptionsDialog(QDialog):
         body = QWidget()
         body.setVisible(False)
         group.toggled.connect(body.setVisible)
+        self._wire_resize_on_toggle(group)
 
         row = QHBoxLayout(body)
         row.setContentsMargins(0, 0, 0, 0)
@@ -187,6 +205,9 @@ class ConvertOptionsDialog(QDialog):
         spin.setRange(0, 100)
         spin.setSuffix("%")
         spin.setValue(_DEFAULT_REDUCE_PCT)
+        # Same reasoning as the max-rate spinbox above -- guarantee "100%"
+        # never clips regardless of platform/theme font metrics.
+        spin.setMinimumWidth(65)
         slider.valueChanged.connect(spin.setValue)
         spin.valueChanged.connect(slider.setValue)
         row.addWidget(slider, 1)

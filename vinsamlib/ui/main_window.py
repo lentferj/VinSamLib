@@ -31,7 +31,7 @@ from .samples_pane import SamplesPane
 from .settings_dialog import SettingsDialog
 from .xpm_import_dialog import XpmImportDialog
 from ..banks import e4b, krz
-from ..build import xpm_import
+from ..build import convert, xpm_import
 from ..config import Config, user_data_dir
 from ..index.db import IndexDB
 from ..index.scanner import scan
@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
         self._index_db = IndexDB(user_data_dir() / "index.db")
         self._scan_worker: workers.Worker | None = None
         self._xpm_import_worker: workers.Worker | None = None
+        self._preset_convert_worker: workers.Worker | None = None
 
         self._model = LibraryTreeModel(list(config.library_roots))
 
@@ -59,6 +60,7 @@ class MainWindow(QMainWindow):
         self._bank_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
         self._explorer.addToBankRequested.connect(self._add_node_to_bank)
         self._explorer.importXpmRequested.connect(self._import_xpm)
+        self._explorer.convertPresetRequested.connect(self._convert_preset_via_mpc2emu)
         self._explorer.removeLibraryRootRequested.connect(self._remove_library_root)
 
         self._pending_pane = PendingBanksPane()
@@ -264,7 +266,7 @@ class MainWindow(QMainWindow):
         workers.run(w)
 
     def _on_xpm_imported(self, tmp_path: str, xpm_path: str,
-                          opts: xpm_import.XpmImportOptions) -> None:
+                          opts: convert.ConversionOptions) -> None:
         # No save dialog, no library folder at all -- an XPM always holds
         # exactly one preset (mpc2emu's own parse_xpm() appends exactly
         # one Preset, never more; see its docstring), so it belongs in New
@@ -281,18 +283,10 @@ class MainWindow(QMainWindow):
         # just because its throwaway temp file happened to land somewhere
         # else. index/id are already stable for a fresh single-preset
         # bank, so this is the only piece that needed fixing.
-        try:
-            data = Path(tmp_path).read_bytes()
-            if opts.target_format == "KRZ":
-                bank = krz.parse_bytes(data, xpm_path)
-                preset = next(iter(bank.programs.values()))
-            else:
-                bank = e4b.parse_bytes(data, xpm_path)
-                preset = bank.presets[0]
-        except Exception as ex:
-            QMessageBox.warning(
-                self, "Import XPM", f"Couldn't read back the converted bank:\n\n{ex}")
+        result = self._read_back_converted(tmp_path, opts, label_path=xpm_path)
+        if result is None:
             return
+        bank, preset = result
         # preset.name is mpc2emu's own E4B-format preset name -- truncated
         # to 16 chars (a real hardware limit; see xpm_parser.py's
         # _safe_name()), so several distinctly-named XPMs sharing a long
@@ -304,6 +298,12 @@ class MainWindow(QMainWindow):
         # passed around VinSamLib's own UI, not the real (already
         # 16-char-truncated, same as any hardware bank) name baked into
         # preset_obj itself, which is unaffected.
+        # NOT run through unique_name() -- unlike preset conversion below,
+        # re-importing the same XPM is already correctly content-deduped
+        # (same xpm_path -> same identity -> "already present, skipped"),
+        # so pre-uniquifying the name here would show a misleading "(2)"
+        # on that skip message for what's actually a plain duplicate, not
+        # a second distinct item.
         name = Path(xpm_path).stem or preset.name.strip() or "Imported XPM"
         self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
 
@@ -311,6 +311,86 @@ class MainWindow(QMainWindow):
         last_line = message.strip().splitlines()[-1] if message else "error"
         self.statusBar().showMessage(f"XPM import failed: {last_line}", 8000)
         QMessageBox.warning(self, "Import XPM", f"Import failed:\n\n{last_line}")
+
+    def _read_back_converted(self, tmp_path: str, opts: convert.ConversionOptions,
+                              label_path: str) -> Optional[tuple]:
+        """Shared by _on_xpm_imported() and _on_preset_converted(): both
+        hand mpc2emu's freshly-written temp file back to VinSamLib's OWN
+        parser (never mpc2emu's) so what lands in New Bank is a normal,
+        byte-verbatim VinSamLib bank/preset pair like any other -- and
+        both label the re-parse with a caller-chosen stable path rather
+        than the throwaway temp path, so BankPane's duplicate check
+        (bank.path + preset index/id, see bank_pane.py's _preset_key())
+        keeps working. Returns (bank, preset) or None after showing a
+        warning on failure."""
+        try:
+            data = Path(tmp_path).read_bytes()
+            if opts.target_format == "KRZ":
+                bank = krz.parse_bytes(data, label_path)
+                preset = next(iter(bank.programs.values()))
+            else:
+                bank = e4b.parse_bytes(data, label_path)
+                preset = bank.presets[0]
+            return bank, preset
+        except Exception as ex:
+            QMessageBox.warning(
+                self, "Import via mpc2emu",
+                f"Couldn't read back the converted bank:\n\n{ex}")
+            return None
+
+    # -- convert an existing E4B preset via mpc2emu --------------------------------
+
+    def _convert_preset_via_mpc2emu(self, node) -> None:
+        """Explorer's right-click "Import via mpc2emu..." on a real E4B
+        preset (see explorer_pane.py's convertPresetRequested) -- the same
+        resample/reduce/target-format dialog and pipeline XPM import
+        already uses, just starting from an already-native preset instead
+        of a foreign XPM. E4B-only, gated in explorer_pane.py's context
+        menu: mpc2emu has no KRZ *input* parser at all (see
+        build/convert.py's module docstring), so a KRZ preset can never
+        reach this path."""
+        if self._preset_convert_worker is not None:
+            self.statusBar().showMessage("A conversion is already running")
+            return
+        bank, preset_obj = node.payload
+        opts = XpmImportDialog.get_import_options(
+            self, title="Import via mpc2emu",
+            warning_text=(
+                "Converting goes through mpc2emu's own model, same as any "
+                "other conversion here; a few advanced parameters may not "
+                "carry over. Resample/reduce below are optional and off "
+                "by default for either target format."))
+        if opts is None:
+            return
+        self.statusBar().showMessage(f"Converting {node.label}…")
+        w = workers.Worker(convert.convert_preset, bank, preset_obj, opts)
+        w.signals.finished.connect(
+            lambda tmp_path, n=node, o=opts: self._on_preset_converted(tmp_path, n, o))
+        w.signals.error.connect(self._on_preset_convert_error)
+        w.signals.finished.connect(lambda *_: setattr(self, "_preset_convert_worker", None))
+        w.signals.error.connect(lambda *_: setattr(self, "_preset_convert_worker", None))
+        self._preset_convert_worker = w
+        workers.run(w)
+
+    def _on_preset_converted(self, tmp_path: str, node, opts: convert.ConversionOptions) -> None:
+        # Fresh temp-path label (NOT the source preset's own bank.path) --
+        # unlike XPM's static source file, the *options* chosen here are
+        # part of what makes this result distinct: converting the same
+        # source preset twice with different resample/reduce choices must
+        # not be deduped against each other, only an identical repeat
+        # should be. Using the source identity would incorrectly conflate
+        # those; a fresh identity per conversion is the safer default.
+        result = self._read_back_converted(tmp_path, opts, label_path=tmp_path)
+        if result is None:
+            return
+        bank, preset = result
+        name = self._bank_pane.unique_name(f"{node.label} (mpc2emu)")
+        self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
+
+    def _on_preset_convert_error(self, message: str) -> None:
+        last_line = message.strip().splitlines()[-1] if message else "error"
+        self.statusBar().showMessage(f"Conversion failed: {last_line}", 8000)
+        QMessageBox.warning(self, "Import via mpc2emu", f"Conversion failed:\n\n{last_line}")
 
     def _toggle_samples_column(self, checked: bool) -> None:
         self._samples.setVisible(checked)

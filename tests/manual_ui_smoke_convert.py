@@ -46,7 +46,7 @@ E4B_DIR = Path.home() / "Dokumente/SYNTHS/E4XT/E4Bs/Rob.Papen-Techno.Synth.Const
 # Fixed choice the dialog would otherwise ask a human for -- mirrors the
 # plan's own example (Emax I + 30% key-zone reduce).
 _TEST_OPTIONS = ConversionOptions(resample_profile="emax1", reduce_key_zones_pct=30.0)
-ConvertOptionsDialog.get_options = staticmethod(lambda parent=None: _TEST_OPTIONS)
+ConvertOptionsDialog.get_options = staticmethod(lambda parent=None, initial=None: _TEST_OPTIONS)
 
 
 class FakeDropEvent:
@@ -133,10 +133,12 @@ def main():
     # "Process before building..." -- ConvertOptionsDialog.get_options is
     # stubbed above to return _TEST_OPTIONS without a real modal dialog.
     assert win._pending_pane._convert_btn.isEnabled(), "convert button should be enabled for an E4B queue"
+    win._pending_pane._list.setCurrentRow(0)
     win._pending_pane._show_convert_options()
     qwait(50)
-    print("convert opts stored on pane:", win._pending_pane._convert_opts)
-    assert win._pending_pane._convert_opts == _TEST_OPTIONS
+    stored = win._pending_pane._pending[0]["convert_opts"]
+    print("convert opts stored on entry:", stored)
+    assert stored == _TEST_OPTIONS
     grab(win, "convert_01_options_set.png")
 
     starter = IMG_DIR / "convert_test.hda"

@@ -38,7 +38,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QFrame, QHBoxLayo
                              QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import dnd, workers
-from ..banks import e4b, krz
+from .detail_pane import _escape, zone_stats_lines
+from ..banks import e4b, krz, summary
 
 _RECOMPUTE_DEBOUNCE_MS = 250
 _E4B_MAX_BYTES = 128 * 1024 * 1024   # writers/bank_splitter.py — hardware limit
@@ -76,6 +77,9 @@ class BankPane(QWidget):
         self._prompt_on_duplicate = True
         self._last_bytes: Optional[bytes] = None
         self._gen = 0
+        self._info_gen = 0
+        self._pre_add_snapshot: Optional[list] = None
+        self._was_over_limit = False
         self._live_workers: list[workers.Worker] = []
         self._recompute_timer = QTimer(self)
         self._recompute_timer.setSingleShot(True)
@@ -107,7 +111,7 @@ class BankPane(QWidget):
         box_layout.addStretch()
         hint = QLabel("Drag presets here from the library\nto start a new bank.")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet("color: palette(mid);")
+        hint.setStyleSheet("color: palette(placeholdertext);")
         box_layout.addWidget(hint)
         box_layout.addStretch()
         outer.addWidget(box)
@@ -130,7 +134,7 @@ class BankPane(QWidget):
         layout.addLayout(name_row)
 
         self._meter_label = QLabel("")
-        self._meter_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self._meter_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(self._meter_label)
 
         self._list = QListWidget()
@@ -144,10 +148,17 @@ class BankPane(QWidget):
         # via each item's UserRole payload once Qt's internal move finishes.
         self._list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._list.model().rowsMoved.connect(self._on_rows_moved)
+        self._list.itemSelectionChanged.connect(self._on_selection_changed)
         delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._list)
         delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         delete_shortcut.activated.connect(self._remove_selected)
         layout.addWidget(self._list, 1)
+
+        self._info_label = QLabel("")
+        self._info_label.setWordWrap(True)
+        self._info_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        self._info_label.setContentsMargins(0, 4, 0, 6)
+        layout.addWidget(self._info_label)
 
         row1 = QHBoxLayout()
         remove_btn = QPushButton("Remove Selected")
@@ -242,6 +253,27 @@ class BankPane(QWidget):
             return False
         return True
 
+    def unique_name(self, base: str) -> str:
+        """Returns `base` unchanged if no current item already displays that
+        exact name, otherwise `base` with an incrementing " 2", " 3", ...
+        suffix (same convention as a file manager's "Copy"/"Copy 2" naming).
+
+        For callers that intentionally give each conversion its own fresh
+        identity (XPM import, "Import via mpc2emu..." on a preset) so that
+        re-converting the same source with different options isn't treated
+        as a duplicate and skipped -- content-based dedup (_preset_key())
+        doesn't collide, but the display name would, since it's derived
+        from the same source name/filename every time. Without this, three
+        conversions of the same preset all show up as identical, indistin-
+        guishable rows."""
+        existing = {name for _bank, _preset, name in self._items}
+        if base not in existing:
+            return base
+        i = 2
+        while f"{base} {i}" in existing:
+            i += 1
+        return f"{base} {i}"
+
     # -- public entry point for the Explorer's right-click "Add to New Bank" ----
 
     def add_presets(self, items: list[tuple[Any, Any, str, str]]) -> bool:
@@ -282,7 +314,12 @@ class BankPane(QWidget):
         self._dedupe_enabled (View menu) turns the check off entirely.
         self._prompt_on_duplicate switches a caught duplicate from "skip
         silently" to "ask before skipping" (QMessageBox, one per
-        duplicate) -- either way returns (names added, names skipped)."""
+        duplicate) -- either way returns (names added, names skipped).
+
+        Snapshots self._items *before* this batch is appended -- if the
+        resulting bank turns out to be over the format's size/count limit,
+        _maybe_warn_over_limit() offers to undo back to this exact state."""
+        self._pre_add_snapshot = list(self._items)
         fmt = items[0][2]
         if self._format is None:
             self._format = fmt
@@ -349,6 +386,11 @@ class BankPane(QWidget):
         self._refresh()
 
     def _refresh(self) -> None:
+        # QListWidget.clear() doesn't reliably emit itemSelectionChanged in
+        # every Qt version -- invalidate any in-flight info lookup and
+        # blank the label explicitly rather than relying on that signal.
+        self._info_gen += 1
+        self._info_label.setText("")
         self._list.clear()
         for item in self._items:
             _bank, _preset, name = item
@@ -371,6 +413,47 @@ class BankPane(QWidget):
         ]
         self._meter_label.setText("Calculating…")
         self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
+
+    # -- selection info (single selected preset only) ---------------------------
+
+    def _on_selection_changed(self) -> None:
+        """Same "general info" DetailPane already shows for a preset in
+        Explorer, reused here (zone_stats_lines()) since New Bank had no
+        per-item info at all before -- only a whole-bank size meter.
+        Computed off the GUI thread since summarize_preset() reassembles
+        + reparses an E4B preset through mpc2emu (see banks/summary.py);
+        the generation-counter pattern matches DetailPane's own."""
+        self._info_gen += 1
+        gen = self._info_gen
+        selected = self._list.selectedItems()
+        if len(selected) != 1:
+            self._info_label.setText("")
+            return
+        bank, preset_obj, name = selected[0].data(Qt.ItemDataRole.UserRole)
+        self._info_label.setText("Loading…")
+        w = workers.Worker(summary.summarize_preset, bank, preset_obj)
+        w.signals.finished.connect(lambda ps, g=gen, n=name: self._apply_preset_info(g, n, ps))
+        w.signals.error.connect(lambda msg, g=gen: self._apply_preset_info_error(g, msg))
+        w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+        w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+        self._live_workers.append(w)
+        workers.run(w)
+
+    def _apply_preset_info(self, gen: int, name: str, ps: summary.PresetSummary) -> None:
+        if gen != self._info_gen:
+            return
+        voice_label = "Voices" if ps.format == "E4B" else "Keymaps"
+        self._info_label.setText(
+            f"<b>{_escape(name)}</b><br>"
+            f"{voice_label}: {ps.voice_count} &middot; "
+            f"Total sample size: {_human(ps.total_sample_bytes)}<br>"
+            f"{zone_stats_lines(ps.zones)}")
+
+    def _apply_preset_info_error(self, gen: int, message: str) -> None:
+        if gen != self._info_gen:
+            return
+        last_line = message.strip().splitlines()[-1] if message else "error"
+        self._info_label.setText(f"<i>Failed to load: {_escape(last_line)}</i>")
 
     # -- size meter (recomputes via the real assemble(), not an estimate) -------
 
@@ -398,12 +481,17 @@ class BankPane(QWidget):
             self._meter_label.setText(
                 f"{n} preset(s) — {_human(len(data))} / {_human(_E4B_MAX_BYTES)}")
             over = len(data) > _E4B_MAX_BYTES or n > _E4B_MAX_PRESETS
+            detail = (f"{n} presets exceed the E4XT's {_E4B_MAX_PRESETS}-preset limit."
+                      if n > _E4B_MAX_PRESETS else
+                      f"{_human(len(data))} exceeds the E4XT's {_human(_E4B_MAX_BYTES)} limit.")
         else:
             self._meter_label.setText(f"{n} preset(s) — {_human(len(data))}")
             over = n > _KRZ_MAX_PRESETS
+            detail = f"{n} presets exceed the K2000's {_KRZ_MAX_PRESETS}-preset limit."
         self._meter_label.setStyleSheet(
-            f"color: {'#c0392b' if over else 'palette(mid)'}; font-size: 11px;")
+            f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;")
         self._save_btn.setEnabled(not over)
+        self._maybe_warn_over_limit(over, detail)
 
     def _apply_size_error(self, gen: int, message: str) -> None:
         if gen != self._gen:
@@ -413,6 +501,39 @@ class BankPane(QWidget):
         self._meter_label.setText(f"Can't assemble: {last_line}")
         self._meter_label.setStyleSheet("color: #c0392b; font-size: 11px;")
         self._save_btn.setEnabled(False)
+        self._maybe_warn_over_limit(True, _friendly_assemble_error(last_line))
+
+    # -- over-limit popup ---------------------------------------------------------
+
+    def _maybe_warn_over_limit(self, over: bool, detail: str) -> None:
+        """Rising-edge only -- fires once when the bank crosses from fitting
+        to not fitting (right after an add), not again on every subsequent
+        recompute while it's still over (e.g. reordering, or a second add
+        while already over). Offers to undo back to the state captured by
+        _add_items() just before the add that pushed it over, if that
+        state is still available."""
+        if not over:
+            self._was_over_limit = False
+            self._pre_add_snapshot = None
+            return
+        if self._was_over_limit:
+            return
+        self._was_over_limit = True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Bank Too Large")
+        box.setText(f"This bank can't be built as-is.\n\n{detail}")
+        keep_btn = box.addButton("Keep Anyway", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(keep_btn)
+        undo_btn = None
+        if self._pre_add_snapshot is not None:
+            undo_btn = box.addButton("Undo Last Add", QMessageBox.ButtonRole.DestructiveRole)
+        box.exec()
+        if undo_btn is not None and box.clickedButton() is undo_btn:
+            self._items = self._pre_add_snapshot
+            self._pre_add_snapshot = None
+            self._was_over_limit = False
+            self._refresh()
 
     # -- save --------------------------------------------------------------------
 
@@ -459,3 +580,17 @@ def _human(n: int) -> str:
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} {unit}"
         size /= 1024
     return f"{size:.1f} GB"
+
+
+_TOO_LARGE_RE = re.compile(r"assembled bank too large: (\d+) > (\d+) bytes")
+
+
+def _friendly_assemble_error(last_line: str) -> str:
+    """banks.e4b.assemble() raises a raw byte-count ValueError -- reformat
+    the common "too large" case into human-readable sizes for the over-
+    limit popup; anything else (a genuine bug) is shown as-is."""
+    m = _TOO_LARGE_RE.search(last_line)
+    if m:
+        got, limit = int(m.group(1)), int(m.group(2))
+        return f"{_human(got)} exceeds the E4XT's {_human(limit)} limit."
+    return last_line

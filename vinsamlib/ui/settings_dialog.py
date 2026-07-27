@@ -45,7 +45,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._status_label)
 
         self._restart_label = QLabel("")
-        self._restart_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self._restart_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         self._restart_label.setWordWrap(True)
         layout.addWidget(self._restart_label)
 

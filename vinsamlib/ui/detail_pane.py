@@ -90,7 +90,7 @@ class DetailPane(QWidget):
         voice_label = "Voices" if ps.format == "E4B" else "Keymaps"
         html = (f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br>"
                 f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
-                f"{_zone_table(ps.zones)}")
+                f"{zone_stats_lines(ps.zones)}")
         self._browser.setHtml(html)
 
     def _apply_xpm(self, gen: int, xs: xpm_import.XpmSummary) -> None:
@@ -100,7 +100,7 @@ class DetailPane(QWidget):
                 f"Preset: {_escape(xs.preset_name) or '(untitled)'}<br>"
                 f"Samples: {xs.sample_count}<br>"
                 f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
-                f"{_zone_table(xs.zones)}")
+                f"{zone_stats_lines(xs.zones)}")
         self._browser.setHtml(html)
 
     def _apply_error(self, gen: int, message: str) -> None:
@@ -121,21 +121,46 @@ class DetailPane(QWidget):
         workers.run(w)
 
 
-def _zone_table(zones: list) -> str:
-    """Shared by _apply_preset (E4B/KRZ) and _apply_xpm -- same
-    ZoneSummary shape (banks/summary.py) either way, so both get the same
-    sample/key/vel/root/loop table rather than XPM getting a lesser view."""
-    if not zones:
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _range_or_single(values: tuple, unit: str) -> str:
+    if not values:
+        return ""
+    if len(values) == 1:
+        return f"{values[0]}{unit}"
+    return f"{values[0]}–{values[-1]}{unit}"
+
+
+def zone_stats_lines(zones: list) -> str:
+    """Shared by DetailPane's _apply_preset (E4B/KRZ) and _apply_xpm, and
+    reused by bank_pane.py's own New Bank selection info -- same
+    ZoneSummary shape (banks/summary.py) either way. Condensed lines
+    instead of one row per zone (a real preset can carry dozens): how many
+    distinct key zones and how many distinct samples in total; how many
+    distinct velocity layers and how many samples fall in each one (a
+    range if that varies zone to zone, a single count if it doesn't); and
+    bit depth/sample rate actually read off the samples themselves (a
+    range if the preset mixes rates/depths, a single value if uniform)."""
+    stats = summary.zone_stats(zones)
+    if stats is None:
         return "<i>No zones.</i>"
-    rows = "".join(
-        f"<tr><td>{_escape(z.sample_name)}</td><td>{z.lo_key}–{z.hi_key}</td>"
-        f"<td>{z.lo_vel}–{z.hi_vel}</td><td>{z.root_key}</td><td>{z.loop}</td></tr>"
-        for z in zones
-    )
-    return ("<table cellspacing='4' cellpadding='2'>"
-            "<tr><th align='left'>Sample</th><th align='left'>Key</th>"
-            "<th align='left'>Vel</th><th align='left'>Root</th><th align='left'>Loop</th></tr>"
-            f"{rows}</table>")
+    if stats.vel_samples_min == stats.vel_samples_max:
+        vel_samples = _plural(stats.vel_samples_min, "sample")
+    else:
+        vel_samples = f"{stats.vel_samples_min}–{stats.vel_samples_max} samples"
+    lines = [f"{_plural(stats.key_zone_count, 'key zone')} with "
+             f"{_plural(stats.total_samples, 'sample')}",
+             f"{_plural(stats.vel_layer_count, 'velocity layer')} with "
+             f"{vel_samples} each"]
+    format_bits = ", ".join(filter(None, [
+        _range_or_single(stats.bit_depths, "-bit"),
+        _range_or_single(stats.sample_rates, " Hz"),
+    ]))
+    if format_bits:
+        lines.append(format_bits)
+    return "<br>".join(lines)
 
 
 def _escape(text: str) -> str:

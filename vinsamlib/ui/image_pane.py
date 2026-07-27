@@ -144,7 +144,7 @@ class ImagePane(QWidget):
         hint = QLabel("Drop a bank here to start a new image with it,\n"
                        "or create/open one below.")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet("color: palette(mid);")
+        hint.setStyleSheet("color: palette(placeholdertext);")
         box_layout.addWidget(hint)
         box_layout.addStretch()
         outer.addWidget(box, 1)
@@ -178,7 +178,7 @@ class ImagePane(QWidget):
 
         self._info_path_label = QLabel("")
         self._info_path_label.setWordWrap(True)
-        self._info_path_label.setStyleSheet("color: palette(mid);")
+        self._info_path_label.setStyleSheet("color: palette(placeholdertext);")
         info_form.addRow("Path:", self._info_path_label)
 
         self._info_type_label = QLabel("")

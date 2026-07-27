@@ -110,7 +110,7 @@ class PendingBanksPane(QWidget):
         hint = QLabel("Banks sent from New Bank appear here.\n"
                        "Reorder, rename, or drop them before building an image.")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet("color: palette(mid);")
+        hint.setStyleSheet("color: palette(placeholdertext);")
         box_layout.addWidget(hint)
         box_layout.addStretch()
         outer.addWidget(box)
@@ -122,7 +122,7 @@ class PendingBanksPane(QWidget):
         layout.setContentsMargins(10, 8, 10, 10)
 
         self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self._summary_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(self._summary_label)
 
         self._list = QListWidget()

@@ -1,10 +1,20 @@
 """
-Import XPM dialog: target format (E4B/KRZ) picker on top of the exact same
-resample/reduce section ConvertOptionsDialog already built for the Pending
-pane's "Process before building..." -- reused via subclassing rather than
-duplicated, since the two features share every field except target_format
-(see build/xpm_import.py's XpmImportOptions vs build/convert.py's
-ConversionOptions).
+Import-with-format-choice dialog: target format (E4B/KRZ) picker on top of
+the exact same resample/reduce section ConvertOptionsDialog already built
+for the Pending pane's "Process before building..." -- reused via
+subclassing rather than duplicated, since both features share the exact
+same ConversionOptions shape (build/convert.py) now that target_format
+lives there directly (it used to be a separate build/xpm_import.py-only
+XpmImportOptions dataclass; merged once a second caller -- converting an
+existing E4B preset via Explorer's "Import via mpc2emu..." -- needed the
+same format choice for a non-XPM source too).
+
+Used for two distinct entry points that both need "pick a target format,
+then optionally resample/reduce": importing a foreign XPM program
+(main_window.py's _import_xpm()) and converting an already-native E4B
+preset in place (main_window.py's _convert_preset_via_mpc2emu()) --
+neither the dialog nor build/convert.py's pipeline cares which case it's
+in, only the caller does.
 
 Only real addition beyond "which dialog do I subclass": switching the
 target format to KRZ nudges (doesn't force) the max-sample-rate step to a
@@ -20,34 +30,30 @@ docs/mpc2emu_conversion_integration_plan.md).
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Optional
 
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QWidget
 
 from .convert_options_dialog import ConvertOptionsDialog
 from ..build.convert import ConversionOptions
-from ..build.xpm_import import XpmImportOptions
 
 _KRZ_SANE_MAX_RATE_HZ = 24000
 
 
+_DEFAULT_WARNING = (
+    "Importing goes through mpc2emu's own model, same as any other "
+    "conversion here; a few advanced parameters the original XPM "
+    "used may not carry over. Resample/reduce below are optional "
+    "and off by default for either target format.")
+
+
 class XpmImportDialog(ConvertOptionsDialog):
-    def __init__(self, parent=None, initial: Optional[XpmImportOptions] = None):
-        conv_initial = ConversionOptions(
-            resample_profile=initial.resample_profile,
-            no_bandpass=initial.no_bandpass,
-            resample_keep_gain=initial.resample_keep_gain,
-            max_sample_rate=initial.max_sample_rate,
-            reduce_key_zones_pct=initial.reduce_key_zones_pct,
-            reduce_velocity_layers_pct=initial.reduce_velocity_layers_pct,
-        ) if initial is not None else None
-        super().__init__(parent, initial=conv_initial)
-        self.setWindowTitle("Import XPM")
-        self._warning_label.setText(
-            "Importing goes through mpc2emu's own model, same as any other "
-            "conversion here; a few advanced parameters the original XPM "
-            "used may not carry over. Resample/reduce below are optional "
-            "and off by default for either target format.")
+    def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
+                 title: str = "Import XPM", warning_text: Optional[str] = None):
+        super().__init__(parent, initial=initial)
+        self.setWindowTitle(title)
+        self._warning_label.setText(warning_text or _DEFAULT_WARNING)
 
         format_row = QWidget()
         row_layout = QHBoxLayout(format_row)
@@ -78,21 +84,15 @@ class XpmImportDialog(ConvertOptionsDialog):
             self._max_rate_group.setChecked(True)
             self._max_rate_spin.setValue(_KRZ_SANE_MAX_RATE_HZ)
 
-    def _to_import_options(self) -> XpmImportOptions:
-        conv = self._to_options()
-        return XpmImportOptions(
-            target_format=self._format_box.currentText(),
-            resample_profile=conv.resample_profile,
-            no_bandpass=conv.no_bandpass,
-            resample_keep_gain=conv.resample_keep_gain,
-            max_sample_rate=conv.max_sample_rate,
-            reduce_key_zones_pct=conv.reduce_key_zones_pct,
-            reduce_velocity_layers_pct=conv.reduce_velocity_layers_pct,
-        )
+    def _to_options(self) -> ConversionOptions:
+        return dataclasses.replace(super()._to_options(),
+                                    target_format=self._format_box.currentText())
 
     @staticmethod
-    def get_import_options(parent=None, initial: Optional[XpmImportOptions] = None) -> Optional[XpmImportOptions]:
-        dialog = XpmImportDialog(parent, initial=initial)
+    def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
+                            title: str = "Import XPM",
+                            warning_text: Optional[str] = None) -> Optional[ConversionOptions]:
+        dialog = XpmImportDialog(parent, initial=initial, title=title, warning_text=warning_text)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
-        return dialog._to_import_options()
+        return dialog._to_options()

@@ -42,6 +42,43 @@ class ZoneSummary:
     root_key: int
     loop: str                        # 'none' | 'forward' | 'alternating' | 'forward (release)' | '?'
     sample_rate: int | None = None
+    bit_depth: int | None = None
+
+
+@dataclass
+class ZoneStats:
+    """Condensed, single-line-per-fact substitute for showing every zone's
+    own row (see ui/detail_pane.py's zone_stats_lines()) -- a real preset
+    can carry dozens of zones, and per earlier feedback, the detailed key/
+    velocity table for each one is more than a human actually wants at a
+    glance."""
+    key_zone_count: int              # distinct (lo_key, hi_key) ranges
+    total_samples: int               # distinct sample names across ALL zones
+    vel_layer_count: int             # distinct (lo_vel, hi_vel) ranges
+    vel_samples_min: int             # fewest distinct samples in any one velocity layer
+    vel_samples_max: int             # most distinct samples in any one velocity layer
+    bit_depths: tuple[int, ...] = ()      # distinct values seen, sorted, empty if unknown
+    sample_rates: tuple[int, ...] = ()    # distinct values seen (Hz), sorted, empty if unknown
+
+
+def zone_stats(zones: list[ZoneSummary]) -> ZoneStats | None:
+    if not zones:
+        return None
+    key_zone_count = len({(z.lo_key, z.hi_key) for z in zones})
+    total_samples = len({z.sample_name for z in zones})
+    vel_layers: dict[tuple[int, int], set[str]] = {}
+    for z in zones:
+        vel_layers.setdefault((z.lo_vel, z.hi_vel), set()).add(z.sample_name)
+    per_layer_counts = [len(s) for s in vel_layers.values()]
+    return ZoneStats(
+        key_zone_count=key_zone_count,
+        total_samples=total_samples,
+        vel_layer_count=len(vel_layers),
+        vel_samples_min=min(per_layer_counts),
+        vel_samples_max=max(per_layer_counts),
+        bit_depths=tuple(sorted({z.bit_depth for z in zones if z.bit_depth})),
+        sample_rates=tuple(sorted({z.sample_rate for z in zones if z.sample_rate})),
+    )
 
 
 @dataclass
@@ -118,6 +155,7 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
                     root_key=z.root_key,
                     loop=_LOOP_NAMES.get(int(sample.loop_type), "?") if sample else "?",
                     sample_rate=sample.sample_rate if sample else None,
+                    bit_depth=sample.bit_depth if sample else None,
                 ))
     return PresetSummary(name=preset.name.strip(), format="E4B",
                           voice_count=voice_count, zones=zones,
@@ -197,6 +235,7 @@ def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int) -> ZoneSumm
     samp = bank.samples[sid]   # caller already checked sid is a real sample
     name = samp.name.strip()
     root_key, loop = 60, "?"
+    sample_rate, bit_depth = None, None
     b = samp.body()
     if len(b) > krz.SAMPLE_HDR:
         root_key = b[krz.SAMPLE_HDR]                     # Soundfilehead byte 0
@@ -204,7 +243,20 @@ def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int) -> ZoneSumm
         # KRZ shares E4B's loop-flag convention (KRZ_FORMAT.md §3.1):
         # bit 0x80 clear = looped, set = one-shot.
         loop = "none" if (b[krz.SAMPLE_HDR + 1] & 0x80) else "forward"
+    if len(b) >= krz.SAMPLE_HDR + 32:
+        # Soundfilehead offset 28:32, `samplePeriod` = round(1e9 /
+        # sample_rate) (KRZ_FORMAT.md §3.1) -- the one field in this
+        # header that encodes the real sample rate directly and exactly,
+        # unlike maxPitch (derived from rootkey too, lossy to invert).
+        period = struct.unpack_from(">I", b, krz.SAMPLE_HDR + 28)[0]
+        if period:
+            sample_rate = round(1e9 / period)
+        # The K2000's own PCM is always raw 16-bit (KRZ_FORMAT.md §2/3.1)
+        # -- no per-sample bit-depth field exists because there's nothing
+        # else it could be.
+        bit_depth = 16
     return ZoneSummary(sample_name=name, lo_key=lo_key, hi_key=hi_key,
+                        sample_rate=sample_rate, bit_depth=bit_depth,
                         lo_vel=0, hi_vel=127, root_key=root_key, loop=loop)
 
 

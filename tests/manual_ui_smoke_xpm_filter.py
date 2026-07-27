@@ -21,7 +21,7 @@ from PySide6.QtCore import QCoreApplication, QModelIndex, Qt, QThreadPool
 from PySide6.QtWidgets import QApplication
 
 from vinsamlib import mpc2emu_bridge
-from vinsamlib.build.xpm_import import XpmImportOptions
+from vinsamlib.build.convert import ConversionOptions
 from vinsamlib.config import Config
 from vinsamlib.index.db import IndexDB
 from vinsamlib.index.scanner import scan
@@ -96,7 +96,7 @@ def main():
     mpc2emu_bridge.install(config2)
     config2.library_roots = [XPM_DIR]
     XpmImportDialog.get_import_options = staticmethod(
-        lambda parent=None, initial=None: XpmImportOptions(target_format="E4B"))
+        lambda parent=None, initial=None: ConversionOptions(target_format="E4B"))
 
     win = MainWindow(config2)
     tmodel = win._model
