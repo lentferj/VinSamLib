@@ -30,8 +30,9 @@ from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
 from .settings_dialog import SettingsDialog
 from .xpm_import_dialog import XpmImportDialog
+from ..banks import e4b, krz
 from ..build import xpm_import
-from ..config import Config, user_data_dir, xpm_imports_dir
+from ..config import Config, user_data_dir
 from ..index.db import IndexDB
 from ..index.scanner import scan
 
@@ -241,29 +242,27 @@ class MainWindow(QMainWindow):
         workers.run(w)
 
     def _on_xpm_imported(self, tmp_path: str, opts: xpm_import.XpmImportOptions) -> None:
-        # No save dialog, no "add to library?" prompt -- the result just
-        # becomes part of the library automatically, in a VinSamLib-
-        # managed folder rather than a location the user has to pick.
-        imports_dir = xpm_imports_dir()
-        imports_dir.mkdir(parents=True, exist_ok=True)
-        dest = imports_dir / Path(tmp_path).name
-        if dest.exists():
-            stem, suffix, i = dest.stem, dest.suffix, 2
-            while dest.exists():
-                dest = imports_dir / f"{stem}_{i}{suffix}"
-                i += 1
+        # No save dialog, no library folder at all -- an XPM always holds
+        # exactly one preset (mpc2emu's own parse_xpm() appends exactly
+        # one Preset, never more; see its docstring), so there's nothing
+        # to pick from and no reason to make it independently browsable
+        # first. Re-read the just-converted temp file with VinSamLib's
+        # own reader (same round-trip pattern as build/convert.py) to get
+        # a real (bank, preset) pair, and hand it straight to Pending for
+        # Image -- same shape a drag from Explorer would produce.
         try:
-            dest.write_bytes(Path(tmp_path).read_bytes())
-        except OSError as ex:
-            QMessageBox.warning(self, "Import XPM", f"Couldn't save to {dest}: {ex}")
+            if opts.target_format == "KRZ":
+                bank = krz.parse(tmp_path)
+                preset = next(iter(bank.programs.values()))
+            else:
+                bank = e4b.parse(tmp_path)
+                preset = bank.presets[0]
+        except Exception as ex:
+            QMessageBox.warning(
+                self, "Import XPM", f"Couldn't read back the converted bank:\n\n{ex}")
             return
-        self.statusBar().showMessage(f"Imported to {dest.name} in your library", 8000)
-
-        if imports_dir not in self._config.library_roots:
-            self._config.library_roots.append(imports_dir)
-            self._config.save()
-            self._model.add_root(imports_dir)
-        self._start_scan([imports_dir])
+        name = preset.name.strip() or Path(tmp_path).stem
+        self._pending_pane.add_pending(name, opts.target_format, [(bank, preset, name)])
 
     def _on_xpm_import_error(self, message: str) -> None:
         last_line = message.strip().splitlines()[-1] if message else "error"

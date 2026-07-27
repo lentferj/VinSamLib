@@ -1,14 +1,18 @@
 """Manual smoke test for XPM import (Config.check_xpm_import_support(),
 build/xpm_import.py, ui/xpm_import_dialog.py, File > Import XPM... wiring
 in main_window.py): drive the real File > Import XPM... flow against a
-real Akai MPC XPM program, confirm the resulting E4B bank is written
-straight into Config.xpm_imports_dir() (no save dialog, no "add to
-library?" prompt -- see MainWindow._on_xpm_imported()), gets scanned, and
-reopens correctly through VinSamLib's own e4b.py reader. Same
-in-process-call approach as every other smoke test here (no X11 input
-automation available); the two modal points this flow still hits
-(file-open, the options dialog) are stubbed the same way the other smoke
-tests stub QMessageBox/QInputDialog/QFileDialog.
+real Akai MPC XPM program and confirm it lands directly in "Pending for
+Image" as a one-preset bank recipe -- no save dialog, no library folder
+at all. An XPM always holds exactly one preset (mpc2emu's own
+parse_xpm() appends exactly one Preset, never more, per its own
+docstring), so there's nothing to pick from and nowhere else it needs to
+go first; MainWindow._on_xpm_imported() re-reads the converted temp file
+with VinSamLib's own e4b.py/krz.py reader to get a real (bank, preset)
+pair, same shape a drag from Explorer would produce. Same in-process-call
+approach as every other smoke test here (no X11 input automation
+available); the two modal points this flow hits (file-open, the options
+dialog) are stubbed the same way the other smoke tests stub
+QMessageBox/QInputDialog/QFileDialog.
 """
 import sys
 import time
@@ -21,9 +25,8 @@ from PySide6.QtCore import QCoreApplication, QThreadPool
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from vinsamlib import mpc2emu_bridge
-from vinsamlib.banks import e4b as vs_e4b
 from vinsamlib.build.xpm_import import XpmImportOptions
-from vinsamlib.config import Config, xpm_imports_dir
+from vinsamlib.config import Config
 from vinsamlib.ui.main_window import MainWindow
 from vinsamlib.ui.xpm_import_dialog import XpmImportDialog
 
@@ -43,9 +46,6 @@ def main():
     mpc2emu_bridge.install(config)
     config.library_roots = []
 
-    dest = xpm_imports_dir() / f"{Path(XPM_PATH).stem}.e4b"
-    dest.unlink(missing_ok=True)   # idempotent re-runs -- see manual_ui_smoke_pending.py's convention
-
     app = QApplication(sys.argv)
     win = MainWindow(config)
     win.statusBar().messageChanged.connect(lambda m: print("  [status]", m) if m else None)
@@ -53,6 +53,8 @@ def main():
     ok, reason = config.check_xpm_import_support()
     print("check_xpm_import_support:", ok, reason)
     assert ok, "this smoke test needs a real mpc2emu checkout with parsers/xpm_parser.py"
+
+    assert not win._pending_pane._pending, "pending queue should start empty"
 
     win._import_xpm()
 
@@ -62,19 +64,22 @@ def main():
         time.sleep(0.1)
     assert win._xpm_import_worker is None, "import never completed"
 
-    print("dest exists (auto-saved, no dialog):", dest.exists())
-    assert dest.exists()
-    print("library_roots:", win._config.library_roots)
-    assert xpm_imports_dir() in win._config.library_roots, "imports dir should auto-register itself"
+    pending = win._pending_pane._pending
+    print("pending queue after import:", [(e["name"], e["format"], len(e["items"])) for e in pending])
+    assert len(pending) == 1, "the imported XPM should land as exactly one pending entry"
+    entry = pending[0]
+    assert entry["format"] == "E4B"
+    assert len(entry["items"]) == 1, "an XPM always holds exactly one preset"
 
-    deadline = time.time() + 20
-    while win._scan_worker is not None and time.time() < deadline:
-        QCoreApplication.processEvents()
-        time.sleep(0.1)
+    bank, preset, name = entry["items"][0]
+    print("pending entry's bank/preset:", type(bank).__name__, type(preset).__name__, name)
+    from vinsamlib.banks.e4b import E4BFile, E4BPreset
+    assert isinstance(bank, E4BFile) and isinstance(preset, E4BPreset), (
+        "must be VinSamLib's own reader objects, not mpc2emu's Bank/Preset "
+        "-- assemble()/Pending's own machinery only knows how to handle these")
 
-    bank = vs_e4b.parse(str(dest))
-    print("reopened imported bank -- presets:", len(bank.presets), "samples:", len(bank.samples))
-    assert len(bank.presets) >= 1
+    # No library folder was created or registered anywhere for this.
+    assert win._config.library_roots == []
 
     print("\nALL XPM IMPORT SMOKE CHECKS PASSED")
 
