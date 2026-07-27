@@ -200,6 +200,14 @@ class BankPane(QWidget):
         name = _sanitize_bank_name(self._name_edit.text())
         self.sendToPendingRequested.emit(name, self._format, list(self._items))
 
+    @property
+    def format(self) -> Optional[str]:
+        """The format this bank is currently locked to ("E4B"/"KRZ"), or
+        None while still empty/unlocked -- lets callers that open a
+        target-format picker (XpmImportDialog) know when only one choice
+        can actually succeed."""
+        return self._format
+
     def refresh_size_limits(self) -> None:
         """Re-applies the size check against the last-assembled bytes
         without a full reassemble -- called by Settings after the

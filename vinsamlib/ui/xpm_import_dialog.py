@@ -26,6 +26,13 @@ a flat Hz value rather than convert.py's fancier per-sample "headroom-
 aware" auto-downsample (that one is inline main()-only logic upstream,
 not a reusable function -- reproducing it faithfully is deferred, see
 docs/mpc2emu_conversion_integration_plan.md).
+
+locked_format: when New Bank already has a format lock (BankPane.format
+is not None), callers pass it here so the picker shows and defaults to
+that format but can't be changed to the other one -- picking the "wrong"
+format would still run a real (possibly slow) mpc2emu conversion only to
+have BankPane.add_presets() reject the result afterward, so there's no
+point offering that choice live.
 """
 
 from __future__ import annotations
@@ -50,7 +57,8 @@ _DEFAULT_WARNING = (
 
 class XpmImportDialog(ConvertOptionsDialog):
     def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
-                 title: str = "Import XPM", warning_text: Optional[str] = None):
+                 title: str = "Import XPM", warning_text: Optional[str] = None,
+                 locked_format: Optional[str] = None):
         super().__init__(parent, initial=initial)
         self.setWindowTitle(title)
         self._warning_label.setText(warning_text or _DEFAULT_WARNING)
@@ -61,10 +69,23 @@ class XpmImportDialog(ConvertOptionsDialog):
         row_layout.addWidget(QLabel("Import as:"))
         self._format_box = QComboBox()
         self._format_box.addItems(["E4B", "KRZ"])
-        self._format_box.setCurrentText(initial.target_format if initial else "E4B")
+        default_fmt = locked_format or (initial.target_format if initial else "E4B")
+        self._format_box.setCurrentText(default_fmt)
         self._format_box.currentTextChanged.connect(self._on_target_format_changed)
         row_layout.addWidget(self._format_box)
         row_layout.addStretch()
+        if locked_format is not None:
+            # New Bank already has presets in it -- any other choice here
+            # is guaranteed to be rejected by BankPane.add_presets() after
+            # a real (possibly slow) conversion already ran, so there's no
+            # point offering it. Greyed out rather than hidden: still
+            # visible/legible so it's clear what format this is going
+            # into, just not a live choice right now.
+            self._format_box.setEnabled(False)
+            self._format_box.setToolTip(
+                f"New Bank already contains {locked_format} presets — "
+                f"clear it or send it to Pending first to import as a "
+                f"different format.")
         self.layout().insertWidget(0, format_row)
 
         if initial is None and self._format_box.currentText() == "KRZ":
@@ -90,9 +111,10 @@ class XpmImportDialog(ConvertOptionsDialog):
 
     @staticmethod
     def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
-                            title: str = "Import XPM",
-                            warning_text: Optional[str] = None) -> Optional[ConversionOptions]:
-        dialog = XpmImportDialog(parent, initial=initial, title=title, warning_text=warning_text)
+                            title: str = "Import XPM", warning_text: Optional[str] = None,
+                            locked_format: Optional[str] = None) -> Optional[ConversionOptions]:
+        dialog = XpmImportDialog(parent, initial=initial, title=title, warning_text=warning_text,
+                                  locked_format=locked_format)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog._to_options()

@@ -255,7 +255,7 @@ class MainWindow(QMainWindow):
                 options=QFileDialog.Option.DontUseNativeDialog)
             if not path:
                 return
-        opts = XpmImportDialog.get_import_options(self)
+        opts = XpmImportDialog.get_import_options(self, locked_format=self._bank_pane.format)
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
@@ -358,6 +358,9 @@ class MainWindow(QMainWindow):
         # "same format, with options" (the common case: apply resample/
         # reduce without converting) is a better default than always
         # landing on E4B, now that a KRZ source is just as valid a start.
+        # If New Bank already has a format lock, that takes priority over
+        # the source's own format (see locked_format below) -- converting
+        # to anything else would just be rejected after the fact.
         source_fmt = node.parent.format_label if node.parent is not None else "E4B"
         opts = XpmImportDialog.get_import_options(
             self, initial=convert.ConversionOptions(target_format=source_fmt or "E4B"),
@@ -366,7 +369,8 @@ class MainWindow(QMainWindow):
                 "Converting goes through mpc2emu's own model, same as any "
                 "other conversion here; a few advanced parameters may not "
                 "carry over. Resample/reduce below are optional and off "
-                "by default for either target format."))
+                "by default for either target format."),
+            locked_format=self._bank_pane.format)
         if opts is None:
             return
         self.statusBar().showMessage(f"Converting {node.label}…")

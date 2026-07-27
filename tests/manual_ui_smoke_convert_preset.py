@@ -154,7 +154,8 @@ def main():
     print("baseline (unconverted) single-preset size:", len(baseline_bytes))
 
     XpmImportDialog.get_import_options = staticmethod(
-        lambda parent=None, initial=None, title="Import XPM", warning_text=None: ConversionOptions(
+        lambda parent=None, initial=None, title="Import XPM", warning_text=None,
+        locked_format=None: ConversionOptions(
             target_format="E4B", resample_profile="emax1", reduce_key_zones_pct=30.0))
     assert not win._bank_pane._items
     win._convert_preset_via_mpc2emu(e4b_node)
@@ -185,7 +186,8 @@ def main():
 
     # -- 2. E4B -> KRZ (cross-format conversion) -------------------------------
     XpmImportDialog.get_import_options = staticmethod(
-        lambda parent=None, initial=None, title="Import XPM", warning_text=None: ConversionOptions(target_format="KRZ"))
+        lambda parent=None, initial=None, title="Import XPM", warning_text=None,
+        locked_format=None: ConversionOptions(target_format="KRZ"))
     win._convert_preset_via_mpc2emu(e4b_node)
     _wait(win)
     items = win._bank_pane._items
@@ -231,8 +233,10 @@ def main():
                                  krz_preset_for_gate.name.strip())
         seen_initial = {}
 
-        def _capture_initial(parent=None, initial=None, title="Import XPM", warning_text=None):
+        def _capture_initial(parent=None, initial=None, title="Import XPM", warning_text=None,
+                              locked_format=None):
             seen_initial["target_format"] = initial.target_format if initial else None
+            seen_initial["locked_format"] = locked_format
             return ConversionOptions(target_format="KRZ", reduce_velocity_layers_pct=30.0)
 
         XpmImportDialog.get_import_options = staticmethod(_capture_initial)
@@ -242,10 +246,31 @@ def main():
         assert seen_initial["target_format"] == "KRZ", (
             "the dialog should default its target-format picker to the "
             "preset's OWN source format (KRZ here), not always E4B")
+        assert seen_initial["locked_format"] is None, (
+            "New Bank was just cleared -- no format lock yet, so the "
+            "picker should still be a live, editable choice")
         items = win._bank_pane._items
         assert len(items) == 1
         conv_bank, conv_preset, name = items[0]
         assert isinstance(conv_bank, vs_krz.KrzFile) and isinstance(conv_preset, vs_krz.KrzObject)
+
+        # -- regression: with New Bank now locked to KRZ (the item just
+        # added), the picker must be forced to KRZ and disabled, no matter
+        # what format was requested as a default -- picking E4B here would
+        # only get rejected by add_presets() after a real conversion ran.
+        seen_locked = {}
+
+        def _capture_locked(parent=None, initial=None, title="Import XPM",
+                             warning_text=None, locked_format=None):
+            seen_locked["value"] = locked_format
+            return ConversionOptions(target_format=locked_format or "E4B")
+
+        XpmImportDialog.get_import_options = staticmethod(_capture_locked)
+        win._convert_preset_via_mpc2emu(krz_node)
+        _wait(win)
+        assert seen_locked["value"] == "KRZ", (
+            "New Bank already holds a KRZ preset -- the dialog must be "
+            "told to lock the picker to KRZ, not offer E4B as a live choice")
         assert name == f"{krz_preset_for_gate.name.strip()} (mpc2emu)"
         print("Explorer 'Import via mpc2emu...' on a KRZ preset -> KRZ New Bank item:", name)
     else:

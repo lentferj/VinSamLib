@@ -352,10 +352,32 @@ iterating on conversion options).
 
 ### Convert Options dialog
 
-![Convert Options dialog with Vintage Resample and Reduce Sample Count both expanded](docs/screenshots/05_convert_options.png)
+![Convert Options dialog with the "Import as:" target-format picker at the top, and Vintage Resample and Reduce Sample Count both expanded](docs/screenshots/05_convert_options.png)
 
 Shared by "Import via mpc2emu", Pending's per-bank conversion, and XPM
-import — three independent, collapsible sections:
+import.
+
+**Import as:** — the target-format picker at the very top. Only XPM
+import and "Import via mpc2emu" show it (Pending's per-bank dialog
+doesn't — it's still E4B-queue-only, see Pending for Image above).
+"Import via mpc2emu" defaults this picker to the preset's own source
+format — "same format, with options" one click away — but you can
+switch it to the other format just as easily. Switching it to KRZ
+nudges (never forces) the max-sample-rate step to a sane default of
+24000 Hz if you haven't already set one yourself — the K2000 only has
++1.46 semitones of up-pitch headroom at 44.1 kHz before wide key zones
+start clamping, while the E4XT has no such ceiling.
+
+![Same dialog with the "Import as:" picker locked to E4B and greyed out, because New Bank already contains E4B presets](docs/screenshots/05b_convert_options_locked.png)
+
+If New Bank already has a format lock (it already contains at least one
+preset), the picker is forced to that format and **greyed out** instead
+of offered as a live choice — picking the other format would still run
+a real (possibly slow) mpc2emu conversion, only to have it rejected
+afterward once New Bank refuses to mix formats. Clear New Bank (or send
+it to Pending first) to import as the other format instead.
+
+Below that, three independent, collapsible sections:
 
 - **Vintage Resample** — pick `EMU Emulator II` (8-bit µ-law companded,
   27,777 Hz — the defining lo-fi grit) or `EMU Emax I` (12-bit linear,
@@ -377,15 +399,6 @@ import — three independent, collapsible sections:
 The dialog auto-resizes as you check more sections, and the title/
 wording adapts to which feature opened it (e.g. "Import via mpc2emu" vs.
 "Import XPM") so it never says the wrong thing.
-
-**XPM import and "Import via mpc2emu"** both add an **Import as:** /
-target-format picker at the top (Pending's per-bank dialog doesn't —
-it's still E4B-queue-only, see Pending for Image above). "Import via
-mpc2emu" defaults this picker to the preset's own source format;
-switching it to KRZ nudges (never forces) the max-sample-rate step to a
-sane default of 24000 Hz if you haven't already set one yourself — the
-K2000 only has +1.46 semitones of up-pitch headroom at 44.1 kHz before
-wide key zones start clamping, while the E4XT has no such ceiling.
 
 ### Image Column
 

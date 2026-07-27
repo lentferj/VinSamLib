@@ -36,7 +36,8 @@ XPM_PATH = str(Path.home() / "Samples/MPC/Roland Alpha Juno 2/43 Floating.Keygro
 
 QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (XPM_PATH, ""))
 XpmImportDialog.get_import_options = staticmethod(
-    lambda parent=None, initial=None: ConversionOptions(target_format="E4B"))
+    lambda parent=None, initial=None, title="Import XPM", warning_text=None,
+    locked_format=None: ConversionOptions(target_format=locked_format or "E4B"))
 # BankPane's duplicate check defaults to "prompt before skipping" -- the
 # re-import check below deliberately exercises that path, so answering
 # "No" (don't add the duplicate) here is what makes it deterministic.
