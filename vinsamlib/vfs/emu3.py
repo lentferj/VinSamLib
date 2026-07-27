@@ -76,7 +76,15 @@ class Emu3Volume(WritableVolume):
         out = []
         for i in range(root_entries):
             eo = root_off + i * 32
-            nm = meta[eo:eo + 16].rstrip(b" \x00")
+            raw_name = meta[eo:eo + 16]
+            if raw_name == b"\xff" * 16:
+                # Erased/unused root slot (0xFF fill, dtype also 0xFF, no
+                # dir-content blocks) -- not a real folder. The empty-name
+                # check below only catches an all-space/null slot, not this
+                # convention, so real discs with deleted folders were
+                # showing garbage "\xffP\xff..." entries in the tree.
+                continue
+            nm = raw_name.rstrip(b" \x00")
             if not nm and meta[eo + 17] == 0:
                 continue
             blocks = [b for b in struct.unpack_from("<7h", meta, eo + 18) if b != -1]

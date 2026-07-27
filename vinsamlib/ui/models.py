@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from PySide6.QtCore import QAbstractItemModel, QMimeData, QModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtGui import QColor
 
 from . import dnd, workers
 from ..banks import e4b, krz
@@ -33,6 +34,7 @@ _KIND_ICON = {
     "bank": "\U0001F4E6",          # 📦
     "preset": "\U0001F3B9",        # 🎹
     "xpm": "\U0001F39B",           # 🎛
+    "unsupported": "\U00002753",   # ❓
 }
 
 _BANK_EXT_FORMAT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ"}
@@ -149,8 +151,18 @@ def _fetch_vfs_listing(vol, folder_entry, parent_node: TreeNode) -> list[TreeNod
         elif e.kind == EntryKind.BANK:
             out.append(TreeNode("bank", e.name, parent_node, (vol, e), size=e.size,
                                  format_label=_guess_format(e.name, e.meta.get("format", ""))))
-        # OTHER_FILE (EIII banks, ROM/system entries, ...): out of scope — see
-        # the plan's E4B-only decision; not listed at all, not just unopenable.
+        elif e.kind == EntryKind.OTHER_FILE and e.meta.get("format"):
+            # Real content VinSamLib has no reader for (e.g. EIII/ESI-32
+            # banks living inside an EMU3-filesystem disc alongside real
+            # E4B ones -- see vfs/emu3.py's own detected_format). Shown
+            # greyed out with its detected format rather than silently
+            # dropped, so the folder doesn't look mysteriously empty when
+            # it actually holds real (just unsupported) content -- not
+            # expandable/importable, there's nothing to read it with yet.
+            out.append(TreeNode("unsupported", e.name, parent_node, None, size=e.size,
+                                 format_label=e.meta["format"]))
+        # Plain OTHER_FILE with no detected format at all (WAVs, docs,
+        # ...): still genuinely out of scope, not listed.
     out.sort(key=lambda n: (n.kind != "folder", n.label.lower()))
     return out
 
@@ -307,8 +319,14 @@ class LibraryTreeModel(QAbstractItemModel):
             return node.display_text()
         if role == Qt.ItemDataRole.UserRole:
             return node
-        if role == Qt.ItemDataRole.ToolTipRole and node.error:
-            return node.error
+        if role == Qt.ItemDataRole.ToolTipRole:
+            if node.error:
+                return node.error
+            if node.kind == "unsupported":
+                return ("Real content, but VinSamLib has no reader for this "
+                        f"format ({node.format_label}) yet.")
+        if role == Qt.ItemDataRole.ForegroundRole and node.kind == "unsupported":
+            return QColor(Qt.GlobalColor.gray)
         return None
 
     # -- drag source (M5: presets drag into the New Bank column) ------------

@@ -55,6 +55,10 @@ class DetailPane(QWidget):
         elif node.kind == "xpm":
             self._browser.setHtml("<i>Loading…</i>")
             self._run(xpm_import.summarize_xpm, (str(node.payload),), gen, self._apply_xpm)
+        elif node.kind == "unsupported":
+            self._render_kv(node.format_label or "Unsupported format",
+                             [("Name", node.label), ("Size", human_size(node.size))],
+                             note="Real content, but VinSamLib has no reader for this format yet.")
         else:
             self._browser.setHtml("")
 
