@@ -271,7 +271,18 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self, "Import XPM", f"Couldn't read back the converted bank:\n\n{ex}")
             return
-        name = preset.name.strip() or Path(xpm_path).stem
+        # preset.name is mpc2emu's own E4B-format preset name -- truncated
+        # to 16 chars (a real hardware limit; see xpm_parser.py's
+        # _safe_name()), so several distinctly-named XPMs sharing a long
+        # common prefix (e.g. "Bass-Pulse-Bass 1d"/"2a"/"3b") all collapse
+        # to the same displayed name ("Bass-Pulse-Bass") if that's what's
+        # used here. The still-distinguishing original filename is what
+        # the user actually named these files by, so it's what New
+        # Bank's list should show -- this only affects the display label
+        # passed around VinSamLib's own UI, not the real (already
+        # 16-char-truncated, same as any hardware bank) name baked into
+        # preset_obj itself, which is unaffected.
+        name = Path(xpm_path).stem or preset.name.strip() or "Imported XPM"
         self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
 
     def _on_xpm_import_error(self, message: str) -> None:
