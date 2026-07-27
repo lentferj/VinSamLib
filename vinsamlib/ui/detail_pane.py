@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QTextBrowser, QVBoxLayout, QWidget
 from . import workers
 from .models import TreeNode, human_size
 from ..banks import summary
+from ..build import xpm_import
 
 
 class DetailPane(QWidget):
@@ -51,6 +52,9 @@ class DetailPane(QWidget):
             self._browser.setHtml("<i>Loading…</i>")
             bank, preset_obj = node.payload
             self._run(summary.summarize_preset, (bank, preset_obj), gen, self._apply_preset)
+        elif node.kind == "xpm":
+            self._browser.setHtml("<i>Loading…</i>")
+            self._run(xpm_import.summarize_xpm, (str(node.payload),), gen, self._apply_xpm)
         else:
             self._browser.setHtml("")
 
@@ -90,6 +94,16 @@ class DetailPane(QWidget):
                  "<th align='left'>Vel</th><th align='left'>Root</th><th align='left'>Loop</th></tr>"
                  f"{rows}</table>") if ps.zones else "<i>No zones.</i>"
         html = f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br><br>{table}"
+        self._browser.setHtml(html)
+
+    def _apply_xpm(self, gen: int, xs: xpm_import.XpmSummary) -> None:
+        if gen != self._gen:
+            return
+        html = (f"<b>XPM Program</b><br>"
+                f"Preset: {_escape(xs.preset_name) or '(untitled)'}<br>"
+                f"Zones: {xs.zone_count}<br>"
+                f"Samples: {xs.sample_count}<br>"
+                f"Total sample size: {human_size(xs.total_sample_bytes)}")
         self._browser.setHtml(html)
 
     def _apply_error(self, gen: int, message: str) -> None:

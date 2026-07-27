@@ -43,6 +43,14 @@ class XpmImportOptions:
     reduce_velocity_layers_pct: float = 0.0
 
 
+@dataclass(frozen=True)
+class XpmSummary:
+    preset_name: str
+    zone_count: int
+    sample_count: int
+    total_sample_bytes: int
+
+
 def _run_captured(fn: Callable, *args, **kwargs) -> Any:
     # Same shape as build/convert.py's own _run_captured: mpc2emu prints
     # progress to stdout, which would otherwise leak into VinSamLib's own
@@ -64,6 +72,26 @@ def _apply_max_sample_rate(bank: Any, hz: int) -> None:
     # target instead, which covers the common case without it.
     for i, sample in enumerate(bank.samples):
         bank.samples[i] = resampler.resample_to_rate(sample, hz, verbose=False)
+
+
+def summarize_xpm(xpm_path: str, wav_dir: Optional[str] = None) -> XpmSummary:
+    """Read-only preview for Explorer's Detail pane -- parses via mpc2emu's
+    own xpm_parser (same as import_xpm(), just never writes anything) to
+    report the one preset's zone count and total referenced sample data
+    size, without doing a full import. Same wav_dir default as
+    import_xpm()."""
+    if wav_dir is None:
+        wav_dir = str(Path(xpm_path).resolve().parent)
+    bank = _run_captured(xpm_parser.parse_xpm, xpm_path, wav_dir)
+    preset = bank.presets[0]
+    zone_count = sum(len(voice.zones) for voice in preset.voices)
+    total_bytes = sum(len(sample.data) for sample in bank.samples)
+    return XpmSummary(
+        preset_name=preset.name.strip(),
+        zone_count=zone_count,
+        sample_count=len(bank.samples),
+        total_sample_bytes=total_bytes,
+    )
 
 
 def import_xpm(xpm_path: str, opts: XpmImportOptions, wav_dir: Optional[str] = None) -> str:
