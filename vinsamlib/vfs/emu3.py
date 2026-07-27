@@ -40,6 +40,46 @@ def _cluster_size(cse: int) -> int:
     return (1 << (15 + cse - BSIZE_BITS)) * BSIZE
 
 
+def _is_filler_pattern(raw: bytes) -> bool:
+    """True if `raw` (a 32-byte directory entry) is a short repeating
+    byte pattern across its ENTIRE length -- name, dtype, and block/
+    cluster pointers all included. Real CD masters have been found
+    stamping unused directory-block space with such a pattern instead of
+    a known erase convention (confirmed byte-for-byte on real reference
+    discs: one disc's unused root-directory block is 0x6c repeated 32
+    times, another's is 0xcf/0x23 alternating) -- neither is zero-fill
+    nor the 0xFF-fill convention already handled separately, so both were
+    slipping through as garbage folder/file entries in the tree. A
+    genuine entry never has this shape: its name is followed by a
+    distinct dtype byte and varied little-endian block-pointer shorts,
+    never a period-1/2 repeat spanning the whole 32 bytes."""
+    for period in (1, 2):
+        if all(raw[i] == raw[i % period] for i in range(len(raw))):
+            return True
+    return False
+
+
+def _duplicate_blocks(meta: bytearray, block_offsets: list[int], block_size: int = BSIZE) -> set[bytes]:
+    """Return the set of `block_size`-byte block contents that occur more
+    than once among `block_offsets` (byte offsets into `meta`), ignoring
+    an all-zero block -- that's the normal, expected shape for
+    legitimately unused directory space. Seen verbatim on a real
+    reference disc (a Dan Dean "Bass Collection" CD) where 3 of its 4
+    root-directory blocks are byte-for-byte copies of each other --
+    real-looking-but-bogus data (not a simple repeating pattern, so
+    `_is_filler_pattern` alone doesn't catch it), apparently stale/reused
+    buffer content the mastering process never actually cleared. A
+    genuine root/dir-content block would never collide byte-for-byte
+    with another distinct block by chance, so any block seen more than
+    once here is untrustworthy in its entirety."""
+    counts: dict[bytes, int] = {}
+    for off in block_offsets:
+        b = bytes(meta[off:off + block_size])
+        if b != b"\x00" * block_size:
+            counts[b] = counts.get(b, 0) + 1
+    return {b for b, c in counts.items() if c > 1}
+
+
 class Emu3Volume(WritableVolume):
     """One EMU3 image (CD or HD). Opens, parses, and closes the underlying
     file on every call rather than holding a persistent handle — this keeps
@@ -73,16 +113,25 @@ class Emu3Volume(WritableVolume):
     def _folders(self, meta: bytearray) -> list[dict]:
         root_off = self.root_start * BSIZE
         root_entries = self.root_blocks * (BSIZE // 32)
+        entries_per_block = BSIZE // 32
+        dup_blocks = _duplicate_blocks(
+            meta, [root_off + b * BSIZE for b in range(self.root_blocks)])
         out = []
         for i in range(root_entries):
+            block_off = root_off + (i // entries_per_block) * BSIZE
+            if bytes(meta[block_off:block_off + BSIZE]) in dup_blocks:
+                continue
             eo = root_off + i * 32
-            raw_name = meta[eo:eo + 16]
+            raw = meta[eo:eo + 32]
+            raw_name = raw[:16]
             if raw_name == b"\xff" * 16:
                 # Erased/unused root slot (0xFF fill, dtype also 0xFF, no
                 # dir-content blocks) -- not a real folder. The empty-name
                 # check below only catches an all-space/null slot, not this
                 # convention, so real discs with deleted folders were
                 # showing garbage "\xffP\xff..." entries in the tree.
+                continue
+            if _is_filler_pattern(raw):
                 continue
             nm = raw_name.rstrip(b" \x00")
             if not nm and meta[eo + 17] == 0:
@@ -100,10 +149,19 @@ class Emu3Volume(WritableVolume):
         """Yield (entry_offset, fields) for every occupied dir-content slot
         in a folder, across all of its dir-content blocks."""
         out = []
+        dup_blocks = _duplicate_blocks(meta, [blk * BSIZE for blk in folder["blocks"]])
         for blk in folder["blocks"]:
+            if bytes(meta[blk * BSIZE:blk * BSIZE + BSIZE]) in dup_blocks:
+                continue
             for e in range(EMU3_ENTRIES_PER_BLOCK):
                 eo = blk * BSIZE + e * 32
-                nm = meta[eo:eo + 16].rstrip(b" \x00")
+                raw = meta[eo:eo + 32]
+                if _is_filler_pattern(raw):
+                    # Same blank-disc filler convention as _folders() --
+                    # unused dir-content slots can carry it too, not just
+                    # unused root-directory ones.
+                    continue
+                nm = raw[:16].rstrip(b" \x00")
                 if not nm:
                     continue
                 start_cluster, n_clusters, blks, brem = struct.unpack_from(
