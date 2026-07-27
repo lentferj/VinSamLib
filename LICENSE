@@ -1,0 +1,76 @@
+VinSamLib — Vintage Sampler Librarian for E-mu E4B and Kurzweil KRZ
+Copyright (C) 2026  VinSamLib contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+-------------------------------------------------------------------------------
+Runtime dependency: mpc2emu
+-------------------------------------------------------------------------------
+
+VinSamLib deliberately never edits mpc2emu — it is used as a separate,
+external runtime dependency (a sibling checkout, its path configured in
+Settings), never vendored or copied into this repository. Every E4B/KRZ
+*bank writer* and every DSP routine this app exposes (vintage resample
+profiles, key-zone/velocity-layer reduction, XPM parsing) is mpc2emu's
+own code, invoked through vinsamlib/mpc2emu_bridge.py's lazy module
+proxies.
+
+  mpc2emu — Multi-format Sampler Converter
+  https://github.com/ (see the mpc2emu project's own README/LICENSE)
+  License: GNU General Public License v2.0 or later (GPL-2.0-or-later)
+
+mpc2emu's own LICENSE file carries its full, detailed third-party credit
+chain (emu3fs, emu3bm, KurzFiler, ConvertWithMoss, libgig, and others it
+draws on for the formats it reads/writes) — see that project directly
+rather than this file duplicating it, since VinSamLib does not touch
+that code and cannot vouch for it beyond mpc2emu's own statements.
+
+-------------------------------------------------------------------------------
+Third-party references and their licenses (VinSamLib's own code)
+-------------------------------------------------------------------------------
+
+vinsamlib/vfs/emu3.py
+  The EMU3 filesystem read-side logic (superblock geometry, FAT,
+  directory layout, cluster allocation) mirrors the parsing already
+  proven in mpc2emu's own writers/iso_builder.py (emu_hdd_append), which
+  is itself derived from:
+    emu3fs — Copyright (C) David García Goñi
+    https://github.com/dagargo/emu3fs
+    License: GNU General Public License v2.0 or later (GPL-2.0-or-later)
+  No source code was copied from emu3fs or from mpc2emu; this is an
+  independent reimplementation of the read path informed by that prior
+  reverse-engineering work. Released under GPL-2.0-or-later.
+
+vinsamlib/vfs/fatvol.py, vinsamlib/vfs/iso9660.py
+  FAT12/16/32 and ISO 9660 are public, vendor-neutral format
+  specifications; these readers are original implementations against
+  those public specifications, not derived from any third-party source.
+  Released under GPL-2.0-or-later.
+
+vinsamlib/banks/e4b.py, vinsamlib/banks/krz.py
+  Original, container-level (byte-verbatim) readers for the E4B and KRZ
+  bank formats, informed by mpc2emu's own documented format references
+  (docs/E4B_FORMAT.md, docs/KRZ_FORMAT.md in the mpc2emu repository).
+  No source code was copied. Released under GPL-2.0-or-later.
+
+All other files
+  Original work. Released under GPL-2.0-or-later.
+
+-------------------------------------------------------------------------------
+Trademarks
+-------------------------------------------------------------------------------
+E-mu, Emulator, EOS are trademarks of Creative Technology Ltd.
+Kurzweil is a trademark of Young Chang Co. Ltd.
+Akai MPC is a trademark of inMusic Brands Inc.
+All other trademarks are property of their respective owners.
