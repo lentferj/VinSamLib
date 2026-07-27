@@ -83,17 +83,10 @@ class DetailPane(QWidget):
     def _apply_preset(self, gen: int, ps: summary.PresetSummary) -> None:
         if gen != self._gen:
             return
-        rows = "".join(
-            f"<tr><td>{_escape(z.sample_name)}</td><td>{z.lo_key}–{z.hi_key}</td>"
-            f"<td>{z.lo_vel}–{z.hi_vel}</td><td>{z.root_key}</td><td>{z.loop}</td></tr>"
-            for z in ps.zones
-        )
         voice_label = "Voices" if ps.format == "E4B" else "Keymaps"
-        table = ("<table cellspacing='4' cellpadding='2'>"
-                 "<tr><th align='left'>Sample</th><th align='left'>Key</th>"
-                 "<th align='left'>Vel</th><th align='left'>Root</th><th align='left'>Loop</th></tr>"
-                 f"{rows}</table>") if ps.zones else "<i>No zones.</i>"
-        html = f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br><br>{table}"
+        html = (f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br>"
+                f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
+                f"{_zone_table(ps.zones)}")
         self._browser.setHtml(html)
 
     def _apply_xpm(self, gen: int, xs: xpm_import.XpmSummary) -> None:
@@ -101,9 +94,9 @@ class DetailPane(QWidget):
             return
         html = (f"<b>XPM Program</b><br>"
                 f"Preset: {_escape(xs.preset_name) or '(untitled)'}<br>"
-                f"Zones: {xs.zone_count}<br>"
                 f"Samples: {xs.sample_count}<br>"
-                f"Total sample size: {human_size(xs.total_sample_bytes)}")
+                f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
+                f"{_zone_table(xs.zones)}")
         self._browser.setHtml(html)
 
     def _apply_error(self, gen: int, message: str) -> None:
@@ -122,6 +115,23 @@ class DetailPane(QWidget):
         w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
         self._live_workers.append(w)
         workers.run(w)
+
+
+def _zone_table(zones: list) -> str:
+    """Shared by _apply_preset (E4B/KRZ) and _apply_xpm -- same
+    ZoneSummary shape (banks/summary.py) either way, so both get the same
+    sample/key/vel/root/loop table rather than XPM getting a lesser view."""
+    if not zones:
+        return "<i>No zones.</i>"
+    rows = "".join(
+        f"<tr><td>{_escape(z.sample_name)}</td><td>{z.lo_key}–{z.hi_key}</td>"
+        f"<td>{z.lo_vel}–{z.hi_vel}</td><td>{z.root_key}</td><td>{z.loop}</td></tr>"
+        for z in zones
+    )
+    return ("<table cellspacing='4' cellpadding='2'>"
+            "<tr><th align='left'>Sample</th><th align='left'>Key</th>"
+            "<th align='left'>Vel</th><th align='left'>Root</th><th align='left'>Loop</th></tr>"
+            f"{rows}</table>")
 
 
 def _escape(text: str) -> str:

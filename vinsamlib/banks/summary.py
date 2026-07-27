@@ -50,6 +50,7 @@ class PresetSummary:
     format: str                      # 'E4B' | 'KRZ'
     voice_count: int                 # voices (E4B) / keymaps referenced (KRZ)
     zones: list[ZoneSummary] = field(default_factory=list)
+    total_sample_bytes: int = 0      # unique samples referenced by this preset's zones
 
 
 @dataclass
@@ -93,6 +94,7 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
     mpc_preset = parsed.presets[0] if parsed.presets else None
     zones: list[ZoneSummary] = []
     voice_count = 0
+    sample_sizes: dict[str, int] = {}   # dedupe -- a preset's zones can share one sample
     if mpc_preset is not None:
         voice_count = len(mpc_preset.voices)
         for voice in mpc_preset.voices:
@@ -107,6 +109,8 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
                     # _keymap_zone_runs).
                     continue
                 sample = parsed.find_sample(z.sample_name)
+                if sample is not None and z.sample_name not in sample_sizes:
+                    sample_sizes[z.sample_name] = len(sample.data)
                 zones.append(ZoneSummary(
                     sample_name=z.sample_name,
                     lo_key=z.lo_key, hi_key=z.hi_key,
@@ -116,7 +120,8 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
                     sample_rate=sample.sample_rate if sample else None,
                 ))
     return PresetSummary(name=preset.name.strip(), format="E4B",
-                          voice_count=voice_count, zones=zones)
+                          voice_count=voice_count, zones=zones,
+                          total_sample_bytes=sum(sample_sizes.values()))
 
 
 # ── KRZ ──────────────────────────────────────────────────────────────────────
@@ -139,15 +144,20 @@ def summarize_krz_bank(bank: krz.KrzFile) -> BankSummary:
 def summarize_krz_program(bank: krz.KrzFile, prog: krz.KrzObject) -> PresetSummary:
     keymap_ids = list(dict.fromkeys(bank.program_keymap_refs(prog)))  # dedupe, keep order
     zones: list[ZoneSummary] = []
+    sample_ids: set[int] = set()   # dedupe -- several keymaps can share a sample
     for kid in keymap_ids:
         km = bank.keymaps.get(kid)
         if km is not None:
-            zones.extend(_keymap_zone_runs(bank, km))
+            km_zones, km_sample_ids = _keymap_zone_runs(bank, km)
+            zones.extend(km_zones)
+            sample_ids.update(km_sample_ids)
+    total_sample_bytes = sum(len(bank.samples[sid].block) for sid in sample_ids)
     return PresetSummary(name=prog.name.strip(), format="KRZ",
-                          voice_count=len(keymap_ids), zones=zones)
+                          voice_count=len(keymap_ids), zones=zones,
+                          total_sample_bytes=total_sample_bytes)
 
 
-def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> list[ZoneSummary]:
+def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSummary], set[int]]:
     """Collapse a keymap's 128 individual key->sample entries into runs of
     consecutive keys sharing the same sample id.
 
@@ -168,16 +178,19 @@ def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> list[ZoneSummary]
         sample_by_key.append(struct.unpack_from(">H", body, eo + 2)[0])
 
     runs: list[ZoneSummary] = []
+    sample_ids: set[int] = set()
     lo, prev_sid = None, None
     for key in range(krz.NUM_KEYS):
         sid = sample_by_key[key]
         if sid != prev_sid:
             if prev_sid and prev_sid in bank.samples:
                 runs.append(_krz_zone(bank, prev_sid, lo, key - 1))
+                sample_ids.add(prev_sid)
             lo, prev_sid = key, sid
     if prev_sid and prev_sid in bank.samples:
         runs.append(_krz_zone(bank, prev_sid, lo, krz.NUM_KEYS - 1))
-    return runs
+        sample_ids.add(prev_sid)
+    return runs, sample_ids
 
 
 def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int) -> ZoneSummary:

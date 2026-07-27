@@ -19,13 +19,20 @@ from __future__ import annotations
 import contextlib
 import io
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from ..banks.summary import ZoneSummary
 from ..mpc2emu_bridge import e4b_writer, krz_writer, resampler, xpm_parser, zone_reducer
 
 _XPM_IMPORT_TEMP_PREFIX = "vinsamlib_xpm_import_"
+# mpc2emu's models.common.LoopType values (0-3) match banks/summary.py's own
+# _LOOP_NAMES keys exactly (both ultimately describe the same E4B/KRZ loop-
+# flag convention) -- kept as its own tiny copy here rather than reaching
+# into that module's private name, since build/ and banks/ stay separate
+# layers otherwise.
+_LOOP_NAMES = {0: "none", 1: "forward", 2: "alternating", 3: "forward (release)"}
 
 
 class XpmImportError(RuntimeError):
@@ -46,9 +53,9 @@ class XpmImportOptions:
 @dataclass(frozen=True)
 class XpmSummary:
     preset_name: str
-    zone_count: int
     sample_count: int
     total_sample_bytes: int
+    zones: list = field(default_factory=list)   # list[ZoneSummary]
 
 
 def _run_captured(fn: Callable, *args, **kwargs) -> Any:
@@ -77,20 +84,33 @@ def _apply_max_sample_rate(bank: Any, hz: int) -> None:
 def summarize_xpm(xpm_path: str, wav_dir: Optional[str] = None) -> XpmSummary:
     """Read-only preview for Explorer's Detail pane -- parses via mpc2emu's
     own xpm_parser (same as import_xpm(), just never writes anything) to
-    report the one preset's zone count and total referenced sample data
-    size, without doing a full import. Same wav_dir default as
+    report the one preset's zones (same ZoneSummary shape banks/summary.py
+    uses for E4B/KRZ presets, so the Detail pane can show the same
+    sample/key/vel/root/loop table either way) and total referenced sample
+    data size, without doing a full import. Same wav_dir default as
     import_xpm()."""
     if wav_dir is None:
         wav_dir = str(Path(xpm_path).resolve().parent)
     bank = _run_captured(xpm_parser.parse_xpm, xpm_path, wav_dir)
     preset = bank.presets[0]
-    zone_count = sum(len(voice.zones) for voice in preset.voices)
+    zones: list[ZoneSummary] = []
+    for voice in preset.voices:
+        for z in voice.zones:
+            sample = bank.find_sample(z.sample_name)
+            zones.append(ZoneSummary(
+                sample_name=z.sample_name,
+                lo_key=z.lo_key, hi_key=z.hi_key,
+                lo_vel=z.lo_vel, hi_vel=z.hi_vel,
+                root_key=z.root_key,
+                loop=_LOOP_NAMES.get(int(sample.loop_type), "?") if sample else "?",
+                sample_rate=sample.sample_rate if sample else None,
+            ))
     total_bytes = sum(len(sample.data) for sample in bank.samples)
     return XpmSummary(
         preset_name=preset.name.strip(),
-        zone_count=zone_count,
         sample_count=len(bank.samples),
         total_sample_bytes=total_bytes,
+        zones=zones,
     )
 
 
