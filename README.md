@@ -144,11 +144,12 @@ whichever mpc2emu modules were already imported from the old location).
 
 ---
 
-![VinSamLib: library tree, Detail pane, and Samples pane showing a real multisampled preset](docs/screenshots/01_overview.png)
+![VinSamLib: library tree and Detail pane showing a multisampled preset](docs/screenshots/01_overview.png)
 
-*Explorer (left) with a real bank expanded and a preset selected; the
-Detail pane (top center) shows its condensed key-zone/velocity-layer/
-bit-depth summary; the Samples pane (below it) lists every zone.*
+*Explorer (left) with a bank expanded and a preset selected; the Detail
+pane (below it) shows its condensed key-zone/velocity-layer/bit-depth
+summary. (Screenshots throughout this manual use a small synthetic demo
+library, not real commercial content.)*
 
 ## Quick Start
 
@@ -263,6 +264,16 @@ themselves (not assumed): a single value if uniform across the preset,
 a range if it mixes rates/depths. For KRZ, the sample rate is decoded
 exactly from the K2000's own `samplePeriod` field
 (`sample_rate = round(1e9 / samplePeriod)`), not guessed.
+
+### Samples Pane
+
+![Samples pane showing the per-zone sample/key-range/velocity-range/root/loop table](docs/screenshots/07_samples_pane.png)
+
+Hidden by default (**View → Show Samples Column**) — this is the
+uncondensed counterpart to the Detail pane's summary: one row per zone,
+with the sample name, key range, velocity range, root key, and loop
+type. Useful when you need the exact per-zone breakdown the Detail
+pane's summary intentionally leaves out.
 
 ### New Bank
 
