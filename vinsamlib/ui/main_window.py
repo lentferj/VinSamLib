@@ -15,6 +15,7 @@ the Explorer's search box queries it directly whenever the user types.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtGui import QAction
@@ -56,6 +57,7 @@ class MainWindow(QMainWindow):
         self._bank_pane = BankPane()
         self._bank_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
         self._explorer.addToBankRequested.connect(self._add_node_to_bank)
+        self._explorer.importXpmRequested.connect(self._import_xpm)
 
         self._pending_pane = PendingBanksPane()
         self._pending_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
@@ -116,7 +118,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
 
         import_xpm_action = QAction("Import XPM…", self)
-        import_xpm_action.triggered.connect(self._import_xpm)
+        import_xpm_action.triggered.connect(lambda: self._import_xpm())
         xpm_ok, xpm_reason = self._config.check_xpm_import_support()
         import_xpm_action.setEnabled(xpm_ok)
         import_xpm_action.setToolTip(
@@ -183,15 +185,19 @@ class MainWindow(QMainWindow):
 
     # -- XPM import ---------------------------------------------------------------
 
-    def _import_xpm(self) -> None:
+    def _import_xpm(self, path: Optional[str] = None) -> None:
+        """path: pre-chosen (e.g. Explorer's "Import…" on a .xpm row/hit --
+        see importXpmRequested) or None to prompt with a file picker
+        (File > Import XPM…)."""
         if self._xpm_import_worker is not None:
             self.statusBar().showMessage("An XPM import is already running")
             return
-        path, _filter = QFileDialog.getOpenFileName(
-            self, "Import XPM", "", "Akai XPM programs (*.xpm)",
-            options=QFileDialog.Option.DontUseNativeDialog)
         if not path:
-            return
+            path, _filter = QFileDialog.getOpenFileName(
+                self, "Import XPM", "", "Akai XPM programs (*.xpm)",
+                options=QFileDialog.Option.DontUseNativeDialog)
+            if not path:
+                return
         opts = XpmImportDialog.get_import_options(self)
         if opts is None:
             return

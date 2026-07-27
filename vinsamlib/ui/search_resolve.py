@@ -18,6 +18,14 @@ from ..vfs.detect import open_volume, sniff
 
 
 def resolve_result(result: SearchResult) -> Optional[TreeNode]:
+    if result.kind == "xpm":
+        # An XPM hit's container *is* the .xpm file itself (see
+        # index/scanner.py's _scan_xpm_container -- one lightweight
+        # container per file, not parsed at scan time) -- no bytes to
+        # re-read or re-parse, just enough to reconstruct the same leaf
+        # TreeNode the tree itself builds for it.
+        return TreeNode("xpm", result.name, None, Path(result.container_path),
+                         format_label="XPM")
     container_path = result.container_path
     if sniff(container_path) is None:
         return _resolve_loose_bank(container_path, result)

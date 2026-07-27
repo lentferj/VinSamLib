@@ -32,9 +32,11 @@ _KIND_ICON = {
     "folder": "\U0001F4C1",        # 📁
     "bank": "\U0001F4E6",          # 📦
     "preset": "\U0001F3B9",        # 🎹
+    "xpm": "\U0001F39B",           # 🎛
 }
 
 _BANK_EXT_FORMAT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ"}
+_XPM_EXT = ".xpm"
 
 
 def _guess_format(name: str, meta_format: str = "") -> str:
@@ -62,7 +64,7 @@ def human_size(n: int) -> str:
 
 @dataclass
 class TreeNode:
-    kind: str                                  # 'directory' | 'volume_root' | 'folder' | 'bank' | 'preset'
+    kind: str                                  # 'directory' | 'volume_root' | 'folder' | 'bank' | 'preset' | 'xpm'
     label: str
     parent: Optional["TreeNode"]
     payload: Any                                # Path | (Volume, Entry) | (BankFile, preset_obj)
@@ -113,6 +115,11 @@ def _fetch_directory(node: TreeNode) -> list[TreeNode]:
         elif e.kind == EntryKind.OTHER_FILE and e.meta.get("is_image"):
             if sniff(e.ref) is not None:
                 out.append(TreeNode("volume_root", e.name, node, Path(e.ref), size=e.size))
+        elif e.kind == EntryKind.OTHER_FILE and Path(e.name).suffix.lower() == _XPM_EXT:
+            # Importable (see build/xpm_import.py), not browsable further --
+            # a leaf row, not "bank" (which would send it through
+            # _fetch_bank's E4B/KRZ magic-byte parsing and fail).
+            out.append(TreeNode("xpm", e.name, node, Path(e.ref), size=e.size, format_label="XPM"))
         # plain OTHER_FILE (WAVs, docs, ...): out of scope for this browser
     out.sort(key=lambda n: (n.kind not in ("directory", "volume_root"), n.label.lower()))
     return out
@@ -327,7 +334,7 @@ class LibraryTreeModel(QAbstractItemModel):
 
 class BankFormatFilterProxy(QSortFilterProxyModel):
     """Sits between LibraryTreeModel and the tree view to implement the
-    All/E4B/KRZ filter dropdown, without teaching the lazy tree model
+    All/E4B/KRZ/XPM filter dropdown, without teaching the lazy tree model
     itself anything about filtering. Confirmed empirically (this project's
     running rule for anything PySide6-specific) that QSortFilterProxyModel
     correctly forwards canFetchMore()/fetchMore() *and* flags()/mimeData()
@@ -335,12 +342,12 @@ class BankFormatFilterProxy(QSortFilterProxyModel):
     here, since the tree only grows on demand and presets still need to
     stay draggable through the proxy.
 
-    Only "bank" nodes are ever actually filtered out. A directory/image/
-    folder that turns out to contain zero matching banks is still shown
-    (just ends up empty once expanded) rather than hidden pre-emptively --
-    knowing in advance which containers have matching content would mean
-    scanning everything up front, which is exactly what this tree's lazy
-    design exists to avoid."""
+    Only "bank" and "xpm" nodes are ever actually filtered out. A
+    directory/image/folder that turns out to contain zero matching rows
+    is still shown (just ends up empty once expanded) rather than hidden
+    pre-emptively -- knowing in advance which containers have matching
+    content would mean scanning everything up front, which is exactly
+    what this tree's lazy design exists to avoid."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -356,6 +363,6 @@ class BankFormatFilterProxy(QSortFilterProxyModel):
         source_model = self.sourceModel()
         index = source_model.index(source_row, 0, source_parent)
         node = index.data(Qt.ItemDataRole.UserRole)
-        if node is None or node.kind != "bank":
+        if node is None or node.kind not in ("bank", "xpm"):
             return True
         return node.format_label == self._format_filter

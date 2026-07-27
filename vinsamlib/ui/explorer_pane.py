@@ -22,7 +22,7 @@ from .detail_pane import DetailPane
 from .models import BankFormatFilterProxy, LibraryTreeModel, TreeNode
 from ..index.db import IndexDB, SearchResult
 
-_FORMAT_FILTERS = ["All", "E4B", "KRZ"]
+_FORMAT_FILTERS = ["All", "E4B", "KRZ", "XPM"]
 
 
 class _ResultsListWidget(QListWidget):
@@ -48,13 +48,15 @@ class _ResultsListWidget(QListWidget):
             return None
         return dnd.build_mime_data(payload_items)
 
-_KIND_ICON = {"folder": "\U0001F4C1", "bank": "\U0001F4E6", "preset": "\U0001F3B9"}
+_KIND_ICON = {"folder": "\U0001F4C1", "bank": "\U0001F4E6", "preset": "\U0001F3B9",
+              "xpm": "\U0001F39B"}
 _SEARCH_DEBOUNCE_MS = 200
 
 
 class ExplorerPane(QWidget):
     selectionChanged = Signal(object)   # TreeNode | None
     addToBankRequested = Signal(list)   # list[TreeNode] (always kind == "preset")
+    importXpmRequested = Signal(str)    # absolute path to a .xpm file
 
     def __init__(self, model: LibraryTreeModel, index_db: Optional[IndexDB] = None, parent=None):
         super().__init__(parent)
@@ -75,7 +77,7 @@ class ExplorerPane(QWidget):
 
         self._filter_box = QComboBox()
         self._filter_box.addItems(_FORMAT_FILTERS)
-        self._filter_box.setToolTip("Only show banks of this format")
+        self._filter_box.setToolTip("Only show banks (or importable XPM programs) of this format")
         self._filter_box.currentTextChanged.connect(self._on_filter_changed)
         search_row.addWidget(self._filter_box)
         layout.addLayout(search_row)
@@ -199,22 +201,28 @@ class ExplorerPane(QWidget):
         self._select(node)
 
     def _on_tree_double_clicked(self, index) -> None:
-        # Presets are leaves, so Qt's default expand/collapse-on-double-click
-        # is a no-op for them anyway -- safe to also treat the double-click
-        # as the click-to-add shortcut (the same target as the right-click
-        # "Add to New Bank" action) without fighting the tree's own toggle
-        # behavior on folder/bank rows.
+        # Presets and xpm rows are both leaves, so Qt's default expand/
+        # collapse-on-double-click is a no-op for them anyway -- safe to
+        # also treat the double-click as each one's primary action (add /
+        # import, matching the right-click menu) without fighting the
+        # tree's own toggle behavior on folder/bank rows.
         node = index.data(Qt.ItemDataRole.UserRole) if index.isValid() else None
-        if node is not None and node.kind == "preset":
-            self.addToBankRequested.emit([node])
+        self._trigger_primary_action(node)
 
     def _on_result_double_clicked(self, item: QListWidgetItem) -> None:
         hit = item.data(Qt.ItemDataRole.UserRole)
         if hit is None:
             return
         node = search_resolve.resolve_result(hit)
-        if node is not None and node.kind == "preset":
+        self._trigger_primary_action(node)
+
+    def _trigger_primary_action(self, node: Optional[TreeNode]) -> None:
+        if node is None:
+            return
+        if node.kind == "preset":
             self.addToBankRequested.emit([node])
+        elif node.kind == "xpm":
+            self.importXpmRequested.emit(str(node.payload))
 
     def _select(self, node: Optional[TreeNode]) -> None:
         self._current_node = node
@@ -234,7 +242,7 @@ class ExplorerPane(QWidget):
         if index not in selected:
             selected = [index]
         nodes = [i.data(Qt.ItemDataRole.UserRole) for i in selected]
-        self._show_preset_menu(nodes, self._tree.viewport().mapToGlobal(pos))
+        self._show_context_menu(nodes, self._tree.viewport().mapToGlobal(pos))
 
     def _on_results_context_menu(self, pos) -> None:
         item = self._results.itemAt(pos)
@@ -245,19 +253,29 @@ class ExplorerPane(QWidget):
             selected = [item]
         hits = [i.data(Qt.ItemDataRole.UserRole) for i in selected]
         nodes = [search_resolve.resolve_result(hit) for hit in hits if hit is not None]
-        self._show_preset_menu(nodes, self._results.viewport().mapToGlobal(pos))
+        self._show_context_menu(nodes, self._results.viewport().mapToGlobal(pos))
 
-    def _show_preset_menu(self, nodes: list[Optional[TreeNode]], global_pos) -> None:
+    def _show_context_menu(self, nodes: list[Optional[TreeNode]], global_pos) -> None:
         presets = [n for n in nodes if n is not None and n.kind == "preset"]
-        if not presets:
+        xpms = [n for n in nodes if n is not None and n.kind == "xpm"]
+        if not presets and not xpms:
             return
         menu = QMenu(self)
-        label = f'Add "{presets[0].label}" to New Bank' if len(presets) == 1 \
-            else f"Add {len(presets)} presets to New Bank"
-        add_action = menu.addAction(label)
+        add_action = None
+        import_action = None
+        if presets:
+            label = f'Add "{presets[0].label}" to New Bank' if len(presets) == 1 \
+                else f"Add {len(presets)} presets to New Bank"
+            add_action = menu.addAction(label)
+        if len(xpms) == 1:
+            # Multi-XPM import isn't supported yet -- only offered for a
+            # single selected .xpm row.
+            import_action = menu.addAction(f'Import "{xpms[0].label}"…')
         chosen = menu.exec(global_pos)
-        if chosen == add_action:
+        if add_action is not None and chosen == add_action:
             self.addToBankRequested.emit(presets)
+        elif import_action is not None and chosen == import_action:
+            self.importXpmRequested.emit(str(xpms[0].payload))
 
 
 def _format_hit(hit: SearchResult) -> str:
