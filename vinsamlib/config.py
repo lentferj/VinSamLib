@@ -59,6 +59,15 @@ class Config:
     # folder added, so picking a sibling library folder next time doesn't
     # start back at the dialog's platform default every time.
     last_library_dir: Optional[Path] = None
+    # New Bank's size-meter warning threshold, in MB, per format. This is
+    # a soft, user-adjustable "will this fit MY hardware's RAM" warning,
+    # separate from the hard format-technical ceiling banks/e4b.py always
+    # enforces at assemble() time (128 MB, the E4XT container's actual
+    # write limit) -- these defaults instead reflect the most common real
+    # RAM configurations in the wild (64 MB E4XT, 32 MB K2000), which are
+    # usually well under the format's own absolute maximum.
+    e4b_bank_limit_mb: int = 64
+    krz_bank_limit_mb: int = 32
 
     CONFIG_FILE = "config.toml"
 
@@ -75,8 +84,12 @@ class Config:
         last_image_dir = Path(last_image_dir_str) if last_image_dir_str else None
         last_library_dir_str = data.get("last_library_dir")
         last_library_dir = Path(last_library_dir_str) if last_library_dir_str else None
+        defaults = cls()
+        e4b_bank_limit_mb = data.get("e4b_bank_limit_mb", defaults.e4b_bank_limit_mb)
+        krz_bank_limit_mb = data.get("krz_bank_limit_mb", defaults.krz_bank_limit_mb)
         return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
-                    last_image_dir=last_image_dir, last_library_dir=last_library_dir)
+                    last_image_dir=last_image_dir, last_library_dir=last_library_dir,
+                    e4b_bank_limit_mb=e4b_bank_limit_mb, krz_bank_limit_mb=krz_bank_limit_mb)
 
     def save(self, path: Path | None = None) -> None:
         path = path or (user_config_dir() / self.CONFIG_FILE)
@@ -88,6 +101,8 @@ class Config:
             lines.append(f'last_image_dir = "{self.last_image_dir.as_posix()}"')
         if self.last_library_dir is not None:
             lines.append(f'last_library_dir = "{self.last_library_dir.as_posix()}"')
+        lines.append(f"e4b_bank_limit_mb = {self.e4b_bank_limit_mb}")
+        lines.append(f"krz_bank_limit_mb = {self.krz_bank_limit_mb}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def validate_mpc2emu_path(self) -> None:

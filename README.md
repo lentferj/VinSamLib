@@ -83,9 +83,12 @@ waiting for the tree to be expanded down to it.
 accepts presets/programs dragged from anywhere in the library (or added
 via right-click), locks to whichever format the first one came from, and
 shows a live, real size/count meter — computed by actually assembling
-the selection, not an estimate — with the E4XT's 128 MB / 1000-preset and
-the K2000's 1000-program limits enforced live. Save the result directly
-to a file, or queue it for image building.
+the selection, not an estimate. The E4XT's 128 MB / 1000-preset and the
+K2000's 1000-program limits are hard, format-technical ceilings, always
+enforced; a separate, lower, configurable-in-Settings byte threshold
+(default 64 MB E4B / 32 MB KRZ) warns earlier, once a bank likely
+exceeds *your own* hardware's actual RAM. Save the result directly to a
+file, or queue it for image building.
 
 **Queue several banks, then build.** The Pending for Image column holds
 any number of banks-in-progress; each can be renamed, reordered, and
@@ -449,6 +452,15 @@ line: whether the path itself is even a usable mpc2emu checkout, and
 separately whether the specific modules the conversion feature needs
 are present (a checkout could exist but be an incompatible or partial
 version). Changing the path needs a restart to take effect.
+
+Also here: **New Bank size-warning thresholds**, in MB, one each for
+E4B and KRZ (defaults 64 MB / 32 MB — the most common real E4XT/K2000
+RAM configurations, not the format's own absolute technical maximum:
+128 MB for E4B, and the K2000 has no hard byte ceiling at all, only its
+1000-program limit). This is a *soft* warning New Bank's size meter
+uses to flag a bank that's probably too big for your actual hardware —
+"Keep Anyway" is still offered in the over-limit dialog if you genuinely
+have more RAM installed. Takes effect immediately, no restart needed.
 
 ### Keyboard Shortcuts
 

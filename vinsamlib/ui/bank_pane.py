@@ -40,9 +40,14 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QFrame, QHBoxLayo
 from . import dnd, workers
 from .detail_pane import _escape, zone_stats_lines
 from ..banks import e4b, krz, summary
+from ..config import Config
 
 _RECOMPUTE_DEBOUNCE_MS = 250
-_E4B_MAX_BYTES = 128 * 1024 * 1024   # writers/bank_splitter.py — hardware limit
+# Hard format-technical ceilings (writers/bank_splitter.py) -- these are
+# real write-format limits banks/e4b.py's assemble() itself enforces via
+# raise, not adjustable here. The separate, lower, user-configurable
+# per-format byte limit (Config.e4b_bank_limit_mb/krz_bank_limit_mb) is a
+# soft "will this fit MY hardware's actual RAM" warning underneath this.
 _E4B_MAX_PRESETS = 1000
 _KRZ_MAX_PRESETS = 1000
 
@@ -67,9 +72,10 @@ class BankPane(QWidget):
     statusMessage = Signal(str)
     sendToPendingRequested = Signal(str, str, list)   # (name, format, items)
 
-    def __init__(self, parent=None):
+    def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self._config = config or Config()
 
         self._format: Optional[str] = None
         self._items: list[tuple[Any, Any, str]] = []   # (bank, preset_obj, name)
@@ -193,6 +199,15 @@ class BankPane(QWidget):
             return
         name = _sanitize_bank_name(self._name_edit.text())
         self.sendToPendingRequested.emit(name, self._format, list(self._items))
+
+    def refresh_size_limits(self) -> None:
+        """Re-applies the size check against the last-assembled bytes
+        without a full reassemble -- called by Settings after the
+        configurable per-format RAM limit changes, so an already-staged
+        bank's meter/warning reflect the new threshold immediately rather
+        than waiting for the next add."""
+        if self._last_bytes is not None:
+            self._apply_size(self._gen, self._last_bytes)
 
     # -- duplicate-check options (View menu) -------------------------------------
 
@@ -478,16 +493,23 @@ class BankPane(QWidget):
         self._last_bytes = data
         n = len(self._items)
         if self._format == "E4B":
+            limit_bytes = self._config.e4b_bank_limit_mb * 1024 * 1024
             self._meter_label.setText(
-                f"{n} preset(s) — {_human(len(data))} / {_human(_E4B_MAX_BYTES)}")
-            over = len(data) > _E4B_MAX_BYTES or n > _E4B_MAX_PRESETS
+                f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}")
+            over = len(data) > limit_bytes or n > _E4B_MAX_PRESETS
             detail = (f"{n} presets exceed the E4XT's {_E4B_MAX_PRESETS}-preset limit."
                       if n > _E4B_MAX_PRESETS else
-                      f"{_human(len(data))} exceeds the E4XT's {_human(_E4B_MAX_BYTES)} limit.")
+                      f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
+                      f"E4XT RAM limit (Settings…).")
         else:
-            self._meter_label.setText(f"{n} preset(s) — {_human(len(data))}")
-            over = n > _KRZ_MAX_PRESETS
-            detail = f"{n} presets exceed the K2000's {_KRZ_MAX_PRESETS}-preset limit."
+            limit_bytes = self._config.krz_bank_limit_mb * 1024 * 1024
+            self._meter_label.setText(
+                f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}")
+            over = len(data) > limit_bytes or n > _KRZ_MAX_PRESETS
+            detail = (f"{n} presets exceed the K2000's {_KRZ_MAX_PRESETS}-preset limit."
+                      if n > _KRZ_MAX_PRESETS else
+                      f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
+                      f"K2000 RAM limit (Settings…).")
         self._meter_label.setStyleSheet(
             f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;")
         self._save_btn.setEnabled(not over)

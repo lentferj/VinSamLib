@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
-                             QLabel, QLineEdit, QPushButton, QVBoxLayout)
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+                             QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
+                             QVBoxLayout)
 
 from ..config import Config
 
@@ -49,6 +50,30 @@ class SettingsDialog(QDialog):
         self._restart_label.setWordWrap(True)
         layout.addWidget(self._restart_label)
 
+        layout.addSpacing(12)
+        layout.addWidget(QLabel("New Bank size-warning thresholds:"))
+        limits_form = QFormLayout()
+        self._e4b_limit_spin = QSpinBox()
+        self._e4b_limit_spin.setRange(1, 128)
+        self._e4b_limit_spin.setSuffix(" MB")
+        self._e4b_limit_spin.setValue(config.e4b_bank_limit_mb)
+        limits_form.addRow("E4XT (E4B):", self._e4b_limit_spin)
+        self._krz_limit_spin = QSpinBox()
+        self._krz_limit_spin.setRange(1, 128)
+        self._krz_limit_spin.setSuffix(" MB")
+        self._krz_limit_spin.setValue(config.krz_bank_limit_mb)
+        limits_form.addRow("K2000 (KRZ):", self._krz_limit_spin)
+        layout.addLayout(limits_form)
+        limits_hint = QLabel(
+            "A soft warning in New Bank once a bank exceeds this size — the "
+            "most common real RAM configuration, not the format's absolute "
+            "technical maximum (128 MB for E4B; the K2000 has no hard byte "
+            "ceiling). \"Keep Anyway\" is still offered if you actually have "
+            "more RAM installed.")
+        limits_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        limits_hint.setWordWrap(True)
+        layout.addWidget(limits_hint)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -81,10 +106,17 @@ class SettingsDialog(QDialog):
 
     def accept(self) -> None:
         new_path = Path(self._path_edit.text())
-        if new_path != self._config.mpc2emu_path:
+        path_changed = new_path != self._config.mpc2emu_path
+        limits_changed = (self._e4b_limit_spin.value() != self._config.e4b_bank_limit_mb
+                           or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb)
+        if path_changed:
             self._config.mpc2emu_path = new_path
-            self._config.save()
             self._changed_path = new_path
+        if limits_changed:
+            self._config.e4b_bank_limit_mb = self._e4b_limit_spin.value()
+            self._config.krz_bank_limit_mb = self._krz_limit_spin.value()
+        if path_changed or limits_changed:
+            self._config.save()
         super().accept()
 
     @property

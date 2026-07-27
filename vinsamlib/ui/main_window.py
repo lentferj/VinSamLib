@@ -56,7 +56,7 @@ class MainWindow(QMainWindow):
         self._samples.setVisible(False)
         self._explorer.selectionChanged.connect(self._samples.show_node)
 
-        self._bank_pane = BankPane()
+        self._bank_pane = BankPane(self._config)
         self._bank_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
         self._explorer.addToBankRequested.connect(self._add_node_to_bank)
         self._explorer.importXpmRequested.connect(self._import_xpm)
@@ -234,9 +234,11 @@ class MainWindow(QMainWindow):
 
     def _show_settings(self) -> None:
         dialog = SettingsDialog(self._config, self)
-        if dialog.exec() == SettingsDialog.DialogCode.Accepted and dialog.path_changed:
-            self.statusBar().showMessage(
-                "mpc2emu path updated — restart VinSamLib to apply", 8000)
+        if dialog.exec() == SettingsDialog.DialogCode.Accepted:
+            self._bank_pane.refresh_size_limits()
+            if dialog.path_changed:
+                self.statusBar().showMessage(
+                    "mpc2emu path updated — restart VinSamLib to apply", 8000)
 
     # -- XPM import ---------------------------------------------------------------
 
