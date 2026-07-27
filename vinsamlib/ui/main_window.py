@@ -19,7 +19,7 @@ from typing import Optional
 
 from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QSplitter
+from PySide6.QtWidgets import QFileDialog, QInputDialog, QMainWindow, QMessageBox, QSplitter
 
 from . import workers
 from .bank_pane import BankPane
@@ -111,6 +111,10 @@ class MainWindow(QMainWindow):
         add_action.triggered.connect(self._add_library_folder)
         file_menu.addAction(add_action)
 
+        remove_action = QAction("Remove Library Folder…", self)
+        remove_action.triggered.connect(lambda: self._remove_library_folder())
+        file_menu.addAction(remove_action)
+
         rescan_action = QAction("Rescan Library", self)
         rescan_action.triggered.connect(lambda: self._start_scan(list(self._config.library_roots)))
         file_menu.addAction(rescan_action)
@@ -176,6 +180,30 @@ class MainWindow(QMainWindow):
         self._config.save()
         self._model.add_root(p)
         self._start_scan([p])
+
+    def _remove_library_folder(self) -> None:
+        if not self._config.library_roots:
+            self.statusBar().showMessage("No library folders to remove")
+            return
+        items = [str(p) for p in self._config.library_roots]
+        choice, ok = QInputDialog.getItem(
+            self, "Remove Library Folder", "Folder to remove:", items, 0, False)
+        if not ok or not choice:
+            return
+        path = Path(choice)
+        if QMessageBox.question(
+                self, "Remove Library Folder",
+                f"Remove {path} from your library?\n\n"
+                "This only stops VinSamLib from tracking it -- no files on disk "
+                "are touched, and you can add it back any time.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self._config.library_roots.remove(path)
+        self._config.save()
+        self._model.remove_root(path)
+        self._index_db.forget_containers_under(str(path))
+        self.statusBar().showMessage(f"Removed {path} from your library", 6000)
 
     def _show_settings(self) -> None:
         dialog = SettingsDialog(self._config, self)

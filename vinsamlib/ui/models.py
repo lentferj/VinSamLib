@@ -188,12 +188,22 @@ class LibraryTreeModel(QAbstractItemModel):
         self._roots: list[TreeNode] = [TreeNode("directory", str(p), None, p) for p in roots]
         self._live_workers: list[workers.Worker] = []   # keep references alive until done
 
-    # -- growing the tree from the outside (File > Add Library Folder…) -----
+    # -- growing/shrinking the tree from the outside (File > Add/Remove
+    # Library Folder…) -----------------------------------------------------
 
     def add_root(self, path: Path) -> None:
         self.beginInsertRows(QModelIndex(), len(self._roots), len(self._roots))
         self._roots.append(TreeNode("directory", str(path), None, path))
         self.endInsertRows()
+
+    def remove_root(self, path: Path) -> bool:
+        for i, node in enumerate(self._roots):
+            if node.payload == path:
+                self.beginRemoveRows(QModelIndex(), i, i)
+                del self._roots[i]
+                self.endRemoveRows()
+                return True
+        return False
 
     def is_empty(self) -> bool:
         return not self._roots

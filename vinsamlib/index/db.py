@@ -148,6 +148,20 @@ class IndexDB:
         self._conn.execute("DELETE FROM container WHERE path = ?", (path,))
         self._conn.commit()
 
+    def forget_containers_under(self, root: str) -> None:
+        """Purges every indexed container whose path is inside `root` --
+        used when a library folder is removed (File > Remove Library
+        Folder…), so stale presets/banks from it stop showing up in
+        search. `root` itself is included; the trailing separator on the
+        LIKE prefix keeps this from matching an unrelated sibling
+        directory that merely starts with the same characters
+        (e.g. removing "/libs/foo" must not also purge "/libs/foobar")."""
+        prefix = root.rstrip("/") + "/"
+        self._conn.execute(
+            "DELETE FROM container WHERE path = ? OR path LIKE ?",
+            (root, prefix + "%"))
+        self._conn.commit()
+
     def all_container_paths(self) -> list[str]:
         return [r[0] for r in self._conn.execute("SELECT path FROM container")]
 
