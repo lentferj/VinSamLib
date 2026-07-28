@@ -399,14 +399,24 @@ class BankPane(QWidget):
         rows = sorted((idx.row() for idx in self._list.selectedIndexes()), reverse=True)
         for row in rows:
             del self._items[row]
+        if not self._items:
+            # Removing the last preset one at a time (Remove/Remove
+            # Selected/Delete) used to leave the format lock stuck on
+            # whatever it was, forever refusing a different-format add
+            # even though the bank was genuinely empty again -- only
+            # Clear reset it. An empty bank should never stay locked.
+            self._reset_format_lock()
         self._refresh()
 
     def _clear(self) -> None:
         self._items = []
-        self._format = None
-        self._head.setText("New Bank")
+        self._reset_format_lock()
         self._name_edit.clear()
         self._refresh()
+
+    def _reset_format_lock(self) -> None:
+        self._format = None
+        self._head.setText("New Bank")
 
     def _refresh(self) -> None:
         # QListWidget.clear() doesn't reliably emit itemSelectionChanged in
@@ -563,6 +573,11 @@ class BankPane(QWidget):
             self._items = self._pre_add_snapshot
             self._pre_add_snapshot = None
             self._was_over_limit = False
+            if not self._items:
+                # If the over-limit add was the bank's very first one,
+                # undoing it empties the bank -- same stuck-lock bug as
+                # _remove_selected(), just reached a different way.
+                self._reset_format_lock()
             self._refresh()
 
     # -- save --------------------------------------------------------------------
