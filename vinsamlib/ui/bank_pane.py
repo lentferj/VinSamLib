@@ -207,10 +207,6 @@ class BankPane(QWidget):
             self.statusMessage.emit(
                 "Nothing ready to send yet — wait for the size to finish calculating")
             return
-        if self._format == "EIII":
-            self.statusMessage.emit(
-                "EIII banks aren't placed on a disk image from here yet — use Save as…")
-            return
         if not self._save_btn.isEnabled():
             self.statusMessage.emit("Can't send an over-limit bank — remove some presets first")
             return
@@ -448,18 +444,15 @@ class BankPane(QWidget):
             widget_item.setData(Qt.ItemDataRole.UserRole, item)
             self._list.addItem(widget_item)
         self._stack.setCurrentIndex(1 if self._items else 0)
-        # No image target exists for a raw EIII bank yet (Pending for
-        # Image / the Image column only build E4B EMU3 images and KRZ
-        # K2000 disks -- see build/images.py's IMAGE_KINDS) -- Save As…
-        # still works for EIII (a real .e3x/.esi file), same as every
-        # other format, so only this one button is gated.
-        is_eiii = self._format == "EIII"
-        self._send_to_image_btn.setEnabled(not is_eiii)
+        # EIII banks are placed on the exact same EMU3 CD/HD images E4B
+        # banks use (mpc2emu's iso_builder/hda_builder are bank-content-
+        # agnostic, and now correctly tag each bank's real format on disk
+        # -- see build/images.py's append_banks()), so this is enabled the
+        # same way for every format now.
+        self._send_to_image_btn.setEnabled(True)
         self._send_to_image_btn.setToolTip(
-            "EIII banks aren't placed on a disk image from here yet — use "
-            "Save as… to write a real .e3x/.esi file" if is_eiii
-            else "Add this bank to the Pending for Image queue — nothing is "
-                 "written to a real image until Build Image → is clicked there")
+            "Add this bank to the Pending for Image queue — nothing is "
+            "written to a real image until Build Image → is clicked there")
         if self._items:
             self._meter_label.setText("Calculating…")
             self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)

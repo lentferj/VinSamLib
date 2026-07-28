@@ -50,24 +50,20 @@ def _assemble_all(pending: list[dict]) -> list[str]:
     through build/convert.py's own parse -> Bank -> resample/reduce ->
     write round trip on top of the just-assembled E4B temp file,
     replacing it with the processed version before it's handed onward
-    -- not currently offered for a KRZ queue (see _refresh()'s
-    _convert_btn gating): mpc2emu CAN read KRZ now too, but per-bank
-    conversion for KRZ hasn't been wired up here yet, only per-preset
+    -- not currently offered for a KRZ or EIII queue (see _refresh()'s
+    _convert_btn gating): mpc2emu CAN read both now too, but per-bank
+    conversion for either hasn't been wired up here yet, only per-preset
     via Explorer's "Import via mpc2emu...")."""
     paths: list[str] = []
     for entry in pending:
         fmt = entry["format"]
-        if fmt not in ("E4B", "KRZ"):
-            # No image target exists for EIII yet (see bank_pane.py's own
-            # "Send to Image Column" gating, which should make this
-            # unreachable in practice) -- fail loudly rather than
-            # mis-assembling through the wrong format's assemble().
+        if fmt not in ("E4B", "KRZ", "EIII"):
             raise ValueError(f"Pending for Image doesn't support building a {fmt} queue")
         fn = _ASSEMBLE_FNS[fmt]
         selections = [(bank, preset) for bank, preset, _name in entry["items"]]
-        data = fn(selections)
-        ext = _FORMAT_EXT[fmt]
         name = _sanitize_bank_name(entry["name"])
+        data = fn(selections, bank_name=name) if fmt == "EIII" else fn(selections)
+        ext = _FORMAT_EXT[fmt]
         tmp_dir = Path(tempfile.mkdtemp(prefix=_PENDING_TEMP_PREFIX))
         tmp_path = tmp_dir / f"{name}.{ext}"
         tmp_path.write_bytes(data)
@@ -236,12 +232,12 @@ class PendingBanksPane(QWidget):
         n = len(self._pending)
         self._summary_label.setText(f"{n} bank{'s' if n != 1 else ''} pending")
         self._build_btn.setEnabled(bool(self._pending))
-        is_krz = self._format == "KRZ"
-        self._convert_btn.setEnabled(not is_krz)
+        needs_e4b_only = self._format in ("KRZ", "EIII")
+        self._convert_btn.setEnabled(not needs_e4b_only)
         self._convert_btn.setToolTip(
-            "Per-bank conversion isn't offered for a KRZ queue yet -- convert "
-            "a preset individually via Explorer's \"Import via mpc2emu...\" "
-            "instead" if is_krz
+            f"Per-bank conversion isn't offered for a {self._format} queue yet "
+            "-- convert a preset individually via Explorer's \"Import via "
+            "mpc2emu...\" instead" if needs_e4b_only
             else "Choose vintage resample / sample-count reduction to apply "
                  "to the SELECTED pending bank's next Build Image (per bank, "
                  "not the whole queue)")

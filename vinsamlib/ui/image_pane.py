@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogBut
 
 from . import workers
 from .models import human_size
+from ..banks import eiii
 from ..build import images
 from ..config import Config
 from ..vfs.base import Entry, EntryKind, Volume, WritableVolume
@@ -46,7 +47,14 @@ from ..vfs.emu3 import Emu3Volume
 from ..vfs.fatvol import Fat12Volume, Fat16Volume, Fat32Volume
 from ..vfs.iso9660 import Iso9660Volume
 
-_FORMAT_FROM_EXT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ"}
+_FORMAT_FROM_EXT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ",
+                     ".e3x": "EIII", ".esi": "EIII"}
+
+# E4B and EIII share the exact same EMU3-filesystem image kinds (emu3_cd/
+# emu3_hd_emu/emu3_hd_fat) -- IMAGE_KINDS' own format label only lists
+# "E4B" for those (the flagship/most common case), so anywhere that label
+# is used to match/seed/filter, EIII needs to be treated as equivalent.
+_EMU3_FAMILY = {"E4B", "EIII"}
 
 
 def _sniff_format(path: str) -> Optional[str]:
@@ -59,6 +67,8 @@ def _sniff_format(path: str) -> Optional[str]:
         return "E4B"
     if head[:4] == b"PRAM":
         return "KRZ"
+    if len(head) >= 16 and eiii.detect_format(head[:16]) is not None:
+        return "EIII"
     return _FORMAT_FROM_EXT.get(Path(path).suffix.lower())
 
 
@@ -92,7 +102,7 @@ def _kind_label(kind: Optional[str], vol: Volume, path: str, fmt: Optional[str])
     if isinstance(vol, Fat12Volume):
         return "FAT12 floppy"
     if isinstance(vol, (Fat16Volume, Fat32Volume)):
-        return "EMU3 HD image (FAT)" if fmt == "E4B" else "K2000 FAT16 disk"
+        return "EMU3 HD image (FAT)" if fmt in ("E4B", "EIII") else "K2000 FAT16 disk"
     if isinstance(vol, Iso9660Volume):
         return "K2000 ISO 9660 CD"
     return "Unknown"
@@ -355,6 +365,8 @@ class ImagePane(QWidget):
                     fmt = "E4B"
                 elif data[:4] == b"PRAM":
                     fmt = "KRZ"
+                elif len(data) >= 16 and eiii.detect_format(data[:16]) is not None:
+                    fmt = "EIII"
         finally:
             vol.close()
 
@@ -468,8 +480,10 @@ class ImagePane(QWidget):
             filt = "KRZ banks (*.krz *.k25 *.k26)"
         elif self._format == "E4B":
             filt = "E4B banks (*.e4b)"
+        elif self._format == "EIII":
+            filt = "EIII banks (*.e3x *.esi)"
         else:
-            filt = "Banks (*.e4b *.krz *.k25 *.k26)"
+            filt = "Banks (*.e4b *.krz *.k25 *.k26 *.e3x *.esi)"
         paths, _filter = QFileDialog.getOpenFileNames(
             self, "Append Bank File(s)", self._dialog_start_dir(), filt,
             options=QFileDialog.Option.DontUseNativeDialog)
@@ -613,8 +627,9 @@ class _NewImageDialog(QDialog):
         seed_row = None
         for row, (key, (fmt, label, _default_label)) in enumerate(images.IMAGE_KINDS.items()):
             self._kind_box.addItem(f"{label}  [{fmt}]", key)
-            if seed_format is not None and fmt == seed_format and seed_row is None:
-                seed_row = row   # first matching kind, e.g. E4B -> emu3_cd
+            seed_matches = fmt == seed_format or ({fmt, seed_format} <= _EMU3_FAMILY)
+            if seed_format is not None and seed_matches and seed_row is None:
+                seed_row = row   # first matching kind, e.g. E4B/EIII -> emu3_cd
         if seed_row is not None:
             self._kind_box.setCurrentIndex(seed_row)
         self._kind_box.currentIndexChanged.connect(self._on_kind_changed)
@@ -700,7 +715,8 @@ class _NewImageDialog(QDialog):
     def _add_bank_files(self) -> None:
         kind = self._current_kind()
         fmt, _label, _dl = images.IMAGE_KINDS[kind]
-        filt = "E4B banks (*.e4b)" if fmt == "E4B" else "KRZ banks (*.krz *.k25 *.k26)"
+        filt = ("E4B/EIII banks (*.e4b *.e3x *.esi)" if fmt == "E4B"
+                else "KRZ banks (*.krz *.k25 *.k26)")
         paths, _filter = QFileDialog.getOpenFileNames(
             self, "Add Bank Files", self._start_dir(), filt,
             options=QFileDialog.Option.DontUseNativeDialog)

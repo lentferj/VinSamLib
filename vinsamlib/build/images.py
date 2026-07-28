@@ -171,10 +171,16 @@ def _mutate_in_place(image_path: str, mutate: Callable[[str], Any]) -> Any:
 
 def append_banks(image_path: str, bank_format: str, bank_paths: list[str],
                   folder: Optional[str] = None, on_duplicate: str = "add-new") -> tuple[int, str]:
-    """Append `bank_paths` (all of format `bank_format`, 'E4B' or 'KRZ')
-    into an existing image. Returns (count actually added, captured log)."""
+    """Append `bank_paths` (all of format `bank_format`: 'E4B', 'EIII' or
+    'KRZ') into an existing image. Returns (count actually added, captured
+    log). EIII takes the exact same branch as E4B -- it shares E4B's whole
+    EMU3-filesystem container, and mpc2emu's iso_builder/hda_builder
+    append functions are bank-content-agnostic (the one format-specific
+    detail, the dir-content entry's props tag, mpc2emu itself now derives
+    from each bank's own bytes rather than assuming E4B -- see mpc2emu's
+    `_bank_props()`, added alongside EIII output support)."""
     def _do(tmp_path: str) -> tuple[int, str]:
-        if bank_format == "E4B":
+        if bank_format in ("E4B", "EIII"):
             fs = hda_builder.detect_hda_fs(tmp_path)
             if fs == "emu":
                 try:
@@ -217,10 +223,16 @@ def _rebuild_emu3_with_extra_banks(tmp_path: str, extra_paths: list[str],
                     continue
                 data = vol.read(entry)
                 name = entry.name.strip() or f"bank{len(existing_paths)}"
-                out = export_dir / f"{name}.e4b"
+                # Extension doesn't affect iso_builder.build_iso (it's
+                # content-agnostic, same as every builder here), but using
+                # the entry's own real detected format keeps exported temp
+                # files honestly labeled rather than always claiming .e4b
+                # for what might be a real EIII bank.
+                ext = "e3x" if entry.meta.get("format") == "EIII" else "e4b"
+                out = export_dir / f"{name}.{ext}"
                 i = 2
                 while out.exists():   # EMU3's 16-char names can collide once flattened
-                    out = export_dir / f"{name}_{i}.e4b"
+                    out = export_dir / f"{name}_{i}.{ext}"
                     i += 1
                 out.write_bytes(data)
                 existing_paths.append(str(out))

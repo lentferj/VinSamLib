@@ -346,16 +346,17 @@ future enhancement, not yet built; the underlying technique, assembling
 temporary single-preset banks, is proven and documented for when it's
 picked up.)
 
-The conversion button is currently disabled for a KRZ-format queue (a
-scope decision, not a technical limitation any more — mpc2emu can read
-KRZ now too; per-bank KRZ conversion here just hasn't been wired up
-yet). Convert a KRZ preset individually via Explorer's "Import via
-mpc2emu…" in the meantime.
+The conversion button is currently disabled for a KRZ- or EIII-format
+queue (a scope decision, not a technical limitation any more — mpc2emu
+can read both now too; per-bank conversion for either just hasn't been
+wired up yet). Convert a KRZ/EIII preset individually via Explorer's
+"Import via mpc2emu…" in the meantime.
 
 **Build Image →** assembles every entry currently in the queue and hands
-the results to the Image column. Building does **not** empty the queue
-— the same recipe can be rebuilt as many times as you like (handy while
-iterating on conversion options).
+the results to the Image column — for E4B, KRZ, or EIII (EIII banks
+build onto the exact same EMU3 CD/HD image kinds E4B does). Building
+does **not** empty the queue — the same recipe can be rebuilt as many
+times as you like (handy while iterating on conversion options).
 
 ### Convert Options dialog
 
@@ -366,7 +367,8 @@ import.
 
 **Import as:** — the target-format picker at the very top. Only XPM
 import and "Import via mpc2emu" show it (Pending's per-bank dialog
-doesn't — it's still E4B-queue-only, see Pending for Image above).
+doesn't — its conversion button is still E4B-only, see Pending for
+Image above).
 "Import via mpc2emu" defaults this picker to the preset's own source
 format — "same format, with options" one click away — but you can
 switch it to the other format just as easily. Switching it to KRZ
@@ -416,12 +418,18 @@ itself can write:
 
 | Kind | Format | Produces | Extension |
 |---|---|---|---|
-| EMU3 CD | E4B | ZuluSCSI CD-ROM image (EMU3 filesystem) | `.iso` |
-| EMU3 HD (native EMU filesystem) | E4B | SCSI hard disk, all EOS versions | `.hda` |
-| EMU3 HD (FAT) | E4B | SCSI hard disk, EOS 4.7+ only | `.hda` |
+| EMU3 CD | E4B or EIII | ZuluSCSI CD-ROM image (EMU3 filesystem) | `.iso` |
+| EMU3 HD (native EMU filesystem) | E4B or EIII | SCSI hard disk, all EOS versions | `.hda` |
+| EMU3 HD (FAT) | E4B or EIII | SCSI hard disk, EOS 4.7+ only | `.hda` |
 | K2000 FAT16 | KRZ | CD or hard disk (universally compatible) | `.hda`/`.iso` |
 | K2000 ISO 9660 | KRZ | CD, needs K2000 OS v3.87+ | `.iso` |
 | K2000 Gotek floppy | KRZ | FAT12 floppy for a Gotek/FlashFloppy | `.img` |
+
+E4B and EIII share the exact same EMU3-filesystem container (real
+commercial E4XT discs commonly mix both on one volume), so any "EMU3"
+kind above accepts either — each image still locks to whichever format
+its first bank was, the same one-format-per-image rule E4B/KRZ already
+follow.
 
 **Open…** opens an existing image (its kind is auto-detected from the
 real bytes, not assumed from the file extension). Once open, dragging a
@@ -509,11 +517,11 @@ main queue and the per-bank contents list in Pending for Image.
 | Feature | Status |
 |---|---|
 | EIII / ESI-32 bank format | ✅ readable and buildable (`.e3x`/`.esi`) — browse, summarize, combine into a New Bank, Save as…, and convert to/from E4B and KRZ. No reference implementation existed anywhere, so this is a from-scratch RE effort, corpus-verified by round-tripping 600 real banks out of the author's own discs |
-| EIII banks on a disk image | ❌ "Send to Image Column" is disabled for an EIII New Bank — `build/images.py`'s image kinds are E4B/KRZ only, so there's no image target to write one into yet. **Save as…** writes a real `.e3x` file regardless |
+| EIII banks on a disk image | ✅ EIII banks can now be sent to Pending for Image and built onto a real EMU3 CD/HD image the same way E4B banks are (mpc2emu's EIII writer/`iso_builder` fix, hardware-confirmed 2026-07-28, made this possible — see `build/images.py`'s `append_banks()`). Per-bank "Process before building…" isn't wired up for EIII yet, same scope decision as KRZ (see below) |
 | Writing the `.esi` (ESI-32) variant | ⚠️ `banks/eiii.py`'s `assemble()` supports it, but nothing in the UI exposes the choice — Save as… always writes the `.e3x` variant (which the E4XT's backward-compatibility loader also reads) |
 | EIII banks with shared preset link-chains | ⚠️ an EIII preset stacks layers by link-chaining preset slots, and several presets can share one chain tail. Assembling gives each its own copy, so selecting *every* preset of a few unusually dense commercial banks can exceed the 256-slot format ceiling even though the source bank fit — 2 of 600 corpus banks. Save as… reports it rather than writing a corrupt bank; drop a few presets to get under it |
 | KRZ as a conversion *source* | ✅ mpc2emu's own KRZ reader (added 2026-07-27, corpus-verified against 593 real files) made this possible — KRZ presets/programs can now be converted the same way E4B ones can, via Explorer's "Import via mpc2emu…" |
-| Per-bank KRZ conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for KRZ now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ queues yet |
+| Per-bank KRZ/EIII conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for both now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ/EIII queues yet |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
 | Some coverage-remapped KRZ presets can't be re-processed | ⚠️ a real mpc2emu bug (`writers/krz_writer.py`, tracked in mpc2emu's own TODO): a preset needing the octave-slice-stack "coverage remap" rebuild can crash on write when reprocessed; most real content is unaffected — VinSamLib surfaces the real error if it happens rather than silently failing |
 | Gotek floppy images | ⚠️ create-only — not appendable (a real FAT12 floppy constraint, not a bug) |
