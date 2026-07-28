@@ -57,7 +57,7 @@ class ExplorerPane(QWidget):
     selectionChanged = Signal(object)   # TreeNode | None
     addToBankRequested = Signal(list)   # list[TreeNode] (always kind == "preset")
     importXpmRequested = Signal(str)    # absolute path to a .xpm file
-    convertPresetRequested = Signal(object)   # single "preset" TreeNode, always E4B
+    convertPresetRequested = Signal(list)   # list[TreeNode], one or more "preset" nodes
     removeLibraryRootRequested = Signal(object)   # Path of a root "directory" node
 
     def __init__(self, model: LibraryTreeModel, index_db: Optional[IndexDB] = None, parent=None):
@@ -275,13 +275,20 @@ class ExplorerPane(QWidget):
             label = f'Add "{presets[0].label}" to New Bank' if len(presets) == 1 \
                 else f"Add {len(presets)} presets to New Bank"
             add_action = menu.addAction(label)
-        if len(presets) == 1 and presets[0].parent is not None:
-            # Single-preset only (matching the xpm/root one-item-at-a-time
-            # pattern below). Both E4B and KRZ presets get this now --
+        # Excludes any preset node with no resolvable parent bank -- same
+        # guard as before, just applied per-node instead of only to a lone
+        # selection, since a multi-select can now use this action too.
+        convertible = [p for p in presets if p.parent is not None]
+        if convertible:
+            # One shared Convert Options dialog covers the whole
+            # selection -- same options applied to every preset, not one
+            # dialog per preset. Both E4B and KRZ presets get this now --
             # mpc2emu's parsers.krz_parser (added 2026-07-27) made KRZ a
             # real *input* format too, so a KRZ preset can be converted
             # the same way an E4B one can, to either target format.
-            convert_action = menu.addAction("Import via mpc2emu…")
+            label = "Import via mpc2emu…" if len(convertible) == 1 \
+                else f"Import {len(convertible)} presets via mpc2emu…"
+            convert_action = menu.addAction(label)
         if len(xpms) == 1:
             # Multi-XPM import isn't supported yet -- only offered for a
             # single selected .xpm row.
@@ -294,7 +301,7 @@ class ExplorerPane(QWidget):
         if add_action is not None and chosen == add_action:
             self.addToBankRequested.emit(presets)
         elif convert_action is not None and chosen == convert_action:
-            self.convertPresetRequested.emit(presets[0])
+            self.convertPresetRequested.emit(convertible)
         elif import_action is not None and chosen == import_action:
             self.importXpmRequested.emit(str(xpms[0].payload))
         elif remove_action is not None and chosen == remove_action:

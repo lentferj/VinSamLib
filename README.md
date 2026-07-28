@@ -241,7 +241,7 @@ Right-click (or double-click) behavior depends on what you've selected:
 
 | Item | Double-click | Right-click menu |
 |---|---|---|
-| Preset/program | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B or KRZ) |
+| Preset/program (one or many selected) | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B or KRZ) — both work on a multi-selection |
 | `.xpm` file | Import (opens the conversion dialog) | "Import …" |
 | Library root (top-level folder) | — | "Remove … from Library…" |
 
@@ -455,6 +455,14 @@ since two different conversions of one preset are deliberately **not**
 treated as duplicates by New Bank's dedup check (only an identical
 repeat would be), so nothing else would otherwise keep them apart in
 the list.
+
+**Works on a multi-selection too** — select several presets in Explorer
+and choose "Import *N* presets via mpc2emu…"; one Convert Options dialog
+applies the same chosen options to every preset in the selection, each
+converted and added in turn (not one dialog per preset). If the
+selection spans presets from different source banks, the target-format
+picker just falls back to defaulting on E4B rather than guessing —
+pick explicitly in that case.
 
 ### Settings
 

@@ -48,6 +48,8 @@ class MainWindow(QMainWindow):
         self._scan_worker: workers.Worker | None = None
         self._xpm_import_worker: workers.Worker | None = None
         self._preset_convert_worker: workers.Worker | None = None
+        self._preset_convert_queue: list = []
+        self._preset_convert_opts: Optional[convert.ConversionOptions] = None
 
         self._model = LibraryTreeModel(list(config.library_roots))
 
@@ -342,29 +344,40 @@ class MainWindow(QMainWindow):
 
     # -- convert an existing E4B preset via mpc2emu --------------------------------
 
-    def _convert_preset_via_mpc2emu(self, node) -> None:
-        """Explorer's right-click "Import via mpc2emu..." on a real preset
-        (see explorer_pane.py's convertPresetRequested) -- the same
-        resample/reduce/target-format dialog and pipeline XPM import
-        already uses, just starting from an already-native preset instead
-        of a foreign XPM. Works for both E4B and KRZ sources now (mpc2emu's
-        parsers.krz_parser, added 2026-07-27, made KRZ a real *input*
-        format too -- see build/convert.py's module docstring)."""
+    def _convert_preset_via_mpc2emu(self, nodes: list) -> None:
+        """Explorer's right-click "Import via mpc2emu..." on one or more
+        real presets (see explorer_pane.py's convertPresetRequested) --
+        the same resample/reduce/target-format dialog and pipeline XPM
+        import already uses, just starting from already-native preset(s)
+        instead of a foreign XPM. Works for both E4B and KRZ sources now
+        (mpc2emu's parsers.krz_parser, added 2026-07-27, made KRZ a real
+        *input* format too -- see build/convert.py's module docstring).
+
+        A multi-selection shares ONE Convert Options dialog -- the same
+        chosen options are applied to every preset in the list, converted
+        one at a time (see _run_next_preset_conversion()), not a separate
+        dialog per preset."""
         if self._preset_convert_worker is not None:
             self.statusBar().showMessage("A conversion is already running")
             return
-        bank, preset_obj = node.payload
-        # Default the target-format picker to the preset's OWN format --
-        # "same format, with options" (the common case: apply resample/
-        # reduce without converting) is a better default than always
-        # landing on E4B, now that a KRZ source is just as valid a start.
-        # If New Bank already has a format lock, that takes priority over
-        # the source's own format (see locked_format below) -- converting
-        # to anything else would just be rejected after the fact.
-        source_fmt = node.parent.format_label if node.parent is not None else "E4B"
+        if not nodes:
+            return
+        # Default the target-format picker to the presets' own shared
+        # format if they all agree -- "same format, with options" (the
+        # common case: apply resample/reduce without converting) is a
+        # better default than always landing on E4B, now that a KRZ
+        # source is just as valid a start. A mixed-format selection has
+        # no single sensible default, so it falls back to E4B. If New
+        # Bank already has a format lock, that takes priority over
+        # either (see locked_format below) -- converting to anything
+        # else would just be rejected after the fact.
+        source_fmts = {n.parent.format_label for n in nodes if n.parent is not None}
+        source_fmt = source_fmts.pop() if len(source_fmts) == 1 else "E4B"
+        title = "Import via mpc2emu" if len(nodes) == 1 \
+            else f"Import {len(nodes)} presets via mpc2emu"
         opts = XpmImportDialog.get_import_options(
             self, initial=convert.ConversionOptions(target_format=source_fmt or "E4B"),
-            title="Import via mpc2emu",
+            title=title,
             warning_text=(
                 "Converting goes through mpc2emu's own model, same as any "
                 "other conversion here; a few advanced parameters may not "
@@ -373,15 +386,29 @@ class MainWindow(QMainWindow):
             locked_format=self._bank_pane.format)
         if opts is None:
             return
+        self._preset_convert_queue = list(nodes)
+        self._preset_convert_opts = opts
+        self._run_next_preset_conversion()
+
+    def _run_next_preset_conversion(self) -> None:
+        if not self._preset_convert_queue:
+            return
+        node = self._preset_convert_queue.pop(0)
+        opts = self._preset_convert_opts
+        bank, preset_obj = node.payload
         self.statusBar().showMessage(f"Converting {node.label}…")
         w = workers.Worker(convert.convert_preset, bank, preset_obj, opts)
         w.signals.finished.connect(
             lambda tmp_path, n=node, o=opts: self._on_preset_converted(tmp_path, n, o))
         w.signals.error.connect(self._on_preset_convert_error)
-        w.signals.finished.connect(lambda *_: setattr(self, "_preset_convert_worker", None))
-        w.signals.error.connect(lambda *_: setattr(self, "_preset_convert_worker", None))
+        w.signals.finished.connect(lambda *_: self._advance_preset_conversion())
+        w.signals.error.connect(lambda *_: self._advance_preset_conversion())
         self._preset_convert_worker = w
         workers.run(w)
+
+    def _advance_preset_conversion(self) -> None:
+        self._preset_convert_worker = None
+        self._run_next_preset_conversion()
 
     def _on_preset_converted(self, tmp_path: str, node, opts: convert.ConversionOptions) -> None:
         # Fresh temp-path label (NOT the source preset's own bank.path) --

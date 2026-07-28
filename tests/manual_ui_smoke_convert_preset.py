@@ -158,7 +158,7 @@ def main():
         locked_format=None: ConversionOptions(
             target_format="E4B", resample_profile="emax1", reduce_key_zones_pct=30.0))
     assert not win._bank_pane._items
-    win._convert_preset_via_mpc2emu(e4b_node)
+    win._convert_preset_via_mpc2emu([e4b_node])
     _wait(win)
     items = win._bank_pane._items
     assert len(items) == 1, "converted preset should land as exactly one New Bank item"
@@ -173,9 +173,9 @@ def main():
     # display name (content-based dedup deliberately gives each conversion
     # a fresh identity -- see _on_preset_converted()'s comment -- so all
     # copies get ADDED, and unique_name() must keep them distinguishable).
-    win._convert_preset_via_mpc2emu(e4b_node)
+    win._convert_preset_via_mpc2emu([e4b_node])
     _wait(win)
-    win._convert_preset_via_mpc2emu(e4b_node)
+    win._convert_preset_via_mpc2emu([e4b_node])
     _wait(win)
     names = [name for _b, _p, name in win._bank_pane._items]
     print("names after converting the same preset 3x:", names)
@@ -188,7 +188,7 @@ def main():
     XpmImportDialog.get_import_options = staticmethod(
         lambda parent=None, initial=None, title="Import XPM", warning_text=None,
         locked_format=None: ConversionOptions(target_format="KRZ"))
-    win._convert_preset_via_mpc2emu(e4b_node)
+    win._convert_preset_via_mpc2emu([e4b_node])
     _wait(win)
     items = win._bank_pane._items
     print("New Bank items after E4B->KRZ conversion:", len(items))
@@ -241,7 +241,7 @@ def main():
 
         XpmImportDialog.get_import_options = staticmethod(_capture_initial)
         win._bank_pane._clear()
-        win._convert_preset_via_mpc2emu(krz_node)
+        win._convert_preset_via_mpc2emu([krz_node])
         _wait(win)
         assert seen_initial["target_format"] == "KRZ", (
             "the dialog should default its target-format picker to the "
@@ -266,7 +266,7 @@ def main():
             return ConversionOptions(target_format=locked_format or "E4B")
 
         XpmImportDialog.get_import_options = staticmethod(_capture_locked)
-        win._convert_preset_via_mpc2emu(krz_node)
+        win._convert_preset_via_mpc2emu([krz_node])
         _wait(win)
         assert seen_locked["value"] == "KRZ", (
             "New Bank already holds a KRZ preset -- the dialog must be "
@@ -275,6 +275,34 @@ def main():
         print("Explorer 'Import via mpc2emu...' on a KRZ preset -> KRZ New Bank item:", name)
     else:
         print("(skipped KRZ-source checks: no .krz files found under", KRZ_DIR, ")")
+
+    # -- regression: multi-selecting several presets in Explorer and
+    # choosing "Import N presets via mpc2emu..." must convert all of them
+    # with ONE shared dialog/options, not just "Add" (which already
+    # supported multiple) -- see explorer_pane.py's convertible list and
+    # main_window.py's _preset_convert_queue.
+    win._bank_pane._clear()
+    dialog_calls = []
+
+    def _capture_call(parent=None, initial=None, title="Import XPM", warning_text=None,
+                       locked_format=None):
+        dialog_calls.append(title)
+        return ConversionOptions(target_format="E4B", reduce_key_zones_pct=30.0)
+
+    XpmImportDialog.get_import_options = staticmethod(_capture_call)
+    multi_presets = bank.presets[1:4]   # 3 more presets from the same real bank
+    multi_nodes = [_preset_node(bank, p, "E4B", p.name.strip()) for p in multi_presets]
+    win._convert_preset_via_mpc2emu(multi_nodes)
+    _wait(win)
+    assert dialog_calls == ["Import 3 presets via mpc2emu"], (
+        f"expected exactly one dialog call for the whole batch, got {dialog_calls}")
+    items = win._bank_pane._items
+    assert len(items) == 3, f"expected all 3 presets converted into New Bank, got {len(items)}"
+    got_names = {name for _b, _p, name in items}
+    expected_names = {f"{p.name.strip()} (mpc2emu)" for p in multi_presets}
+    assert got_names == expected_names, (got_names, expected_names)
+    print("multi-select 'Import via mpc2emu...' on 3 presets -> all 3 landed in New Bank:",
+          sorted(got_names))
 
     print("\nALL CONVERT-PRESET SMOKE CHECKS PASSED")
 
