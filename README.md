@@ -61,12 +61,15 @@ still a full E4B/KRZ bank builder**, not just a browser: parsing,
 assembling, and saving banks (New Bank → Save as…) needs no mpc2emu at
 all — `banks/e4b.py` and `banks/krz.py` are entirely self-contained —
 and browsing *existing* E4XT (EMU3) discs/HD images and K2000 ISO 9660
-discs works natively too. What genuinely needs mpc2emu: **creating or
-appending to any disk image** (every image kind's writer lives there,
-E4B and KRZ alike), browsing **FAT12/16/32** images specifically (K2000
-floppies and FAT-based discs/HDs call into mpc2emu's own FAT code even
-just to read), **E4B** preset-level zone/velocity/bit-depth detail in
-the Detail pane (KRZ's own detail view is self-contained), XPM import,
+discs works natively too. EIII sits between the two: `banks/eiii.py`
+*reads* EIII/ESI banks with no mpc2emu at all, but assembling one needs
+mpc2emu for the empty-bank skeleton it reuses. What genuinely needs
+mpc2emu: **creating or appending to any disk image** (every image kind's
+writer lives there, E4B and KRZ alike), browsing **FAT12/16/32** images
+specifically (K2000 floppies and FAT-based discs/HDs call into mpc2emu's
+own FAT code even just to read), **E4B/EIII** preset-level zone/velocity/
+bit-depth detail in the Detail pane (KRZ's own detail view is
+self-contained), building an EIII bank at all, XPM import,
 and vintage conversion. Settings shows exactly which of these is
 unavailable and why if mpc2emu isn't configured.
 
@@ -108,11 +111,11 @@ target format and optional vintage conversion, and it lands in New Bank
 as a single preset, ready to combine with anything else.
 
 **Run an existing preset through mpc2emu's vintage pipeline.**
-Right-click any real preset or program in Explorer — E4B or KRZ — for a
-second option, "Import via mpc2emu…", offering the exact same
+Right-click any real preset or program in Explorer — E4B, KRZ or EIII —
+for a second option, "Import via mpc2emu…", offering the exact same
 resample/reduce dialog XPM import uses: apply the EMU Emulator II or
 Emax I character, thin out an overly dense multisample, or convert to
-the other format entirely, without leaving VinSamLib. The dialog
+another format entirely, without leaving VinSamLib. The dialog
 defaults its target format to the preset's own source format, so
 "same format, with options" (apply processing without converting) is
 one click away — the same "Add" a plain drag would do, plus optional
@@ -162,8 +165,8 @@ library, not real commercial content.)*
 
 **Browse and build your first bank:**
 
-1. **File → Add Library Folder…** and pick a folder containing E4B/KRZ
-   banks, disc images, or floppy images (the file dialog remembers where
+1. **File → Add Library Folder…** and pick a folder containing E4B/KRZ/
+   EIII banks, disc images, or floppy images (the file dialog remembers where
    you last added a folder from).
 2. Expand it in the Explorer tree — banks and discs open lazily, so a
    large library doesn't stall on first click. Presets/programs inside a
@@ -188,14 +191,14 @@ library, not real commercial content.)*
 1. Add a library folder containing `.xpm` files, or use
    **File → Import XPM…** to pick one directly.
 2. Double-click the `.xpm` (or right-click it → **Import…**). A dialog
-   asks for the target format (E4B or KRZ) and, optionally, vintage
-   resample/reduce options.
+   asks for the target format (E4B, KRZ or EIII) and, optionally,
+   vintage resample/reduce options.
 3. The imported preset lands directly in **New Bank** — an XPM always
    holds exactly one program, so there's nothing to choose between.
 
 **Run an existing preset through mpc2emu (needs mpc2emu):**
 
-1. Find a real E4B or KRZ preset/program anywhere in your library.
+1. Find a real E4B, KRZ or EIII preset/program anywhere in your library.
 2. Right-click it → **Import via mpc2emu…** — the same dialog as XPM
    import. The target-format picker defaults to the preset's own
    format, so applying options without changing format is one click.
@@ -241,16 +244,20 @@ Right-click (or double-click) behavior depends on what you've selected:
 
 | Item | Double-click | Right-click menu |
 |---|---|---|
-| Preset/program (one or many selected) | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B or KRZ) — both work on a multi-selection |
+| Preset/program (one or many selected) | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B, KRZ or EIII) — both work on a multi-selection |
 | `.xpm` file | Import (opens the conversion dialog) | "Import …" |
 | Library root (top-level folder) | — | "Remove … from Library…" |
 
-Content VinSamLib genuinely can't read yet — currently, real **EIII/
-ESI-32** bank data sharing an EMU3-filesystem disc alongside readable
-E4B content — is shown **greyed out with its detected format label**,
-rather than hidden or shown as garbage. This is a deliberate choice:
-older discs commonly mix formats on one volume, and hiding real content
-would look like a broken or empty folder.
+Real **EIII / ESI-32** bank data — which commonly shares an EMU3-
+filesystem disc alongside E4B content, and which older versions of this
+app could only grey out — is browsable like any other bank now: its
+presets expand in the tree, summarize in the Detail pane, drag into New
+Bank, and save back out as a real `.e3x`. Anything still genuinely
+unreadable (system/ROM entries, unrecognised content) is shown **greyed
+out with its detected format label** rather than hidden or shown as
+garbage. This is a deliberate choice: older discs commonly mix formats
+on one volume, and hiding real content would look like a broken or
+empty folder.
 
 ### Detail Pane
 
@@ -287,9 +294,9 @@ pane's summary intentionally leaves out.
 
 ![New Bank column with three presets added and the selection info panel showing a condensed summary](docs/screenshots/02_new_bank.png)
 
-The first preset you add locks the whole bank's format — E4B or KRZ —
-shown right in the column header (`New Bank [E4B]`); a later drop of the
-*other* format is rejected with a status message, matching mpc2emu's own
+The first preset you add locks the whole bank's format — E4B, KRZ or
+EIII — shown right in the column header (`New Bank [E4B]`); a later drop
+of a *different* format is rejected with a status message, matching mpc2emu's own
 "no cross-format conversion in one step" rule (that's what "Import via
 mpc2emu" is for).
 
@@ -441,12 +448,12 @@ prefix would otherwise all show up under the same collapsed name.
 ### "Import via mpc2emu"
 
 Generalizes XPM import's exact same pipeline to a preset or program you
-already have natively in your library — E4B or KRZ, either can be the
-source and either can be the target: right-click it, choose options,
-and get a converted copy in New Bank — without exporting anything or
-leaving the app. This covers exactly the cases a plain "Add" can't:
-converting to the *other* format (source format ≠ New Bank's current
-format), or applying resample/reduce while keeping the *same* format
+already have natively in your library — E4B, KRZ or EIII, any of the
+three can be the source and any can be the target: right-click it,
+choose options, and get a converted copy in New Bank — without exporting
+anything or leaving the app. This covers exactly the cases a plain "Add"
+can't: converting to a *different* format (source format ≠ New Bank's
+current format), or applying resample/reduce while keeping the *same* format
 (source format = target — the dialog defaults to this). Converting the
 *same* source preset more than once (e.g. to compare two different
 option sets) gives each result a distinguishable name —
@@ -476,7 +483,10 @@ version). Changing the path needs a restart to take effect.
 
 **New Bank size-warning thresholds** (bottom of the dialog, pictured
 above) — one editable field in MB each for E4B and KRZ, defaulting to
-**64 MB / 32 MB**: the most common real E4XT/K2000 RAM configurations,
+**64 MB / 32 MB** (an EIII New Bank reuses the E4B field: EIII banks load
+on the same E4XT hardware, via its backward-compatibility loader, so a
+third near-identical spinbox would say nothing new): the most common
+real E4XT/K2000 RAM configurations,
 *not* the format's own absolute technical maximum (128 MB for E4B; the
 K2000 has no hard byte ceiling at all, only its 1000-program limit —
 see New Bank above). This is a **soft**
@@ -498,7 +508,10 @@ main queue and the per-bank contents list in Pending for Image.
 
 | Feature | Status |
 |---|---|
-| EIII / ESI-32 bank format | ❌ shown (greyed out, format-labeled), not readable — no reference implementation exists anywhere to build one from yet |
+| EIII / ESI-32 bank format | ✅ readable and buildable (`.e3x`/`.esi`) — browse, summarize, combine into a New Bank, Save as…, and convert to/from E4B and KRZ. No reference implementation existed anywhere, so this is a from-scratch RE effort, corpus-verified by round-tripping 600 real banks out of the author's own discs |
+| EIII banks on a disk image | ❌ "Send to Image Column" is disabled for an EIII New Bank — `build/images.py`'s image kinds are E4B/KRZ only, so there's no image target to write one into yet. **Save as…** writes a real `.e3x` file regardless |
+| Writing the `.esi` (ESI-32) variant | ⚠️ `banks/eiii.py`'s `assemble()` supports it, but nothing in the UI exposes the choice — Save as… always writes the `.e3x` variant (which the E4XT's backward-compatibility loader also reads) |
+| EIII banks with shared preset link-chains | ⚠️ an EIII preset stacks layers by link-chaining preset slots, and several presets can share one chain tail. Assembling gives each its own copy, so selecting *every* preset of a few unusually dense commercial banks can exceed the 256-slot format ceiling even though the source bank fit — 2 of 600 corpus banks. Save as… reports it rather than writing a corrupt bank; drop a few presets to get under it |
 | KRZ as a conversion *source* | ✅ mpc2emu's own KRZ reader (added 2026-07-27, corpus-verified against 593 real files) made this possible — KRZ presets/programs can now be converted the same way E4B ones can, via Explorer's "Import via mpc2emu…" |
 | Per-bank KRZ conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for KRZ now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ queues yet |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
@@ -518,10 +531,11 @@ vinsamlib/
 ├── banks/
 │   ├── e4b.py                  # Byte-verbatim E4B container reader/assembler
 │   ├── krz.py                  # Byte-verbatim KRZ container reader/assembler
+│   ├── eiii.py                 # Byte-verbatim EIII/ESI container reader/assembler
 │   └── summary.py              # Zone/velocity/bit-depth/sample-rate summaries for the UI
 ├── build/
 │   ├── convert.py              # mpc2emu resample/reduce wrapper (ConversionOptions)
-│   ├── xpm_import.py           # XPM -> E4B/KRZ import, sharing convert.py's pipeline
+│   ├── xpm_import.py           # XPM -> E4B/KRZ/EIII import, sharing convert.py's pipeline
 │   └── images.py               # create_image()/append_banks() over mpc2emu's writers
 ├── vfs/                        # Read-side filesystem support mpc2emu itself never needed
 │   ├── emu3.py                 # EMU3 filesystem (E4XT CD/HD images)
@@ -552,7 +566,7 @@ This project is released under the **GNU General Public License v2.0 or
 later (GPL-2.0-or-later)** — see [`LICENSE`](LICENSE).
 
 **mpc2emu is a runtime dependency, not vendored code.** VinSamLib
-deliberately never edits or copies mpc2emu's source — every E4B/KRZ
+deliberately never edits or copies mpc2emu's source — every E4B/KRZ/EIII
 bank *writer* and every DSP routine (vintage resample, key-zone/
 velocity-layer reduction, XPM parsing) this app exposes is mpc2emu's own
 code, loaded from a separate checkout at runtime. mpc2emu carries its
@@ -561,8 +575,8 @@ those writers (emu3fs, emu3bm, KurzFiler, ConvertWithMoss, libgig, and
 more) — see [`../mpc2emu/README.md`](../mpc2emu/README.md#license-and-third-party-sources)
 directly rather than this file duplicating it.
 
-VinSamLib's own format *readers* (the byte-verbatim E4B/KRZ container
-readers, and the EMU3/FAT12/16/32/ISO 9660 filesystem readers) are
+VinSamLib's own format *readers* (the byte-verbatim E4B/KRZ/EIII
+container readers, and the EMU3/FAT12/16/32/ISO 9660 filesystem readers) are
 original code informed by public specifications and by mpc2emu's own
 separately-licensed reverse-engineering work — see [`LICENSE`](LICENSE)
 for the specific, per-file attributions.
