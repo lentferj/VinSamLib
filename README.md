@@ -57,22 +57,23 @@ VinSamLib is a **GUI librarian**, not a batch converter — it sits on
 top of [mpc2emu](https://github.com/lentferj/mpc2emu) (a separate,
 sibling project) for every disk-*image* writer and every DSP routine,
 and never edits or vendors mpc2emu's code. **Without mpc2emu installed
-or configured, VinSamLib is
-still a full E4B/KRZ bank builder**, not just a browser: parsing,
-assembling, and saving banks (New Bank → Save as…) needs no mpc2emu at
-all — `banks/e4b.py` and `banks/krz.py` are entirely self-contained —
-and browsing *existing* E4XT (EMU3) discs/HD images and K2000 ISO 9660
-discs works natively too. EIII sits between the two: `banks/eiii.py`
-*reads* EIII/ESI banks with no mpc2emu at all, but assembling one needs
-mpc2emu for the empty-bank skeleton it reuses. What genuinely needs
-mpc2emu: **creating or appending to any disk image** (every image kind's
-writer lives there, E4B/EIII and KRZ alike), browsing **FAT12/16/32** images
-specifically (K2000 floppies and FAT-based discs/HDs call into mpc2emu's
-own FAT code even just to read), **E4B/EIII** preset-level zone/velocity/
+or configured, VinSamLib is still a full E4B/KRZ bank builder and
+library browser**, not just a viewer: parsing, assembling, and saving
+banks (New Bank → Save as…) needs no mpc2emu at all —
+`banks/e4b.py`/`banks/krz.py` are entirely self-contained — and
+browsing *existing* E4XT (EMU3) discs/HD images, K2000 ISO 9660 discs,
+and **FAT12/16/32** floppies/discs/HDs (K2000 Gotek floppies, EOS FAT
+`.hda`s) all work natively too, via `vfs/fatvol.py`'s own from-scratch
+reader against the public FAT spec — no mpc2emu involved even to read.
+EIII sits between the two: `banks/eiii.py` *reads* EIII/ESI banks with
+no mpc2emu at all, but assembling one needs mpc2emu for the empty-bank
+skeleton it reuses. What genuinely needs mpc2emu: **creating or
+appending to any disk image** (every image kind's writer lives there,
+E4B/EIII and KRZ alike), **E4B/EIII** preset-level zone/velocity/
 bit-depth detail in the Detail pane (KRZ's own detail view is
-self-contained), building an EIII bank at all, XPM import,
-and vintage conversion. Settings shows exactly which of these is
-unavailable and why if mpc2emu isn't configured.
+self-contained), building an EIII bank at all, XPM import, and vintage
+conversion. Settings shows exactly which of these is unavailable and
+why if mpc2emu isn't configured.
 
 **Browse your whole library at once.** Point VinSamLib at any number of
 folders — loose `.e4b`/`.KRZ` files, EMU3 CD/HD images, ISO 9660 discs,

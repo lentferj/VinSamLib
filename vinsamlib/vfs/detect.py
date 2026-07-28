@@ -69,10 +69,10 @@ def sniff(path: str) -> Optional[type[Volume]]:
         return None
 
     # No boot signature at all -- could still be a genuine FAT12/16 K2000
-    # disk. mpc2emu's own Fat16/Fat12 readers never check the 55/AA
-    # signature or the FS-type label to open a volume (see fat16.py's
-    # _part_offset()/_read_bpb() -- only the numeric BPB fields matter),
-    # and real vintage K2000-format CDs predating mpc2emu's own writer
+    # disk. vfs/fatvol.py's own readers never check the 55/AA signature or
+    # the FS-type label to open a volume (see its _part_offset()/
+    # _read_bpb_fat16() -- only the numeric BPB fields matter), and real
+    # vintage K2000-format CDs predating mpc2emu's own writer
     # (e.g. third-party "Best Service"/Kurzweil-branded sample discs from
     # the 1990s) can be missing both cosmetic fields while every numeric
     # BPB field otherwise matches the documented K2000 form exactly
