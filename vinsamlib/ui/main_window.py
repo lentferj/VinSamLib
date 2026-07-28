@@ -28,10 +28,11 @@ from .image_pane import ImagePane
 from .models import LibraryTreeModel
 from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
+from .sampledir_import_dialog import SampleDirImportDialog
 from .settings_dialog import SettingsDialog
 from .xpm_import_dialog import XpmImportDialog
 from ..banks import e4b, eiii, krz
-from ..build import convert, xpm_import
+from ..build import convert, sampledir_import, xpm_import
 from ..config import Config, user_data_dir
 from ..index.db import IndexDB
 from ..index.scanner import scan
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow):
         self._index_db = IndexDB(user_data_dir() / "index.db")
         self._scan_worker: workers.Worker | None = None
         self._xpm_import_worker: workers.Worker | None = None
+        self._sample_dir_import_worker: workers.Worker | None = None
         self._preset_convert_worker: workers.Worker | None = None
         self._preset_convert_queue: list = []
         self._preset_convert_opts: Optional[convert.ConversionOptions] = None
@@ -146,6 +148,14 @@ class MainWindow(QMainWindow):
         import_xpm_action.setToolTip(
             xpm_reason if xpm_ok else f"Unavailable: {xpm_reason}")
         file_menu.addAction(import_xpm_action)
+
+        import_sample_dir_action = QAction("Import Sample Folder…", self)
+        import_sample_dir_action.triggered.connect(self._import_sample_dir)
+        sd_ok, sd_reason = self._config.check_sample_dir_import_support()
+        import_sample_dir_action.setEnabled(sd_ok)
+        import_sample_dir_action.setToolTip(
+            sd_reason if sd_ok else f"Unavailable: {sd_reason}")
+        file_menu.addAction(import_sample_dir_action)
 
         file_menu.addSeparator()
 
@@ -315,6 +325,53 @@ class MainWindow(QMainWindow):
         last_line = message.strip().splitlines()[-1] if message else "error"
         self.statusBar().showMessage(f"XPM import failed: {last_line}", 8000)
         QMessageBox.warning(self, "Import XPM", f"Import failed:\n\n{last_line}")
+
+    # -- sample-folder import -------------------------------------------------------
+
+    def _import_sample_dir(self) -> None:
+        """File > Import Sample Folder... -- deliberately not offered from
+        Explorer (see build/sampledir_import.py's module docstring for
+        why): the user picks a folder and decides what to do with it,
+        there's no "browse to this and recognize it" moment the way a
+        real .xpm file or an already-native preset has."""
+        if self._sample_dir_import_worker is not None:
+            self.statusBar().showMessage("A sample folder import is already running")
+            return
+        start_dir = str(self._config.last_library_dir) if self._config.last_library_dir else ""
+        path = QFileDialog.getExistingDirectory(
+            self, "Import Sample Folder", start_dir,
+            options=QFileDialog.Option.DontUseNativeDialog)
+        if not path:
+            return
+        opts, octave_offset = SampleDirImportDialog.get_import_options(
+            self, locked_format=self._bank_pane.format)
+        if opts is None:
+            return
+        self.statusBar().showMessage(f"Importing {Path(path).name}…")
+        w = workers.Worker(sampledir_import.import_sample_dir, path, opts, octave_offset)
+        w.signals.finished.connect(lambda tmp_path, p=path: self._on_sample_dir_imported(tmp_path, p, opts))
+        w.signals.error.connect(self._on_sample_dir_import_error)
+        w.signals.finished.connect(lambda *_: setattr(self, "_sample_dir_import_worker", None))
+        w.signals.error.connect(lambda *_: setattr(self, "_sample_dir_import_worker", None))
+        self._sample_dir_import_worker = w
+        workers.run(w)
+
+    def _on_sample_dir_imported(self, tmp_path: str, dir_path: str,
+                                 opts: convert.ConversionOptions) -> None:
+        # Same "single preset, straight into New Bank" landing as XPM
+        # import -- parse_sample_dir() always produces exactly one
+        # multisampled preset per folder, never a whole bank of its own.
+        result = self._read_back_converted(tmp_path, opts, label_path=dir_path)
+        if result is None:
+            return
+        bank, preset = result
+        name = Path(dir_path).name or preset.name.strip() or "Imported Samples"
+        self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
+
+    def _on_sample_dir_import_error(self, message: str) -> None:
+        last_line = message.strip().splitlines()[-1] if message else "error"
+        self.statusBar().showMessage(f"Sample folder import failed: {last_line}", 8000)
+        QMessageBox.warning(self, "Import Sample Folder", f"Import failed:\n\n{last_line}")
 
     def _read_back_converted(self, tmp_path: str, opts: convert.ConversionOptions,
                               label_path: str) -> Optional[tuple]:

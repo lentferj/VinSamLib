@@ -156,3 +156,16 @@ class Config:
         if not marker.exists():
             return False, f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}"
         return True, "XPM import is available"
+
+    def check_sample_dir_import_support(self) -> tuple[bool, str]:
+        """Sample-folder import (build/sampledir_import.py) needs mpc2emu's
+        own WAV-folder-to-preset parser specifically -- a checkout could
+        satisfy check_conversion_support() and still be missing this (or
+        vice versa), so it gets its own check rather than being folded in."""
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        marker = self.mpc2emu_path / "parsers" / "sampledir_parser.py"
+        if not marker.exists():
+            return False, f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}"
+        return True, "Sample folder import is available"
