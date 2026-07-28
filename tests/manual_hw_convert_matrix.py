@@ -2,7 +2,7 @@
 Hardware-test bank image batch generator (E4B + KRZ).
 
 Drives a REAL `MainWindow` instance (offscreen, PySide6) through the real GUI
-code paths (BankPane -> PendingBanksPane -> ImagePane) to build 20 separate
+code paths (BankPane -> PendingBanksPane -> ImagePane) to build 21 separate
 disk images on local disk -- one image per mpc2emu conversion-option
 combination -- so a human can load each one, one at a time, onto real E4XT
 or K2000R hardware and confirm by ear/by eye that each option actually does
@@ -57,9 +57,18 @@ ALREADY-CONVERTED result into New Bank/Pending/Image -- there is no
 further per-bank conversion step, since Pending's own "Process before
 building..." is still E4B-queue-only (a scope decision, not fixed here).
 
-Output: `~/temp/VinSamLib_Test/NN_slug.hda` (Groups A/B/D-E4B) or `.img`
+Group E (row 21) hardware-confirms EIII placed on a real EMU3 image via
+VinSamLib for the first time, now that mpc2emu's EIII writer/iso_builder
+fix (2026-07-28) made this possible. Source: a real 2-preset EIII bank
+extracted from a real commercial EMU3 CD ("E-MU Formula 4000 Series Vol.
+2 - Techno Trance"). Built exactly like an E4B row (New Bank -> Pending
+-> Build Image), byte-verbatim -- per-bank "Process before building..."
+isn't offered for EIII yet, same scope decision as KRZ.
+
+Output: `~/temp/VinSamLib_Test/NN_slug.hda` (Groups A/B/D-E4B/E) or `.img`
 (Group C, Group D-KRZ) + `00_MANIFEST.txt` (a plain ASCII table: filename,
-source, options applied, and what to listen/look for on real hardware).
+source, options applied, what to listen/look for on real hardware, plus
+blank Verified/Remarks columns for the human tester to fill in).
 
 Critical guard: `assert win._image_pane._path is not None` right before
 every `_build_image()` call -- an unset image path routes into the modal
@@ -85,12 +94,15 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from vinsamlib import mpc2emu_bridge
 from vinsamlib.banks import e4b as vs_e4b
+from vinsamlib.banks import eiii as vs_eiii
 from vinsamlib.banks import krz as vs_krz
 from vinsamlib.build import images
 from vinsamlib.build.convert import ConversionOptions, convert_preset
 from vinsamlib.config import Config
 from vinsamlib.ui.main_window import MainWindow
+from vinsamlib.vfs.base import EntryKind
 from vinsamlib.vfs.detect import open_volume
+from vinsamlib.vfs.emu3 import Emu3Volume
 
 from _qtest_shim import qwait
 
@@ -110,14 +122,23 @@ SRC_MULTI = (Path.home() / "Dokumente/SYNTHS/E4XT/E4Bs/"
 SRC_KRZ = (Path.home() / "Dokumente/SYNTHS/K2000R/Soundsets/Patchman/"
            "2000 Series v114/PMVOL002.KRZ")
 SRC_KRZ_PROGRAM = "*>Flugelhorn"   # single-voice, no coverage-remap needed (see module docstring)
+# A real EIII bank isn't a loose file -- it lives inside a real commercial
+# EMU3 CD image alongside other content (vfs/emu3.py's own EIII detection
+# handles this natively). Extracted once via Emu3Volume.read() in
+# stage_group() below, same real-file-on-disk provenance as every other
+# source here, just one level of indirection deeper.
+SRC_EIII_ISO = (Path.home() / "Dokumente/SYNTHS/E4XT/ISO-Images/"
+                "E-MU Formula 4000 Series Vol. 2 – Techno Trance.iso")
+SRC_EIII_BANK_NAME = "Techno Trance 4K"
 
 DEFAULT_OUT_DIR = Path.home() / "temp" / "VinSamLib_Test"
 
-GROUP_SIZE_MB = {"A": 32, "B": 128, "D": 32}
+GROUP_SIZE_MB = {"A": 32, "B": 128, "D": 32, "E": 32}
 GROUP_SOURCE_LABEL = {
     "A": "Dance Organ E4B (SRC_SIMPLE, 4 presets, ~22KB)",
     "B": "KH Strings 8VnEsHdMrcFat/SL (SRC_MULTI, 1 preset, ~27.5MB)",
     "D": f"Patchman {SRC_KRZ_PROGRAM!r} (SRC_KRZ, KRZ source)",
+    "E": f"{SRC_EIII_BANK_NAME!r} EIII bank (real commercial CD, 2 presets)",
 }
 GROUP_SOURCE_LABEL["C"] = GROUP_SOURCE_LABEL["A"]   # Group C reuses SRC_SIMPLE, KRZ target
 
@@ -212,6 +233,20 @@ ROWS: list[Row] = [
         "KRZ->KRZ, bandwidth-limited to 22.05 kHz. Confirm the K2000R loads "
         "it and reports a sane sample rate, same check as #16 via a "
         "different (KRZ-sourced) path."),
+
+    # -- Group E: SRC_EIII (real commercial EIII bank) -- EIII placed on a --
+    # real EMU3 image via New Bank -> Pending -> Build Image, the NEW
+    # capability this row hardware-confirms (EIII itself, as standalone
+    # output, was already hardware-confirmed separately -- see mpc2emu's
+    # docs/RESOLUTION_NOTES.md SS EIII "Hardware confirmation"). Per-bank
+    # "Process before building..." isn't offered for EIII yet (same scope
+    # as KRZ), so this is always the byte-verbatim, no-mpc2emu-round-trip
+    # case, same framing as rows 01/07.
+    Row(21, "eiii_plain", "21 EIII TEST", "E", ConversionOptions(),
+        "Byte-verbatim EIII bank (2 presets), reassembled and placed on a "
+        "real EMU3 HD image via VinSamLib for the first time -- confirm the "
+        "E4XT's EIII backward-compatibility loader shows and plays both "
+        "presets, same as the original commercial disc."),
 ]
 
 
@@ -616,6 +651,99 @@ def build_one_from_krz_source(win: MainWindow, out_dir: Path, row: Row) -> dict:
             "skipped": False}
 
 
+def build_one_eiii(win: MainWindow, out_dir: Path, row: Row) -> dict:
+    """Group E: a real EIII bank, extracted from a real commercial EMU3 CD
+    image, staged into New Bank (format "EIII") and placed on a brand-new
+    emu3_hd_emu image via the exact same New Bank -> Pending -> Build Image
+    path E4B already uses -- the new capability being hardware-confirmed
+    here (EIII bank *content* itself, as standalone output, was already
+    separately hardware-confirmed -- see mpc2emu's docs/RESOLUTION_NOTES.md
+    SS EIII). Only one row exists in this group, so no per-row option
+    variation is needed the way Groups A/B/C/D have."""
+    win._pending_pane._clear()
+    win._bank_pane._clear()
+
+    src_vol = Emu3Volume(str(SRC_EIII_ISO))
+    eiii_entry = None
+    for folder in src_vol.list(None):
+        for e in src_vol.list(folder):
+            if e.kind == EntryKind.BANK and e.meta.get("format") == "EIII" \
+                    and e.name.strip() == SRC_EIII_BANK_NAME:
+                eiii_entry = e
+                break
+        if eiii_entry is not None:
+            break
+    assert eiii_entry is not None, (
+        f"row {row.num}: {SRC_EIII_BANK_NAME!r} not found in {SRC_EIII_ISO}")
+    src_bank = vs_eiii.parse_bytes(src_vol.read(eiii_entry), str(SRC_EIII_ISO))
+    assert len(src_bank.presets) >= 2, (
+        f"row {row.num}: expected at least 2 presets in the real EIII source bank")
+
+    items = [(src_bank, p, "EIII", p.name.strip() or f"preset{i}")
+             for i, p in enumerate(src_bank.presets[:2])]
+    ok = win._bank_pane.add_presets(items)
+    assert ok, f"row {row.num}: failed to stage the real EIII preset(s) into New Bank"
+    assert win._bank_pane.format == "EIII"
+    win._bank_pane._name_edit.setText(row.bank_name)
+    qwait(300)
+    wait_workers(win._bank_pane)
+    assert win._bank_pane._last_bytes is not None, f"row {row.num}: size meter never resolved"
+    assert win._bank_pane._send_to_image_btn.isEnabled(), (
+        f"row {row.num}: Send to Image Column must be enabled for an EIII-locked New Bank")
+
+    win._bank_pane._send_to_pending()
+    qwait(200)
+    assert len(win._pending_pane._pending) == 1, (
+        f"row {row.num}: expected exactly one staged pending entry")
+    assert win._pending_pane._format == "EIII"
+    entry = win._pending_pane._pending[0]
+    entry["convert_opts"] = None   # not offered for EIII yet -- always byte-verbatim here
+    entry["name"] = row.bank_name
+
+    img_path = out_dir / _image_filename(row)
+    if img_path.exists():
+        img_path.unlink()
+    images.create_image("emu3_hd_emu", str(img_path), [], volume_label="EMU_DISK",
+                         size_mb=GROUP_SIZE_MB["E"])
+    win._image_pane._close_image()
+    win._image_pane._open_image(str(img_path), known_kind="emu3_hd_emu")
+    assert win._image_pane._path is not None, (
+        f"row {row.num}: image path unset before _build_image() -- would hang")
+
+    win._pending_pane._build_image()
+    wait_workers(win._pending_pane)
+    while win._image_pane._busy:
+        qwait(50)
+    qwait(150)
+
+    entries = win._image_pane._entries
+    assert len(entries) == 1, (
+        f"row {row.num}: expected exactly one bank on {img_path.name}, "
+        f"found {[e.name for e in entries]}")
+    assert win._image_pane._format == "EIII", (
+        f"row {row.num}: ImagePane failed to detect EIII format on the built image "
+        f"(got {win._image_pane._format!r})")
+    entry_on_disk = entries[0]
+    device_name = entry_on_disk.name.strip()
+    assert device_name.upper().startswith(row.bank_name.upper()[:16]), (
+        f"row {row.num}: expected bank name starting with {row.bank_name!r}, got {device_name!r}")
+
+    vol = open_volume(str(img_path))
+    try:
+        data = vol.read(entry_on_disk)
+    finally:
+        vol.close()
+    assert len(data) >= 16 and vs_eiii.detect_format(data[:16]) is not None, (
+        f"row {row.num}: built bank on {img_path.name} has no recognisable EIII header")
+    reopened = vs_eiii.parse_bytes(data, f"{row.slug}.e3x")
+    assert len(reopened.presets) == 2, (
+        f"row {row.num}: reopened bank has {len(reopened.presets)} preset(s), expected 2")
+
+    print(f"  [{row.num:02d}] {row.slug}: built {img_path.name} "
+          f"({len(data):,} bytes on-disk bank, device name {device_name!r})")
+    return {"path": img_path, "device_name": device_name, "built_bytes": len(data)}
+
+
 MANIFEST_NOTES = """\
 Notes:
 - Rows 01 and 07 are byte-verbatim (no mpc2emu round-trip -- is_noop() short-
@@ -643,15 +771,26 @@ Notes:
   build/convert.py's convert_preset(), the same function Explorer's
   "Import via mpc2emu..." calls), not through Pending's per-bank conversion
   (still E4B-queue-only).
+- Group E (row 21) hardware-confirms EIII placed on a real EMU3 image via
+  VinSamLib for the first time, now that mpc2emu's EIII writer/iso_builder
+  fix (2026-07-28) made this possible -- see build/images.py's
+  append_banks(). A real 2-preset EIII bank, extracted from a real
+  commercial EMU3 CD ("E-MU Formula 4000 Series Vol. 2 - Techno Trance"),
+  staged into New Bank and built exactly like an E4B row (New Bank ->
+  Pending -> Build Image), byte-verbatim -- per-bank "Process before
+  building..." isn't offered for EIII yet, same scope decision as KRZ.
 """
 
 
 def write_manifest(out_dir: Path, rows: list[Row], skip_reasons: Optional[dict] = None) -> str:
     """Simple ASCII text table -- plain columns, readable in a terminal or a
-    plain editor. One row per image (20 rows), a header row, and the image
-    filename as its own column."""
+    plain editor. One row per image, a header row, and the image filename
+    as its own column. "Verified"/"Remarks" are left blank for the human
+    tester to fill in after checking each row on real hardware -- this
+    script never writes to them itself."""
     skip_reasons = skip_reasons or {}
-    headers = ["#", "Filename", "Input", "Import Options", "What to look out for in testing"]
+    headers = ["#", "Filename", "Input", "Import Options", "What to look out for in testing",
+               "Verified", "Remarks"]
     data_rows = []
     for row in rows:
         filename = _image_filename(row)
@@ -664,6 +803,8 @@ def write_manifest(out_dir: Path, rows: list[Row], skip_reasons: Optional[dict] 
             GROUP_SOURCE_LABEL[row.group],
             _opts_label(row.opts),
             listen_for,
+            "",
+            "",
         ])
     widths = [max(len(h), *(len(r[i]) for r in data_rows)) for i, h in enumerate(headers)]
 
@@ -683,8 +824,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                     help="directory to write the 20 .hda/.img files + manifest into")
     p.add_argument("--only", default=None,
                     help="comma-separated row numbers to (re)build, e.g. 3,8,12")
-    p.add_argument("--groups", default="a,b,c,d",
-                    help="comma-separated groups to run, e.g. a or a,b,c,d")
+    p.add_argument("--groups", default="a,b,c,d,e",
+                    help="comma-separated groups to run, e.g. a or a,b,c,d,e")
     return p.parse_args(argv)
 
 
@@ -730,7 +871,7 @@ def main() -> int:
 
     results = []
     skip_reasons: dict[int, str] = {}
-    for group in ("A", "B", "C", "D"):
+    for group in ("A", "B", "C", "D", "E"):
         group_rows = [r for r in selected_rows if r.group == group]
         if not group_rows:
             continue
@@ -745,6 +886,15 @@ def main() -> int:
                 if result.get("skipped"):
                     skip_reasons[row.num] = result["skip_reason"]
                 results.append(result)
+            continue
+        if group == "E":
+            # Group E stages its own real EIII source directly (build_one_eiii
+            # extracts it from a real commercial EMU3 CD) -- not through
+            # stage_group(), which only knows about SRC_SIMPLE/SRC_MULTI.
+            print(f"\n=== Group E source: {GROUP_SOURCE_LABEL['E']} ===")
+            for row in group_rows:
+                print(f"--- Building #{row.num:02d} {row.slug} ---")
+                results.append(build_one_eiii(win, out_dir, row))
             continue
         print(f"\n=== Staging group {group} source ({GROUP_SOURCE_LABEL[group]}) ===")
         stage_group(win, group)
