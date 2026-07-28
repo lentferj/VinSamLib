@@ -1,7 +1,28 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
 *.egg-info/
 /build/
 /dist/
+.venv/
+.pytest_cache/
+
+# Claude Code / AI-assistant working files — kept out of the public repo
+CLAUDE.md
 .claude/
+
+# Manual test/verification scripts and hardware-confirmation tooling —
+# hardcoded to the author's own local library paths, not distributable,
+# not needed to run or develop the app itself (mirrors mpc2emu's own
+# tests/ exclusion policy).
+tests/
+
+# Real bank/image files that should never end up committed by accident
+*.e4b
+*.E4B
+*.krz
+*.KRZ
+*.iso
+*.ISO
+*.img
+*.hda
