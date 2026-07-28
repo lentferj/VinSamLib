@@ -6,13 +6,13 @@ SPDX-FileCopyrightText: Copyright (C) 2026  VinSamLib contributors
 # VinSamLib
 
 A librarian and bank builder for vintage sampler content — E-mu E4B
-(Emulator IV / E4XT / EOS) and Kurzweil KRZ (K2000 series). Browse a
-whole library of banks, discs, and floppy images at once; drag any
-preset or program straight into a new bank; queue several banks for a
-build; write real, loadable disk images. Where mpc2emu is available,
-you can also import an Akai MPC `.xpm` program directly, or run any
-existing E4B preset through mpc2emu's vintage resample / sample-count
-reduction pipeline on its way into a bank.
+(Emulator IV / E4XT / EOS), E-mu EIII/ESI-32, and Kurzweil KRZ (K2000
+series). Browse a whole library of banks, discs, and floppy images at
+once; drag any preset or program straight into a new bank; queue
+several banks for a build; write real, loadable disk images. Where
+mpc2emu is available, you can also import an Akai MPC `.xpm` program
+directly, or run any existing preset through mpc2emu's vintage resample
+/ sample-count reduction pipeline on its way into a bank.
 
 > **Legal:** [DISCLAIMER.md](DISCLAIMER.md) · [LICENSE](LICENSE)
 
@@ -65,7 +65,7 @@ discs works natively too. EIII sits between the two: `banks/eiii.py`
 *reads* EIII/ESI banks with no mpc2emu at all, but assembling one needs
 mpc2emu for the empty-bank skeleton it reuses. What genuinely needs
 mpc2emu: **creating or appending to any disk image** (every image kind's
-writer lives there, E4B and KRZ alike), browsing **FAT12/16/32** images
+writer lives there, E4B/EIII and KRZ alike), browsing **FAT12/16/32** images
 specifically (K2000 floppies and FAT-based discs/HDs call into mpc2emu's
 own FAT code even just to read), **E4B/EIII** preset-level zone/velocity/
 bit-depth detail in the Detail pane (KRZ's own detail view is
@@ -312,8 +312,11 @@ check itself is on).
 The **size/count meter** below the name field recomputes by actually
 assembling the current selection — not an estimate — debounced a
 quarter-second after your last change. It enforces the real hardware
-ceilings: **128 MB / 1000 presets** for E4B, **1000 programs** for KRZ.
-Going over either pushes the meter red and disables **Save as…**.
+ceilings: **128 MB / 1000 presets** for E4B, **1000 programs** for KRZ,
+**256 preset slots** for EIII/ESI-32 (a preset needing more than one
+linked layer can use more than one slot, so "256 presets" isn't quite
+the same as "256 slots" — see Known Limitations). Going over any of
+these pushes the meter red and disables **Save as…**.
 
 **Adding a preset that pushes you over the limit** shows a warning
 dialog with two choices: **Keep Anyway** (leave the new item in place,
@@ -525,7 +528,9 @@ main queue and the per-bank contents list in Pending for Image.
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
 | Some coverage-remapped KRZ presets can't be re-processed | ⚠️ a real mpc2emu bug (`writers/krz_writer.py`, tracked in mpc2emu's own TODO): a preset needing the octave-slice-stack "coverage remap" rebuild can crash on write when reprocessed; most real content is unaffected — VinSamLib surfaces the real error if it happens rather than silently failing |
 | Gotek floppy images | ⚠️ create-only — not appendable (a real FAT12 floppy constraint, not a bug) |
-| Real hardware confirmation of VinSamLib's own new UI features | This app's own UI/workflow is verified by real use against the author's library; the underlying DSP claims it exposes (vintage resample character, reduction behavior) carry mpc2emu's own separately-documented hardware confirmation |
+| Aggressive `reduce_velocity_layers_pct` can collapse key-range coverage | ⚠️ a real mpc2emu `zone_reducer` finding from hardware confirmation (2026-07-28): a 75% reduction on a dense real multi-zone preset collapsed coverage from the full keyboard down to a single surviving 4-semitone zone, rather than thinning velocity layers while preserving spread across keys — disproportionate for what's meant to be a velocity-only reduction. Not yet root-caused; tracked in mpc2emu's own TODO. Lower percentages (confirmed up to 40-50%) behave as expected |
+| Real hardware confirmation — E4B / EIII | ✅ **confirmed 2026-07-28** on real E-mu E4XT hardware (via ZuluSCSI): building a bank, sending it through Pending for Image, and building/appending it onto a real EMU3 disk image — including the new EIII-on-image capability — all load and play correctly, for every vintage resample profile and reduce combination in the project's own HW confirmation matrix (`tests/manual_hw_convert_matrix.py`) |
+| Real hardware confirmation — KRZ / K2000R | ⏳ **pending** — not yet tested by loading a VinSamLib-built image onto a real K2000R. Considered **very likely to work**: VinSamLib's KRZ image writing goes entirely through mpc2emu's own K2000 disk builders (no VinSamLib-specific KRZ write logic of its own), and mpc2emu's KRZ writer already carries its own separate, real K2000R/Gotek hardware confirmation (filters, envelopes, LFOs — see `../mpc2emu/DISCLAIMER.md`) — this row will be updated once VinSamLib's own K2000R test is actually run |
 
 ---
 

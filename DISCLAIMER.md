@@ -28,19 +28,31 @@ fixed against the human's own real sample library — not invented in the
 abstract.
 
 **Claude assisted with the execution:** writing and refactoring the
-implementation code (the PySide6 UI, the byte-verbatim E4B/KRZ readers,
-the EMU3/FAT/ISO9660 filesystem readers, the mpc2emu integration layer),
-building and running the automated offscreen test suite, and drafting
-this documentation.
+implementation code (the PySide6 UI, the byte-verbatim E4B/KRZ/EIII
+readers, the EMU3/FAT/ISO9660 filesystem readers, the mpc2emu
+integration layer), building and running the automated offscreen test
+suite, and drafting this documentation.
 
 **Verification rests on real use, not just automated tests.** Every pane
 and workflow described in the manual below was exercised against the
-author's own real, existing sample library (real commercial E4B/KRZ
+author's own real, existing sample library (real commercial E4B/KRZ/EIII
 banks, real XPM programs, real vintage disk images) — not synthetic
-fixtures alone — and mpc2emu's own DSP claims that VinSamLib merely
-exposes (vintage resample character, key-zone/velocity-layer reduction)
-carry mpc2emu's own hardware-confirmation status, documented in that
-project's README, not a separate claim made here.
+fixtures alone. Beyond that, on **2026-07-28** the author loaded actual
+VinSamLib-built images onto real E-mu E4XT hardware (via ZuluSCSI) and
+confirmed correct playback across the project's own hardware-
+confirmation matrix — every vintage resample profile, every reduce
+combination, and the new EIII-on-disk-image capability all load and
+play as expected. **Kurzweil K2000R hardware confirmation is still
+pending** for VinSamLib's own KRZ image-building path specifically —
+considered very likely to work, since it goes entirely through
+mpc2emu's own K2000 disk builders, which carry their own separate,
+real K2000R/Gotek hardware confirmation (see
+[`../mpc2emu/DISCLAIMER.md`](../mpc2emu/DISCLAIMER.md)) — but this is
+an honest gap, not yet closed, until VinSamLib's own K2000R test is
+actually run. mpc2emu's own DSP claims that VinSamLib merely exposes
+(vintage resample character, key-zone/velocity-layer reduction) carry
+mpc2emu's own hardware-confirmation status more broadly, documented in
+that project's README, not a separate claim made here.
 
 ## Real Data Risk — please read this one
 
@@ -78,13 +90,13 @@ shipped app, not just of test scripts:
 
 VinSamLib reads and writes file formats that are proprietary to their
 respective manufacturers and have never been officially documented.
-Its own format readers (the byte-verbatim E4B/KRZ container readers,
-and the EMU3/FAT12/16/32/ISO 9660 filesystem readers) are original
-implementations informed by public specifications and by mpc2emu's own,
-separately-licensed reverse-engineering work — see [`LICENSE`](LICENSE)
-for the specific attributions. All bank *writing* and all signal
-processing is delegated entirely to mpc2emu at runtime; VinSamLib
-carries none of that logic itself.
+Its own format readers (the byte-verbatim E4B/KRZ/EIII container
+readers, and the EMU3/FAT12/16/32/ISO 9660 filesystem readers) are
+original implementations informed by public specifications and by
+mpc2emu's own, separately-licensed reverse-engineering work — see
+[`LICENSE`](LICENSE) for the specific attributions. All bank *writing*
+and all signal processing is delegated entirely to mpc2emu at runtime;
+VinSamLib carries none of that logic itself.
 
 The authors of VinSamLib are not affiliated with, endorsed by, or
 otherwise connected to any of the following companies or their

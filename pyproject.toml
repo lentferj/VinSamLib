@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vinsamlib"
 version = "0.1.0"
-description = "Vintage sampler library browser and bank builder for E-mu E4B and Kurzweil KRZ formats"
+description = "Vintage sampler library browser and bank builder for E-mu E4B/EIII and Kurzweil KRZ formats"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "GPL-2.0-or-later" }

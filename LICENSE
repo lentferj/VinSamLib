@@ -1,4 +1,4 @@
-VinSamLib — Vintage Sampler Librarian for E-mu E4B and Kurzweil KRZ
+VinSamLib — Vintage Sampler Librarian for E-mu E4B/EIII and Kurzweil KRZ
 Copyright (C) 2026  VinSamLib contributors
 
 This program is free software: you can redistribute it and/or modify
@@ -20,11 +20,11 @@ Runtime dependency: mpc2emu
 
 VinSamLib deliberately never edits mpc2emu — it is used as a separate,
 external runtime dependency (a sibling checkout, its path configured in
-Settings), never vendored or copied into this repository. Every E4B/KRZ
-*bank writer* and every DSP routine this app exposes (vintage resample
-profiles, key-zone/velocity-layer reduction, XPM parsing) is mpc2emu's
-own code, invoked through vinsamlib/mpc2emu_bridge.py's lazy module
-proxies.
+Settings), never vendored or copied into this repository. Every E4B/KRZ/
+EIII *bank writer* and every DSP routine this app exposes (vintage
+resample profiles, key-zone/velocity-layer reduction, XPM parsing) is
+mpc2emu's own code, invoked through vinsamlib/mpc2emu_bridge.py's lazy
+module proxies.
 
   mpc2emu — Multi-format Sampler Converter
   https://github.com/ (see the mpc2emu project's own README/LICENSE)
@@ -63,6 +63,16 @@ vinsamlib/banks/e4b.py, vinsamlib/banks/krz.py
   bank formats, informed by mpc2emu's own documented format references
   (docs/E4B_FORMAT.md, docs/KRZ_FORMAT.md in the mpc2emu repository).
   No source code was copied. Released under GPL-2.0-or-later.
+
+vinsamlib/banks/eiii.py
+  Original, container-level (byte-verbatim) reader/assembler for the
+  E-mu Emulator IIIX/ESI-32 (`.e3x`/`.esi`, plus read-only `.e3b`
+  Emulator III) bank formats, informed by mpc2emu's own documented
+  format reference (docs/EIII_FORMAT.md) and writer
+  (writers/eiii_writer.py) in the mpc2emu repository -- no reference
+  implementation for this format existed anywhere prior to mpc2emu's
+  own from-scratch reverse-engineering effort. No source code was
+  copied. Released under GPL-2.0-or-later.
 
 All other files
   Original work. Released under GPL-2.0-or-later.
