@@ -27,8 +27,7 @@ mpc2emu's own code, invoked through vinsamlib/mpc2emu_bridge.py's lazy
 module proxies.
 
   mpc2emu — Multi-format Sampler Converter
-  Not yet publicly released; see that project's own README/LICENSE
-  once it is.
+  https://github.com/lentferj/mpc2emu
   License: GNU General Public License v2.0 or later (GPL-2.0-or-later)
 
 mpc2emu's own LICENSE file carries its full, detailed third-party credit
