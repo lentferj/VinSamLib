@@ -54,9 +54,9 @@ examples of corrections that shaped the final design, in
 ## Features
 
 VinSamLib is a **GUI librarian**, not a batch converter — it sits on
-top of [mpc2emu](../mpc2emu) (a separate, sibling project) for every
-disk-*image* writer and every DSP routine, and never edits or vendors
-mpc2emu's code. **Without mpc2emu installed or configured, VinSamLib is
+top of **mpc2emu** (a separate, sibling project) for every disk-*image*
+writer and every DSP routine, and never edits or vendors mpc2emu's
+code. **Without mpc2emu installed or configured, VinSamLib is
 still a full E4B/KRZ bank builder**, not just a browser: parsing,
 assembling, and saving banks (New Bank → Save as…) needs no mpc2emu at
 all — `banks/e4b.py` and `banks/krz.py` are entirely self-contained —
@@ -128,9 +128,11 @@ processing.
 - Python 3.11 or later
 - [PySide6](https://pypi.org/project/PySide6/) `6.11.1` (the only
   mandatory dependency — see `pyproject.toml`)
-- A local checkout of [mpc2emu](../mpc2emu), for XPM import and vintage
+- A local checkout of **mpc2emu**, for XPM import and vintage
   conversion. Without it, VinSamLib still runs as a browser/bank-builder;
-  Settings will show exactly what's missing.
+  Settings will show exactly what's missing. (mpc2emu isn't publicly
+  released yet — this dependency currently applies only if you already
+  have your own checkout.)
 
 ---
 
@@ -142,8 +144,9 @@ cd vinsamlib
 pip install -e .
 ```
 
-Then, if you want XPM import and vintage conversion: clone
-[mpc2emu](../mpc2emu) somewhere on the same machine, launch VinSamLib
+Then, if you want XPM import and vintage conversion: point Settings at
+a local **mpc2emu** checkout (see above — not yet publicly released)
+somewhere on the same machine. Launch VinSamLib
 (`vinsamlib` or `python -m vinsamlib.app`), open **File → Settings…**,
 and point the "mpc2emu checkout" field at that directory. The status
 line updates live as you type — it tells you separately whether the
@@ -530,7 +533,7 @@ main queue and the per-bank contents list in Pending for Image.
 | Gotek floppy images | ⚠️ create-only — not appendable (a real FAT12 floppy constraint, not a bug) |
 | Aggressive `reduce_velocity_layers_pct` can collapse key-range coverage | ⚠️ a real mpc2emu `zone_reducer` finding from hardware confirmation (2026-07-28): a 75% reduction on a dense real multi-zone preset collapsed coverage from the full keyboard down to a single surviving 4-semitone zone, rather than thinning velocity layers while preserving spread across keys — disproportionate for what's meant to be a velocity-only reduction. Not yet root-caused; tracked in mpc2emu's own TODO. Lower percentages (confirmed up to 40-50%) behave as expected |
 | Real hardware confirmation — E4B / EIII | ✅ **confirmed 2026-07-28** on real E-mu E4XT hardware (via ZuluSCSI): building a bank, sending it through Pending for Image, and building/appending it onto a real EMU3 disk image — including the new EIII-on-image capability — all load and play correctly, for every vintage resample profile and reduce combination in the project's own HW confirmation matrix (`tests/manual_hw_convert_matrix.py`) |
-| Real hardware confirmation — KRZ / K2000R | ⏳ **pending** — not yet tested by loading a VinSamLib-built image onto a real K2000R. Considered **very likely to work**: VinSamLib's KRZ image writing goes entirely through mpc2emu's own K2000 disk builders (no VinSamLib-specific KRZ write logic of its own), and mpc2emu's KRZ writer already carries its own separate, real K2000R/Gotek hardware confirmation (filters, envelopes, LFOs — see `../mpc2emu/DISCLAIMER.md`) — this row will be updated once VinSamLib's own K2000R test is actually run |
+| Real hardware confirmation — KRZ / K2000R | ⏳ **pending** — not yet tested by loading a VinSamLib-built image onto a real K2000R. Considered **very likely to work**: VinSamLib's KRZ image writing goes entirely through mpc2emu's own K2000 disk builders (no VinSamLib-specific KRZ write logic of its own), and mpc2emu's KRZ writer already carries its own separate, real K2000R/Gotek hardware confirmation (filters, envelopes, LFOs — see mpc2emu's own DISCLAIMER.md) — this row will be updated once VinSamLib's own K2000R test is actually run |
 
 ---
 
@@ -585,8 +588,9 @@ velocity-layer reduction, XPM parsing) this app exposes is mpc2emu's own
 code, loaded from a separate checkout at runtime. mpc2emu carries its
 own, considerably longer credit chain for the format knowledge behind
 those writers (emu3fs, emu3bm, KurzFiler, ConvertWithMoss, libgig, and
-more) — see [`../mpc2emu/README.md`](../mpc2emu/README.md#license-and-third-party-sources)
-directly rather than this file duplicating it.
+more) — see mpc2emu's own README directly (not yet publicly released;
+this section will link to it once it is) rather than this file
+duplicating it.
 
 VinSamLib's own format *readers* (the byte-verbatim E4B/KRZ/EIII
 container readers, and the EMU3/FAT12/16/32/ISO 9660 filesystem readers) are

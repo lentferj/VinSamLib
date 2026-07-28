@@ -4,9 +4,9 @@
 
 In the interest of transparency: VinSamLib was created by its **human
 author** working together with Anthropic's **Claude**, an AI coding
-assistant — the same working relationship documented in
-[`../mpc2emu/DISCLAIMER.md`](../mpc2emu/DISCLAIMER.md), the sibling
-project this app is built on top of.
+assistant — the same working relationship documented in mpc2emu's own
+DISCLAIMER.md (not yet publicly released), the sibling project this
+app is built on top of.
 
 **The ideas, the direction, and every correction are human.** The
 concept of a GUI librarian sitting on top of mpc2emu's conversion
@@ -46,8 +46,8 @@ play as expected. **Kurzweil K2000R hardware confirmation is still
 pending** for VinSamLib's own KRZ image-building path specifically —
 considered very likely to work, since it goes entirely through
 mpc2emu's own K2000 disk builders, which carry their own separate,
-real K2000R/Gotek hardware confirmation (see
-[`../mpc2emu/DISCLAIMER.md`](../mpc2emu/DISCLAIMER.md)) — but this is
+real K2000R/Gotek hardware confirmation (see mpc2emu's own
+DISCLAIMER.md, not yet publicly released) — but this is
 an honest gap, not yet closed, until VinSamLib's own K2000R test is
 actually run. mpc2emu's own DSP claims that VinSamLib merely exposes
 (vintage resample character, key-zone/velocity-layer reduction) carry
@@ -123,8 +123,8 @@ software or the use or other dealings in the software.
 VinSamLib itself never talks to hardware — it writes disk image files
 to your local filesystem, the same files mpc2emu's own CLI would
 produce. Loading any file onto real vintage sampling hardware carries
-the same inherent risk described in
-[`../mpc2emu/DISCLAIMER.md`](../mpc2emu/DISCLAIMER.md#hardware-risk):
+the same inherent risk described in mpc2emu's own DISCLAIMER.md
+(not yet publicly released, "Hardware Risk" section):
 test on a ZuluSCSI/SCSI2SD emulator before connecting irreplaceable
 equipment, and keep good backups of every existing bank on the target
 device or media.
