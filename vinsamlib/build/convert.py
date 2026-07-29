@@ -26,8 +26,10 @@ to the user (see ui/convert_options_dialog.py).
 
 from __future__ import annotations
 
+import array
 import contextlib
 import io
+import math
 import re
 import tempfile
 from dataclasses import dataclass
@@ -35,7 +37,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..mpc2emu_bridge import (e4b_parser, e4b_writer, eiii_parser, eiii_writer,
-                                krz_parser, krz_writer, resampler, zone_reducer)
+                                krz_parser, krz_writer, models_common, resampler,
+                                zone_reducer)
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
@@ -65,6 +68,7 @@ class ConversionOptions:
     max_sample_rate: Optional[int] = None          # Hz; None/0 means don't apply this step
     reduce_key_zones_pct: float = 0.0
     reduce_velocity_layers_pct: float = 0.0
+    mono: Optional[str] = None                     # None (keep stereo) | "mix" | "left" | "right"
 
     def is_noop(self, source_format: str = "E4B") -> bool:
         """`source_format` matters now that KRZ can be a source too: a
@@ -79,7 +83,8 @@ class ConversionOptions:
                 and self.resample_profile is None
                 and not self.max_sample_rate
                 and self.reduce_key_zones_pct <= 0
-                and self.reduce_velocity_layers_pct <= 0)
+                and self.reduce_velocity_layers_pct <= 0
+                and self.mono is None)
 
 
 def _run_captured(fn: Callable, *args, **kwargs) -> Any:
@@ -105,15 +110,128 @@ def _apply_max_sample_rate(bank: Any, hz: int) -> None:
         bank.samples[i] = resampler.resample_to_rate(sample, hz, verbose=False)
 
 
+# Below this per-sample Pearson correlation, averaging both sides (--mono
+# mix) is considered likely to cancel signal rather than just narrow the
+# image -- same threshold and rationale as mpc2emu's own convert.py CLI
+# warning (models.common.channel_correlation's docstring): measured over 247
+# real stereo E-mu samples, the median was 0.076 and none exceeded 0.9, so
+# 0.3 sits well clear of ordinary decorrelated material while still catching
+# it, rather than flagging everything.
+MONO_MIX_RISK_THRESHOLD = 0.3
+
+
+def _apply_mono(bank: Any, method: str) -> None:
+    for sample in bank.samples:
+        models_common.to_mono(sample, method)
+
+
+def stereo_mono_risk(samples: list, method: str = "mix") -> dict:
+    """Read-only pre-check for a stereo->mono reduction: does NOT modify
+    `samples`. Only 'mix' (averaging both sides) carries a cancellation
+    risk -- picking a side ('left'/'right') never can, so those always
+    report no risk. Mirrors mpc2emu's own convert.py --mono mix warning,
+    down to the 0.3 correlation threshold (see MONO_MIX_RISK_THRESHOLD).
+
+    Returns {"stereo_count": int, "decorrelated": [(name, r), ...],
+    "worst_r": float | None} -- `decorrelated` lists every stereo sample
+    whose channel correlation fell below the threshold, worst first."""
+    stereo = [s for s in samples if getattr(s, "channels", 1) == 2]
+    if method != "mix" or not stereo:
+        return {"stereo_count": len(stereo), "decorrelated": [], "worst_r": None}
+    decorrelated = []
+    for s in stereo:
+        r = models_common.channel_correlation(s.data)
+        if r < MONO_MIX_RISK_THRESHOLD:
+            decorrelated.append((s.name, r))
+    decorrelated.sort(key=lambda nr: nr[1])
+    worst_r = decorrelated[0][1] if decorrelated else None
+    return {"stereo_count": len(stereo), "decorrelated": decorrelated, "worst_r": worst_r}
+
+
+def suggest_mono_side(samples: list) -> dict:
+    """Best-effort LEFT/RIGHT suggestion for when Mix is risky, based on
+    average per-sample RMS loudness across the stereo samples given.
+
+    mpc2emu's own 111dacd investigated -- and explicitly declined to ship --
+    an automatic side-picker in the library itself: every signal it measured
+    (dead channel, high correlation, one-sided clipping) either never fired
+    or came down to about 1 dB of RMS asymmetry, "a coin-flip dressed up as
+    intelligence." This is that same rough signal, surfaced only as a
+    secondary nudge in the confirmation dialog, never as a claim of
+    correctness -- picking EITHER side already fully avoids Mix's
+    cancellation risk, so getting this "wrong" costs a little level, not
+    cancelled audio, unlike Mix itself.
+
+    Returns {"side": "left"|"right", "avg_db": float, "n": int} -- avg_db is
+    the average |left_rms/right_rms| dB difference across the `n` stereo
+    samples actually measured (n=0, side="left" if none were measurable --
+    an arbitrary tie-break, not a real signal)."""
+    diffs = []
+    for s in samples:
+        if getattr(s, "channels", 1) != 2:
+            continue
+        data = s.data[: len(s.data) // 4 * 4]
+        if not data:
+            continue
+        a = array.array("h")
+        a.frombytes(data)
+        L, R = a[0::2], a[1::2]
+        l_rms = (sum(x * x for x in L) / len(L)) ** 0.5
+        r_rms = (sum(x * x for x in R) / len(R)) ** 0.5
+        if l_rms <= 0 or r_rms <= 0:
+            continue
+        diffs.append(20 * math.log10(l_rms / r_rms))
+    if not diffs:
+        return {"side": "left", "avg_db": 0.0, "n": 0}
+    avg = sum(diffs) / len(diffs)
+    return {"side": "left" if avg >= 0 else "right", "avg_db": abs(avg), "n": len(diffs)}
+
+
+def load_samples_for_test(bank_path: str) -> list:
+    """Read-only: parses an already-assembled E4B/KRZ/EIII file just far
+    enough to list its samples, for the Convert Options dialog's stereo
+    Test button -- same parse-without-writing cost class as
+    xpm_import.summarize_xpm(), never touches bank_path itself."""
+    fmt = _sniff_format(bank_path)
+    bank = _parse_by_format(bank_path, fmt)
+    return bank.samples
+
+
+def load_sources_samples_for_test(sources: list, fmt: str) -> list:
+    """Read-only: assembles the given (bank, preset_obj) pairs the same way
+    Build Image / convert_preset() would (banks.e4b/krz/eiii.assemble()),
+    then parses the result back via load_samples_for_test() -- the one
+    throwaway temp file mpc2emu itself requires to parse from is the only
+    thing written. Used by the Pending pane's per-bank Convert Options and
+    by Explorer's multi-preset "Import via mpc2emu..." to preview stereo
+    content across the whole selection, not just one preset."""
+    from ..banks import e4b as vs_e4b
+    from ..banks import eiii as vs_eiii
+    from ..banks import krz as vs_krz
+    _ASSEMBLE = {"E4B": vs_e4b.assemble, "KRZ": vs_krz.assemble, "EIII": vs_eiii.assemble}
+    _EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
+    fn = _ASSEMBLE[fmt]
+    data = fn(sources, bank_name="TestPreview") if fmt == "EIII" else fn(sources)
+    tmp_dir = Path(tempfile.mkdtemp(prefix=_CONVERT_TEMP_PREFIX))
+    tmp_path = tmp_dir / f"preview.{_EXT[fmt]}"
+    tmp_path.write_bytes(data)
+    return load_samples_for_test(str(tmp_path))
+
+
 def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str) -> str:
     """Shared tail end of apply_conversion() and build/xpm_import.py's
     import_xpm(): both start from a different parse step (an already-
     native E4B vs. a foreign XPM) but from an already-parsed mpc2emu Bank
-    onward the pipeline is identical -- reduce, then resample, then the
-    independent max-sample-rate pass, then write to whichever target
-    format was chosen. Order matches convert.py's own pipeline: thinning
-    first means the slower vintage-resample step has fewer surviving
-    samples to process."""
+    onward the pipeline is identical -- mono reduction, then reduce, then
+    resample, then the independent max-sample-rate pass, then write to
+    whichever target format was chosen. Mono runs first so every later
+    stage sees the halved sizes, matching mpc2emu's own convert.py CLI
+    pipeline order; reduce before resample matches its existing comment
+    that thinning first means the slower vintage-resample step has fewer
+    surviving samples to process."""
+    if opts.mono is not None:
+        _run_captured(_apply_mono, bank, opts.mono)
+
     if opts.reduce_key_zones_pct > 0 or opts.reduce_velocity_layers_pct > 0:
         _run_captured(zone_reducer.reduce_bank, bank,
                       opts.reduce_key_zones_pct, opts.reduce_velocity_layers_pct)

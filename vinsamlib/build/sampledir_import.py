@@ -32,6 +32,15 @@ from .convert import ConversionOptions, _apply_and_write, _run_captured
 from ..mpc2emu_bridge import sampledir_parser
 
 
+def load_samples_for_test(dir_path: str, octave_offset: Optional[int] = None) -> list:
+    """Read-only: parses just far enough to list samples, for the Convert
+    Options dialog's stereo Test button -- same parse
+    import_sample_dir() itself does, never writes anything."""
+    bank = _run_captured(sampledir_parser.parse_sample_dir, dir_path,
+                          octave_offset=octave_offset)
+    return bank.samples
+
+
 def import_sample_dir(dir_path: str, opts: ConversionOptions,
                        octave_offset: Optional[int] = None) -> str:
     """Parses a folder of WAV files (via mpc2emu's own parse_sample_dir)

@@ -79,6 +79,17 @@ def summarize_xpm(xpm_path: str, wav_dir: Optional[str] = None) -> XpmSummary:
     )
 
 
+def load_samples_for_test(xpm_path: str, wav_dir: Optional[str] = None) -> list:
+    """Read-only: parses just far enough to list samples, for the Convert
+    Options dialog's stereo Test button -- same parse summarize_xpm()
+    already does for the Detail pane preview, never writes anything.
+    Same wav_dir default as import_xpm()."""
+    if wav_dir is None:
+        wav_dir = str(Path(xpm_path).resolve().parent)
+    bank = _run_captured(xpm_parser.parse_xpm, xpm_path, wav_dir)
+    return bank.samples
+
+
 def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = None) -> str:
     """Parses an XPM program (via mpc2emu's own parse_xpm) and writes it
     out as a real E4B or KRZ bank file in a fresh temp dir, applying
