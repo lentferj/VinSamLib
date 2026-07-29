@@ -1,5 +1,5 @@
 """
-Sample-folder import dialog: XpmImportDialog's target-format picker plus
+Sample-folder import dialog: FormatConvertDialog's target-format picker plus
 resample/reduce sections, with one addition specific to a bare WAV
 folder -- an explicit "middle C" octave-convention picker. An XPM's own
 zones already carry real MIDI key numbers; a folder of loose WAVs
@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QWidget
 
-from .xpm_import_dialog import XpmImportDialog
+from .format_convert_dialog import FormatConvertDialog
 from ..build.convert import ConversionOptions
 
 # QComboBox row index -> parsers.sampledir_parser.parse_sample_dir()'s own
@@ -36,7 +36,7 @@ _DEFAULT_WARNING = (
     "target format.")
 
 
-class SampleDirImportDialog(XpmImportDialog):
+class SampleDirImportDialog(FormatConvertDialog):
     def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
                  title: str = "Import Sample Folder", warning_text: Optional[str] = None,
                  locked_format: Optional[str] = None,
@@ -53,7 +53,7 @@ class SampleDirImportDialog(XpmImportDialog):
         self._octave_box.addItems([label for label, _offset in _OCTAVE_CHOICES])
         row_layout.addWidget(self._octave_box)
         row_layout.addStretch()
-        # Index 0 is the format-picker row XpmImportDialog just inserted.
+        # Index 0 is the format-picker row FormatConvertDialog just inserted.
         self.layout().insertWidget(1, octave_row)
 
         # sample_loader takes the LIVE octave_offset (this dialog's own
@@ -82,7 +82,7 @@ class SampleDirImportDialog(XpmImportDialog):
                             sample_loader: Optional[Callable[[Optional[int]], list]] = None
                             ) -> tuple[Optional[ConversionOptions], Optional[int]]:
         """Returns (opts, octave_offset) -- None, None if cancelled. Two
-        values, unlike XpmImportDialog.get_import_options()'s one, since
+        values, unlike FormatConvertDialog.get_import_options()'s one, since
         the octave convention isn't part of ConversionOptions (it only
         matters at parse time, before there's a Bank to apply resample/
         reduce options to at all)."""

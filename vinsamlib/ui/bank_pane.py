@@ -217,7 +217,7 @@ class BankPane(QWidget):
     def format(self) -> Optional[str]:
         """The format this bank is currently locked to ("E4B"/"KRZ"), or
         None while still empty/unlocked -- lets callers that open a
-        target-format picker (XpmImportDialog) know when only one choice
+        target-format picker (FormatConvertDialog) know when only one choice
         can actually succeed."""
         return self._format
 

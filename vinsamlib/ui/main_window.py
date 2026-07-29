@@ -24,12 +24,12 @@ from PySide6.QtWidgets import QFileDialog, QInputDialog, QMainWindow, QMessageBo
 from . import workers
 from .bank_pane import BankPane
 from .explorer_pane import ExplorerPane
+from .format_convert_dialog import FormatConvertDialog
 from .image_pane import ImagePane
 from .models import LibraryTreeModel
 from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
 from .sampledir_import_dialog import SampleDirImportDialog
-from .xpm_import_dialog import XpmImportDialog
 from .settings_dialog import SettingsDialog
 from ..banks import e4b, eiii, krz
 from ..build import convert, sampledir_import, xpm_import
@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
                 options=QFileDialog.Option.DontUseNativeDialog)
             if not path:
                 return
-        opts = XpmImportDialog.get_import_options(
+        opts = FormatConvertDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
             bank_loader=lambda: xpm_import.load_samples_for_test(path))
         if opts is None:
@@ -440,7 +440,7 @@ class MainWindow(QMainWindow):
         title = "Import via mpc2emu" if len(nodes) == 1 \
             else f"Import {len(nodes)} presets via mpc2emu"
         sources = [node.payload for node in nodes]
-        opts = XpmImportDialog.get_import_options(
+        opts = FormatConvertDialog.get_import_options(
             self, initial=convert.ConversionOptions(target_format=source_fmt or "E4B"),
             title=title,
             warning_text=(

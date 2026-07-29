@@ -10,12 +10,15 @@ XpmImportOptions dataclass; merged once a second caller -- converting an
 existing E4B preset via Explorer's "Import via mpc2emu..." -- needed the
 same format choice for a non-XPM source too).
 
-Used for two distinct entry points that both need "pick a target format,
+Used directly for two entry points that both need "pick a target format,
 then optionally resample/reduce": importing a foreign XPM program
 (main_window.py's _import_xpm()) and converting an already-native E4B
 preset in place (main_window.py's _convert_preset_via_mpc2emu()) --
 neither the dialog nor build/convert.py's pipeline cares which case it's
-in, only the caller does.
+in, only the caller does. A third case, folder-of-WAVs import, reuses it
+via subclassing instead: see ui/sampledir_import_dialog.py's
+SampleDirImportDialog, which adds an octave-convention picker XPM/preset
+sources don't need.
 
 Only real addition beyond "which dialog do I subclass": switching the
 target format to KRZ nudges (doesn't force) the max-sample-rate step to a
@@ -56,7 +59,7 @@ _DEFAULT_WARNING = (
     "and off by default for either target format.")
 
 
-class XpmImportDialog(ConvertOptionsDialog):
+class FormatConvertDialog(ConvertOptionsDialog):
     def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
                  title: str = "Import XPM", warning_text: Optional[str] = None,
                  locked_format: Optional[str] = None,
@@ -117,7 +120,7 @@ class XpmImportDialog(ConvertOptionsDialog):
                             locked_format: Optional[str] = None,
                             bank_loader: Optional[Callable[[], list]] = None
                             ) -> Optional[ConversionOptions]:
-        dialog = XpmImportDialog(parent, initial=initial, title=title, warning_text=warning_text,
+        dialog = FormatConvertDialog(parent, initial=initial, title=title, warning_text=warning_text,
                                   locked_format=locked_format, bank_loader=bank_loader)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None

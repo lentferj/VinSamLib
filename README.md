@@ -571,7 +571,7 @@ vinsamlib/
     ├── pending_pane.py           # Pending for Image column
     ├── image_pane.py             # Image column
     ├── convert_options_dialog.py # Shared resample/reduce dialog
-    ├── xpm_import_dialog.py      # + target-format picker, subclasses the above
+    ├── format_convert_dialog.py  # + target-format picker, subclasses the above
     └── settings_dialog.py        # mpc2emu path configuration
 ```
 
