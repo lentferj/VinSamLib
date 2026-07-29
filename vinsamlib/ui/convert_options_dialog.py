@@ -17,14 +17,15 @@ a fully independent pipeline stage -- it's its own toggle now.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-                             QSlider, QSpinBox, QVBoxLayout, QWidget)
+                             QMessageBox, QPushButton, QSlider, QSpinBox,
+                             QVBoxLayout, QWidget)
 
-from ..build.convert import ConversionOptions
+from ..build.convert import ConversionOptions, stereo_mono_risk, suggest_mono_side
 from ..mpc2emu_bridge import resampler
 
 _MIN_HZ = 4000
@@ -35,12 +36,33 @@ _DEFAULT_HZ = 24000
 # 0 right after enabling it would be a silent no-op.
 _DEFAULT_REDUCE_PCT = 30
 
+# QComboBox row index -> build.convert.ConversionOptions.mono. "Keep Stereo"
+# (None) is first/default: mpc2emu itself now defaults to keeping stereo
+# (stereoE2E branch), and it is the one choice with zero cancellation risk,
+# so it is not worth nudging users away from with a different pre-selection.
+_MONO_CHOICES: list[tuple[str, Optional[str]]] = [
+    ("Keep Stereo", None),
+    ("Reduce to Mono — Mix (average both sides)", "mix"),
+    ("Reduce to Mono — Left channel only", "left"),
+    ("Reduce to Mono — Right channel only", "right"),
+]
+
 
 class ConvertOptionsDialog(QDialog):
-    def __init__(self, parent=None, initial: Optional[ConversionOptions] = None):
+    def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
+                 bank_loader: Optional[Callable[[], list]] = None):
         super().__init__(parent)
         self.setWindowTitle("Convert Options")
         self.setMinimumWidth(460)
+
+        # Zero-arg callable returning the samples the chosen stereo setting
+        # would actually apply to (an mpc2emu Bank's .samples list), or None
+        # when a caller has no cheap way to preview them (e.g. no source
+        # picked yet). Only used by the stereo group's Test button and by
+        # accept()'s own risk check -- never by the real conversion, which
+        # always re-parses its own real source regardless of this.
+        self._bank_loader = bank_loader
+        self._tested_mono: Optional[str] = None  # method last successfully Tested
 
         layout = QVBoxLayout(self)
 
@@ -53,6 +75,7 @@ class ConvertOptionsDialog(QDialog):
         self._warning_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(self._warning_label)
 
+        layout.addWidget(self._build_stereo_group())
         layout.addWidget(self._build_resample_group())
         layout.addWidget(self._build_max_rate_group())
         layout.addWidget(self._build_reduce_group())
@@ -60,7 +83,7 @@ class ConvertOptionsDialog(QDialog):
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._on_accept_clicked)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -71,6 +94,8 @@ class ConvertOptionsDialog(QDialog):
         """Re-opening for a bank that already has options set (per-bank
         storage, see pending_pane.py) should show its current choice, not
         silently reset to defaults."""
+        mono_idx = next((i for i, (_label, m) in enumerate(_MONO_CHOICES) if m == opts.mono), 0)
+        self._mono_box.setCurrentIndex(mono_idx)
         if opts.resample_profile is not None:
             self._resample_group.setChecked(True)
             idx = self._profile_keys.index(opts.resample_profile)
@@ -97,6 +122,199 @@ class ConvertOptionsDialog(QDialog):
         singleShot(0, ...) so this runs after the layout has actually
         recalculated its sizeHint post-toggle, not before."""
         group.toggled.connect(lambda _checked: QTimer.singleShot(0, self.adjustSize))
+
+    # -- Group: Stereo Samples --------------------------------------------------
+
+    def _build_stereo_group(self) -> QGroupBox:
+        group = QGroupBox("Stereo Samples")
+        outer = QVBoxLayout(group)
+
+        row = QHBoxLayout()
+        self._mono_box = QComboBox()
+        for label, _method in _MONO_CHOICES:
+            self._mono_box.addItem(label)
+        self._mono_box.currentIndexChanged.connect(self._on_mono_choice_changed)
+        row.addWidget(self._mono_box, 1)
+
+        self._test_button = QPushButton("Test")
+        self._test_button.setToolTip(
+            "Check the actual samples for stereo content and, for Mix, "
+            "whether averaging would cancel signal on any of them.")
+        self._test_button.clicked.connect(self._on_test_clicked)
+        self._test_button.setEnabled(self._bank_loader is not None)
+        if self._bank_loader is None:
+            self._test_button.setToolTip(
+                "Not available here -- nothing to preview yet for this "
+                "conversion.")
+        row.addWidget(self._test_button)
+        outer.addLayout(row)
+
+        self._stereo_result_label = QLabel(
+            "Averaging (Mix) can cancel signal on decorrelated stereo "
+            "content -- across 247 real stereo E-mu samples, mpc2emu found "
+            "a median channel correlation of just 0.076, so this is common, "
+            "not an edge case. Use Test to check the actual samples, or "
+            "prefer Left/Right if in doubt.")
+        self._stereo_result_label.setWordWrap(True)
+        self._stereo_result_label.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;")
+        outer.addWidget(self._stereo_result_label)
+
+        return group
+
+    def _current_mono_method(self) -> Optional[str]:
+        return _MONO_CHOICES[self._mono_box.currentIndex()][1]
+
+    def _on_mono_choice_changed(self, _index: int) -> None:
+        # A Test result only speaks to the method it was run for -- any
+        # change invalidates it, so accept() knows to re-check rather than
+        # trusting a stale result for a different method.
+        self._tested_mono = None
+        self._stereo_result_label.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;")
+        if self._current_mono_method() is None:
+            self._stereo_result_label.setText(
+                "Keeping stereo samples in stereo -- no cancellation risk, "
+                "but roughly doubles the size of every stereo sample "
+                "(mpc2emu's E4B writer stores both channels in one object; "
+                "KRZ/EIII still downmix regardless of this setting, since "
+                "their stereo encodings aren't implemented yet).")
+        elif self._current_mono_method() == "mix":
+            self._stereo_result_label.setText(
+                "Averaging (Mix) can cancel signal on decorrelated stereo "
+                "content -- across 247 real stereo E-mu samples, mpc2emu "
+                "found a median channel correlation of just 0.076, so this "
+                "is common, not an edge case. Use Test to check the actual "
+                "samples, or prefer Left/Right if in doubt.")
+        else:
+            self._stereo_result_label.setText(
+                "Picking one side never cancels signal, unlike averaging -- "
+                "no test needed for this choice.")
+
+    def _on_test_clicked(self) -> None:
+        if self._bank_loader is None:
+            return
+        method = self._current_mono_method()
+        self._test_button.setEnabled(False)
+        try:
+            samples = self._bank_loader()
+        except Exception as ex:
+            QMessageBox.warning(self, "Test", f"Couldn't preview the samples:\n\n{ex}")
+            return
+        finally:
+            self._test_button.setEnabled(True)
+        self._show_risk(stereo_mono_risk(samples, method or "mix"), method, samples)
+        self._tested_mono = method
+
+    def _show_risk(self, risk: dict, method: Optional[str], samples: list) -> None:
+        if risk["stereo_count"] == 0:
+            self._stereo_result_label.setText("No stereo samples found -- this setting has no effect.")
+            self._stereo_result_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+            return
+        if method != "mix":
+            self._stereo_result_label.setText(
+                f"{risk['stereo_count']} stereo sample(s) found. "
+                f"{'Keeping stereo.' if method is None else 'Picking one side never cancels signal.'}")
+            self._stereo_result_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+            return
+        n = len(risk["decorrelated"])
+        if n == 0:
+            self._stereo_result_label.setText(
+                f"{risk['stereo_count']} stereo sample(s) checked -- none are "
+                f"decorrelated enough for averaging to be a concern.")
+            self._stereo_result_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        else:
+            worst_name, worst_r = risk["decorrelated"][0]
+            # Same rough loudness heuristic the accept()-time confirmation
+            # popup offers as its "Use <side> Instead" button -- surfaced
+            # here too so Testing already tells the user what it would
+            # suggest, not just that Mix is risky. See suggest_mono_side()'s
+            # own docstring for why this is deliberately hedged.
+            suggestion = suggest_mono_side(samples)
+            side_note = (f" (measured ~{suggestion['avg_db']:.1f} dB louder on average)"
+                         if suggestion["n"] else "")
+            self._stereo_result_label.setText(
+                f"⚠ {n} of {risk['stereo_count']} stereo sample(s) have decorrelated "
+                f"channels (worst: \"{worst_name}\", r={worst_r:+.2f}) -- averaging "
+                f"cancels signal there. Consider {suggestion['side'].capitalize()} "
+                f"instead{side_note}.")
+            self._stereo_result_label.setStyleSheet("color: palette(link); font-size: 11px;")
+
+    def _on_accept_clicked(self) -> None:
+        """Only Mix carries a cancellation risk (see stereo_mono_risk()).
+        If the current choice was already Tested, that result already
+        informed the user -- proceed. Otherwise check now if a preview is
+        available (freshest info wins over a stale Test click), or fall
+        back to a generic warning if it isn't -- either way the user
+        chooses explicitly rather than the risk being invisible, mirroring
+        mpc2emu's own convert.py CLI warning."""
+        if self._current_mono_method() != "mix" or self._tested_mono == "mix":
+            self.accept()
+            return
+        samples = None
+        risk = None
+        if self._bank_loader is not None:
+            try:
+                samples = self._bank_loader()
+                risk = stereo_mono_risk(samples, "mix")
+            except Exception:
+                samples, risk = None, None   # fall through to the generic warning below
+        if risk is not None and not risk["decorrelated"]:
+            self.accept()
+            return
+        self._confirm_mono_mix_risk(risk, samples)
+
+    def _confirm_mono_mix_risk(self, risk: Optional[dict], samples: Optional[list]) -> None:
+        if risk is not None:
+            worst_name, worst_r = risk["decorrelated"][0]
+            detail = (f"{len(risk['decorrelated'])} of {risk['stereo_count']} stereo "
+                      f"sample(s) have decorrelated channels (worst: \"{worst_name}\", "
+                      f"r={worst_r:+.2f}).")
+        else:
+            detail = ("This hasn't been tested, and across 247 real stereo E-mu "
+                      "samples mpc2emu measured a median channel correlation of "
+                      "just 0.076 -- decorrelated stereo is the common case, not "
+                      "the exception.")
+
+        # Picking EITHER side (unlike Mix) never cancels signal, so this
+        # suggestion is a secondary nudge, not the actual fix -- see
+        # suggest_mono_side()'s own docstring for why it's deliberately
+        # rough (mpc2emu's own 111dacd found no reliable way to pick
+        # between sides and declined to automate it).
+        suggestion = suggest_mono_side(samples) if samples else {"side": "left", "avg_db": 0.0, "n": 0}
+        side_label = suggestion["side"].capitalize()
+        if suggestion["n"]:
+            suggestion_detail = (
+                f"The {suggestion['side']} channel measured ~{suggestion['avg_db']:.1f} dB "
+                f"louder on average across the affected sample(s) -- a rough loudness "
+                f"heuristic, not a strong signal, but picking either side avoids Mix's "
+                f"cancellation risk regardless.")
+        else:
+            suggestion_detail = (
+                "No sample data to measure a suggestion from, so this is an arbitrary "
+                "pick -- picking either side avoids Mix's cancellation risk regardless.")
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Averaging may cancel signal")
+        box.setText(
+            f"{detail}\n\nAveraging both sides (Mix) can cancel signal on "
+            f"decorrelated stereo content.\n\n{suggestion_detail}")
+        proceed_btn = box.addButton("Go Ahead Anyway", QMessageBox.ButtonRole.AcceptRole)
+        suggested_btn = box.addButton(f"Use {side_label} Instead", QMessageBox.ButtonRole.ActionRole)
+        go_back_btn = box.addButton("Go Back", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(suggested_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is proceed_btn:
+            self.accept()
+        elif clicked is suggested_btn:
+            idx = next(i for i, (_label, m) in enumerate(_MONO_CHOICES) if m == suggestion["side"])
+            self._mono_box.setCurrentIndex(idx)
+        # Go Back (or closing the box): stay on the dialog, current
+        # selection unchanged -- lets the user pick a different setting
+        # themselves (Left/Right/Keep Stereo) rather than only being
+        # offered the one this dialog suggests.
 
     # -- Group A: Vintage Resample --------------------------------------------
 
@@ -242,17 +460,23 @@ class ConvertOptionsDialog(QDialog):
             max_sample_rate=max_sample_rate,
             reduce_key_zones_pct=reduce_key_zones_pct,
             reduce_velocity_layers_pct=reduce_velocity_layers_pct,
+            mono=self._current_mono_method(),
         )
 
     @staticmethod
-    def get_options(parent=None, initial: Optional[ConversionOptions] = None) -> Optional[ConversionOptions]:
+    def get_options(parent=None, initial: Optional[ConversionOptions] = None,
+                     bank_loader: Optional[Callable[[], list]] = None
+                     ) -> Optional[ConversionOptions]:
         """Modal convenience entry point, matching this codebase's other
         static dialog helpers (QInputDialog.getText(), QFileDialog.get...).
         Returns None on Cancel, a populated ConversionOptions on OK.
         `initial`, when given, pre-fills the dialog with an already-chosen
         set of options (e.g. reopening for a pending bank that already has
-        its own conversion choice -- see pending_pane.py)."""
-        dialog = ConvertOptionsDialog(parent, initial=initial)
+        its own conversion choice -- see pending_pane.py). `bank_loader`,
+        when given, feeds the Stereo group's Test button and accept()'s own
+        risk check -- see build/convert.py's load_samples_for_test()/
+        load_sources_samples_for_test()."""
+        dialog = ConvertOptionsDialog(parent, initial=initial, bank_loader=bank_loader)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog._to_options()

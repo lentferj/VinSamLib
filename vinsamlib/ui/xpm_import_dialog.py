@@ -39,7 +39,7 @@ point offering that choice live.
 from __future__ import annotations
 
 import dataclasses
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QWidget
 
@@ -59,8 +59,9 @@ _DEFAULT_WARNING = (
 class XpmImportDialog(ConvertOptionsDialog):
     def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
                  title: str = "Import XPM", warning_text: Optional[str] = None,
-                 locked_format: Optional[str] = None):
-        super().__init__(parent, initial=initial)
+                 locked_format: Optional[str] = None,
+                 bank_loader: Optional[Callable[[], list]] = None):
+        super().__init__(parent, initial=initial, bank_loader=bank_loader)
         self.setWindowTitle(title)
         self._warning_label.setText(warning_text or _DEFAULT_WARNING)
 
@@ -113,9 +114,11 @@ class XpmImportDialog(ConvertOptionsDialog):
     @staticmethod
     def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
                             title: str = "Import XPM", warning_text: Optional[str] = None,
-                            locked_format: Optional[str] = None) -> Optional[ConversionOptions]:
+                            locked_format: Optional[str] = None,
+                            bank_loader: Optional[Callable[[], list]] = None
+                            ) -> Optional[ConversionOptions]:
         dialog = XpmImportDialog(parent, initial=initial, title=title, warning_text=warning_text,
-                                  locked_format=locked_format)
+                                  locked_format=locked_format, bank_loader=bank_loader)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog._to_options()

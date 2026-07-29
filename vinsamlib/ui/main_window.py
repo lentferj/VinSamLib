@@ -29,8 +29,8 @@ from .models import LibraryTreeModel
 from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
 from .sampledir_import_dialog import SampleDirImportDialog
-from .settings_dialog import SettingsDialog
 from .xpm_import_dialog import XpmImportDialog
+from .settings_dialog import SettingsDialog
 from ..banks import e4b, eiii, krz
 from ..build import convert, sampledir_import, xpm_import
 from ..config import Config, user_data_dir
@@ -267,7 +267,9 @@ class MainWindow(QMainWindow):
                 options=QFileDialog.Option.DontUseNativeDialog)
             if not path:
                 return
-        opts = XpmImportDialog.get_import_options(self, locked_format=self._bank_pane.format)
+        opts = XpmImportDialog.get_import_options(
+            self, locked_format=self._bank_pane.format,
+            bank_loader=lambda: xpm_import.load_samples_for_test(path))
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
@@ -344,7 +346,8 @@ class MainWindow(QMainWindow):
         if not path:
             return
         opts, octave_offset = SampleDirImportDialog.get_import_options(
-            self, locked_format=self._bank_pane.format)
+            self, locked_format=self._bank_pane.format,
+            sample_loader=lambda octave: sampledir_import.load_samples_for_test(path, octave))
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
@@ -436,6 +439,7 @@ class MainWindow(QMainWindow):
         source_fmt = source_fmts.pop() if len(source_fmts) == 1 else "E4B"
         title = "Import via mpc2emu" if len(nodes) == 1 \
             else f"Import {len(nodes)} presets via mpc2emu"
+        sources = [node.payload for node in nodes]
         opts = XpmImportDialog.get_import_options(
             self, initial=convert.ConversionOptions(target_format=source_fmt or "E4B"),
             title=title,
@@ -444,7 +448,9 @@ class MainWindow(QMainWindow):
                 "other conversion here; a few advanced parameters may not "
                 "carry over. Resample/reduce below are optional and off "
                 "by default for either target format."),
-            locked_format=self._bank_pane.format)
+            locked_format=self._bank_pane.format,
+            bank_loader=lambda: convert.load_sources_samples_for_test(
+                sources, source_fmt or "E4B"))
         if opts is None:
             return
         self._preset_convert_queue = list(nodes)

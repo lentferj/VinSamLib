@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDia
 from . import workers
 from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _sanitize_bank_name
 from .convert_options_dialog import ConvertOptionsDialog
-from ..build.convert import apply_conversion
+from ..build.convert import apply_conversion, load_sources_samples_for_test
 
 _PENDING_TEMP_PREFIX = "vinsamlib_pending_"
 
@@ -390,7 +390,11 @@ class PendingBanksPane(QWidget):
             self.statusMessage.emit("Select a pending bank first")
             return
         entry = self._pending[row]
-        opts = ConvertOptionsDialog.get_options(self, initial=entry.get("convert_opts"))
+        sources = [(bank, preset) for bank, preset, _name in entry["items"]]
+        fmt = entry["format"]
+        opts = ConvertOptionsDialog.get_options(
+            self, initial=entry.get("convert_opts"),
+            bank_loader=lambda: load_sources_samples_for_test(sources, fmt))
         if opts is None:
             return   # Cancel -- leave whatever was already chosen for this bank untouched
         entry["convert_opts"] = None if opts.is_noop() else opts
