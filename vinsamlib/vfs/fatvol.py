@@ -112,7 +112,7 @@ def _read_bpb_fat16(f) -> dict:
     tot16 = struct.unpack_from("<H", b, 19)[0]
     fatsz = struct.unpack_from("<H", b, 22)[0]
     tot32 = struct.unpack_from("<I", b, 32)[0]
-    if not bps or not spc or not fatsz or not root_ents:
+    if not bps or not spc or not fatsz or not nfats or not root_ents:
         raise FatFormatError("not a FAT12/16 BPB (a required field is 0)")
     total_sectors = tot16 or tot32   # real spec precedence: nonzero 16-bit wins
     root_sectors = (root_ents * 32 + bps - 1) // bps
@@ -138,7 +138,7 @@ def _read_bpb_fat32(f) -> dict:
     fatsz = struct.unpack_from("<I", b, 36)[0]
     root_clus = struct.unpack_from("<I", b, 44)[0]
     total_sectors = struct.unpack_from("<I", b, 32)[0]
-    if not bps or not spc or not fatsz or not root_clus:
+    if not bps or not spc or not fatsz or not nfats or not root_clus:
         raise FatFormatError("not a FAT32 BPB (a required field is 0)")
     fat_start = rsvd
     data_start = rsvd + nfats * fatsz
@@ -162,7 +162,7 @@ def _read_bpb_fat12(f) -> dict:
     tot16 = struct.unpack_from("<H", b, 19)[0]
     fatsz = struct.unpack_from("<H", b, 22)[0]
     tot32 = struct.unpack_from("<I", b, 32)[0]
-    if not bps or not spc or not fatsz or not root_ents:
+    if not bps or not spc or not fatsz or not nfats or not root_ents:
         raise FatFormatError("not a FAT12 BPB (a required field is 0)")
     total_sectors = tot16 or tot32
     root_sectors = (root_ents * 32 + bps - 1) // bps
