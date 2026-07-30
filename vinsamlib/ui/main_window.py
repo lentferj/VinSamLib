@@ -345,13 +345,14 @@ class MainWindow(QMainWindow):
             options=QFileDialog.Option.DontUseNativeDialog)
         if not path:
             return
-        opts, octave_offset = SampleDirImportDialog.get_import_options(
+        opts, octave_offset, zone_overrides = SampleDirImportDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
-            sample_loader=lambda octave: sampledir_import.load_samples_for_test(path, octave))
+            sample_loader=lambda octave: sampledir_import.load_samples_for_test(path, octave),
+            placement_loader=lambda octave: sampledir_import.parse_preview(path, octave))
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
-        w = workers.Worker(sampledir_import.import_sample_dir, path, opts, octave_offset)
+        w = workers.Worker(sampledir_import.import_sample_dir, path, opts, octave_offset, zone_overrides)
         w.signals.finished.connect(lambda tmp_path, p=path: self._on_sample_dir_imported(tmp_path, p, opts))
         w.signals.error.connect(self._on_sample_dir_import_error)
         w.signals.finished.connect(lambda *_: setattr(self, "_sample_dir_import_worker", None))

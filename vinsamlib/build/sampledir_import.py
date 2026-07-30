@@ -26,7 +26,7 @@ don't, so where "middle C" falls has to come from somewhere).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .convert import ConversionOptions, _apply_and_write, _run_captured
 from ..mpc2emu_bridge import sampledir_parser
@@ -41,8 +41,20 @@ def load_samples_for_test(dir_path: str, octave_offset: Optional[int] = None) ->
     return bank.samples
 
 
+def parse_preview(dir_path: str, octave_offset: Optional[int] = None) -> Any:
+    """Read-only: the same parse import_sample_dir() itself does, for the
+    Sample Placement dialog -- never writes anything. Returns the full
+    mpc2emu Bank (one preset, one voice, one zone per sample; see
+    parsers/sampledir_parser.py) so a caller can inspect or override each
+    zone's auto-computed key-range assignment before the real import
+    commits to it."""
+    return _run_captured(sampledir_parser.parse_sample_dir, dir_path,
+                          octave_offset=octave_offset)
+
+
 def import_sample_dir(dir_path: str, opts: ConversionOptions,
-                       octave_offset: Optional[int] = None) -> str:
+                       octave_offset: Optional[int] = None,
+                       zone_overrides: Optional[dict] = None) -> str:
     """Parses a folder of WAV files (via mpc2emu's own parse_sample_dir)
     into a single multisampled preset and writes it out as a real E4B/
     KRZ/EIII bank file in a fresh temp dir, applying whatever resample/
@@ -53,7 +65,21 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
     octave_offset: 2=C3, 1=C4, 0=C5 -- which octave "middle C" (MIDI 60)
     falls on for filenames without an explicit octave (or a bare MIDI
     number). None lets mpc2emu auto-detect it from a majority vote across
-    the folder's own filenames (its own CLI default)."""
+    the folder's own filenames (its own CLI default).
+
+    zone_overrides: {sample_name: (lo_key, root_key, hi_key)} from the
+    Sample Placement dialog's manual review, applied to the matching
+    zone right after THIS SAME parse -- parse_sample_dir() is a pure
+    function of dir_path/octave_offset, so the zone set it produces here
+    is identical to whatever parse_preview() already showed the dialog.
+    A zone whose sample_name isn't in the dict keeps its auto-computed
+    placement; None (the default) applies no overrides at all."""
     bank = _run_captured(sampledir_parser.parse_sample_dir, dir_path,
                           octave_offset=octave_offset)
+    if zone_overrides:
+        for voice in bank.presets[0].voices:
+            for zone in voice.zones:
+                override = zone_overrides.get(zone.sample_name)
+                if override is not None:
+                    zone.lo_key, zone.root_key, zone.hi_key = override
     return _apply_and_write(bank, opts, Path(dir_path).name)
