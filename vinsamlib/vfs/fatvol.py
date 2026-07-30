@@ -175,6 +175,16 @@ def _read_bpb_fat12(f) -> dict:
                 root_start=root_start, data_start=data_start)
 
 
+def _read_cluster(f, size: int) -> bytes:
+    """One cluster, always exactly `size` bytes -- zero-padded if the image
+    is truncated mid-chain. _read_fat() already tolerates a truncated image
+    the same way (its own ljust), so truncation is an anticipated input, and
+    a short read here is worse than a zero-filled one: for a directory it
+    shifts every subsequent entry's offset, and for file data it silently
+    shortens the result instead of leaving the tail zeroed."""
+    return f.read(size).ljust(size, b"\x00")
+
+
 def _cluster_offset(part_off: int, data_start: int, bps: int, spc: int, cluster: int) -> int:
     return part_off + (data_start + (cluster - 2) * spc) * bps
 
@@ -442,7 +452,11 @@ class Fat16Volume(WritableVolume):
         data = bytearray()
         for c in chain:
             f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-            data += f.read(g["bps"] * g["spc"])
+            # Padded to the FULL cluster size: a short read on a truncated
+            # image would otherwise shift every later cluster's entries in
+            # this concatenated buffer, so the "offset" handed out by list()
+            # would address the wrong entry on a later delete()/rename().
+            data += _read_cluster(f, g["bps"] * g["spc"])
         return data
 
     def _write_dir(self, f, folder_ref: Optional[int], data: bytearray) -> None:
@@ -483,7 +497,7 @@ class Fat16Volume(WritableVolume):
             buf = bytearray()
             for c in chain:
                 f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-                buf += f.read(g["bps"] * g["spc"])
+                buf += _read_cluster(f, g["bps"] * g["spc"])
         return bytes(buf[:r["size"]])
 
     def delete(self, entry: Entry) -> None:
@@ -580,7 +594,11 @@ class Fat32Volume(WritableVolume):
         data = bytearray()
         for c in chain:
             f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-            data += f.read(g["bps"] * g["spc"])
+            # Padded to the FULL cluster size: a short read on a truncated
+            # image would otherwise shift every later cluster's entries in
+            # this concatenated buffer, so the "offset" handed out by list()
+            # would address the wrong entry on a later delete()/rename().
+            data += _read_cluster(f, g["bps"] * g["spc"])
         return data
 
     def _write_dir(self, f, folder_ref: Optional[int], data: bytearray) -> None:
@@ -622,7 +640,7 @@ class Fat32Volume(WritableVolume):
             buf = bytearray()
             for c in chain:
                 f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-                buf += f.read(g["bps"] * g["spc"])
+                buf += _read_cluster(f, g["bps"] * g["spc"])
         return bytes(buf[:r["size"]])
 
     def delete(self, entry: Entry) -> None:
@@ -727,7 +745,7 @@ class Fat12Volume(WritableVolume):
             buf = bytearray()
             for c in chain:
                 f.seek(_cluster_offset(0, g["data_start"], g["bps"], g["spc"], c))
-                buf += f.read(g["bps"] * g["spc"])
+                buf += _read_cluster(f, g["bps"] * g["spc"])
         return bytes(buf[:r["size"]])
 
     def delete(self, entry: Entry) -> None:
