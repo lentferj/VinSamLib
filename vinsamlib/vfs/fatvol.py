@@ -59,6 +59,12 @@ _FAT12_EOC_MIN, _FAT12_BAD = 0xFF8, 0xFF7
 _FAT16_EOC_MIN, _FAT16_BAD = 0xFFF8, 0xFFF7
 _FAT32_EOC_MIN, _FAT32_BAD = 0x0FFFFFF8, 0x0FFFFFF7
 
+# Only the low 28 bits of a FAT32 entry are the cluster number; the top 4
+# are reserved and must survive a write untouched (the two flags the spec
+# does define in FAT[1] -- ClnShut 0x08000000, HrdErr 0x04000000 -- sit
+# inside the low 28 and so are unaffected either way).
+_FAT32_MASK = 0x0FFFFFFF
+
 _MBR_PART_TYPES = {0x01, 0x04, 0x06, 0x0B, 0x0C, 0x0E}
 
 _BANK_EXTS = {".krz", ".k25", ".k26", ".e4b", ".e3x", ".esi", ".e3b"}
@@ -544,12 +550,19 @@ class Fat32Volume(WritableVolume):
             self._geo = _read_bpb_fat32(f)
 
     def _read_fat(self, f) -> list[int]:
+        """Entries are returned RAW (all 32 bits), not masked to 28 -- the
+        top 4 bits of a FAT32 entry are reserved by the spec and must be
+        written back unchanged. Masking here and then packing the masked
+        values back in _write_fat() zeroed those bits across the whole FAT
+        on every delete(). Mask at the point of use instead: see
+        _fat32_next() for chain-following and delete()'s free operation,
+        which clears only the low 28 bits."""
         g = self._geo
         f.seek(g["part_off"] + g["fat_start"] * g["bps"])
         raw = f.read(g["fatsz"] * g["bps"])
         raw = raw.ljust(g["fatsz"] * g["bps"], b"\x00")
         n = len(raw) // 4
-        return [v & 0x0FFFFFFF for v in struct.unpack_from("<%dI" % n, raw)]
+        return list(struct.unpack_from("<%dI" % n, raw))
 
     def _write_fat(self, f, fat: list[int]) -> None:
         g = self._geo
@@ -562,7 +575,8 @@ class Fat32Volume(WritableVolume):
         g = self._geo
         start = folder_ref if folder_ref is not None else g["root_clus"]
         fat = self._read_fat(f)
-        chain = _walk_chain(lambda n: fat[n], start, _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
+        chain = _walk_chain(lambda n: fat[n] & _FAT32_MASK, start,
+                             _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
         data = bytearray()
         for c in chain:
             f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
@@ -573,7 +587,8 @@ class Fat32Volume(WritableVolume):
         g = self._geo
         start = folder_ref if folder_ref is not None else g["root_clus"]
         fat = self._read_fat(f)
-        chain = _walk_chain(lambda n: fat[n], start, _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
+        chain = _walk_chain(lambda n: fat[n] & _FAT32_MASK, start,
+                             _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
         cluster_bytes = g["bps"] * g["spc"]
         if len(data) > len(chain) * cluster_bytes:
             raise FatFormatError("directory grew beyond its allocated clusters")
@@ -602,7 +617,8 @@ class Fat32Volume(WritableVolume):
         r = entry.ref
         with open(self.path, "rb") as f:
             fat = self._read_fat(f)
-            chain = _walk_chain(lambda n: fat[n], r["cluster"], _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
+            chain = _walk_chain(lambda n: fat[n] & _FAT32_MASK, r["cluster"],
+                                 _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
             buf = bytearray()
             for c in chain:
                 f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
@@ -619,8 +635,9 @@ class Fat32Volume(WritableVolume):
                 if c in seen or c >= len(fat):
                     break
                 seen.add(c)
-                nxt = fat[c]
-                fat[c] = 0
+                nxt = fat[c] & _FAT32_MASK
+                # Free = low 28 bits zero; the reserved top 4 stay as found.
+                fat[c] &= ~_FAT32_MASK & 0xFFFFFFFF
                 c = nxt
             data = self._dir_data(f, r["folder"])
             _mark_deleted(data, r["offset"])
