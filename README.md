@@ -53,6 +53,8 @@ examples of corrections that shaped the final design, in
 
 ## Features
 
+### What it is, and what needs mpc2emu
+
 VinSamLib is a **GUI librarian**, not a batch converter — it sits on
 top of [mpc2emu](https://github.com/lentferj/mpc2emu) (a separate,
 sibling project) for every disk-*image* writer and every DSP routine,
@@ -75,44 +77,52 @@ self-contained), building an EIII bank at all, XPM import, and vintage
 conversion. Settings shows exactly which of these is unavailable and
 why if mpc2emu isn't configured.
 
-**Browse your whole library at once.** Point VinSamLib at any number of
-folders — loose `.e4b`/`.KRZ` files, EMU3 CD/HD images, ISO 9660 discs,
-FAT12/16/32 floppy or hard-disk images, folders of `.xpm` programs — and
-it lazily walks the tree, showing banks, discs, folders, presets, and
-programs in one unified Explorer. A background scanner indexes
+### Browse your whole library at once
+
+Point VinSamLib at any number of folders — loose `.e4b`/`.KRZ` files,
+EMU3 CD/HD images, ISO 9660 discs, FAT12/16/32 floppy or hard-disk
+images, folders of `.xpm` programs — and it lazily walks the tree,
+showing banks, discs, folders, presets, and programs in one unified
+Explorer. A background scanner indexes
 everything into a local search database, so typing in the search box
 finds a preset by name anywhere in the whole library, instantly, without
 waiting for the tree to be expanded down to it.
 
-**Build a new bank by dragging presets together.** The New Bank column
-accepts presets/programs dragged from anywhere in the library (or added
-via right-click), locks to whichever format the first one came from, and
-shows a live, real size/count meter — computed by actually assembling
-the selection, not an estimate. The E4XT's 128 MB / 1000-preset and the
+### Build a new bank by dragging presets together
+
+The New Bank column accepts presets/programs dragged from anywhere in
+the library (or added via right-click), locks to whichever format the
+first one came from, and shows a live, real size/count meter — computed
+by actually assembling the selection, not an estimate. The E4XT's 128 MB / 1000-preset and the
 K2000's 1000-program limits are hard, format-technical ceilings, always
 enforced; a separate, lower, configurable-in-Settings byte threshold
 (default 64 MB E4B / 32 MB KRZ) warns earlier, once a bank likely
 exceeds *your own* hardware's actual RAM. Save the result directly to a
 file, or queue it for image building.
 
-**Queue several banks, then build.** The Pending for Image column holds
-any number of banks-in-progress; each can be renamed, reordered, and
-independently given its own mpc2emu conversion recipe before "Build
-Image →" assembles all of them into the currently-open (or
-about-to-be-created) disk image in one step.
+### Queue several banks, then build
 
-**Manage disc/floppy images directly.** The Image column creates any of
-mpc2emu's own image kinds (EMU3 CD, EMU-fs or FAT hard disk for the
-E4XT; FAT16 CD/hard-disk or FAT12 Gotek floppy for the K2000), or opens
-an existing one, and lets you append, rename, delete, and export
-individual bank entries in place.
+The Pending for Image column holds any number of banks-in-progress;
+each can be renamed, reordered, and independently given its own mpc2emu
+conversion recipe before "Build Image →" assembles all of them into the
+currently-open (or about-to-be-created) disk image in one step.
 
-**Import an Akai MPC `.xpm` program**, when mpc2emu is available —
-double-click or right-click any `.xpm` file in the library, choose a
-target format and optional vintage conversion, and it lands in New Bank
-as a single preset, ready to combine with anything else.
+### Manage disc/floppy images directly
 
-**Run an existing preset through mpc2emu's vintage pipeline.**
+The Image column creates any of mpc2emu's own image kinds (EMU3 CD,
+EMU-fs or FAT hard disk for the E4XT; FAT16 CD/hard-disk or FAT12 Gotek
+floppy for the K2000), or opens an existing one, and lets you append,
+rename, delete, and export individual bank entries in place.
+
+### Import an Akai MPC `.xpm` program
+
+When mpc2emu is available: double-click or right-click any `.xpm` file
+in the library, choose a target format and optional vintage conversion,
+and it lands in New Bank as a single preset, ready to combine with
+anything else.
+
+### Run an existing preset through mpc2emu's vintage pipeline
+
 Right-click any real preset or program in Explorer — E4B, KRZ or EIII —
 for a second option, "Import via mpc2emu…", offering the exact same
 resample/reduce dialog XPM import uses: apply the EMU Emulator II or
@@ -139,11 +149,15 @@ processing.
 
 ## Installation
 
+### Installing VinSamLib
+
 ```bash
 git clone <this repo's URL> vinsamlib
 cd vinsamlib
 pip install -e .
 ```
+
+### Pointing it at an mpc2emu checkout
 
 Then, if you want XPM import and vintage conversion: clone
 [mpc2emu](https://github.com/lentferj/mpc2emu) somewhere on the same
@@ -167,7 +181,7 @@ library, not real commercial content.)*
 
 ## Quick Start
 
-**Browse and build your first bank:**
+### Browse and build your first bank
 
 1. **File → Add Library Folder…** and pick a folder containing E4B/KRZ/
    EIII banks, disc images, or floppy images (the file dialog remembers where
@@ -190,7 +204,7 @@ library, not real commercial content.)*
    image — copy that `.hda`/`.iso`/`.img` file to your ZuluSCSI/Gotek
    media the same way you would one built by mpc2emu's own CLI.
 
-**Import an Akai MPC program (needs mpc2emu):**
+### Import an Akai MPC program (needs mpc2emu)
 
 1. Add a library folder containing `.xpm` files, or use
    **File → Import XPM…** to pick one directly.
@@ -200,7 +214,7 @@ library, not real commercial content.)*
 3. The imported preset lands directly in **New Bank** — an XPM always
    holds exactly one program, so there's nothing to choose between.
 
-**Run an existing preset through mpc2emu (needs mpc2emu):**
+### Run an existing preset through mpc2emu (needs mpc2emu)
 
 1. Find a real E4B, KRZ or EIII preset/program anywhere in your library.
 2. Right-click it → **Import via mpc2emu…** — the same dialog as XPM
@@ -372,10 +386,11 @@ times as you like (handy while iterating on conversion options).
 Shared by "Import via mpc2emu", Pending's per-bank conversion, and XPM
 import.
 
-**Import as:** — the target-format picker at the very top. Only XPM
-import and "Import via mpc2emu" show it (Pending's per-bank dialog
-doesn't — its conversion button is still E4B-only, see Pending for
-Image above).
+#### Import as: (target format)
+
+The target-format picker at the very top. Only XPM import and "Import
+via mpc2emu" show it (Pending's per-bank dialog doesn't — its
+conversion button is still E4B-only, see Pending for Image above).
 "Import via mpc2emu" defaults this picker to the preset's own source
 format — "same format, with options" one click away — but you can
 switch it to the other format just as easily. Switching it to KRZ
@@ -393,8 +408,10 @@ a real (possibly slow) mpc2emu conversion, only to have it rejected
 afterward once New Bank refuses to mix formats. Clear New Bank (or send
 it to Pending first) to import as the other format instead.
 
-**Stereo Samples** — what happens to stereo source samples, as a plain
-(always-visible) row above the collapsible sections:
+#### Stereo Samples
+
+What happens to stereo source samples, as a plain (always-visible) row
+above the collapsible sections:
 
 - **Keep Stereo** (the default) — stereo survives the whole pipeline
   into the E4B output. Note this is an **E4B-only** capability: the KRZ
@@ -424,24 +441,34 @@ one-sided clipping) either never fired or came down to about 1 dB of
 RMS asymmetry: "a coin-flip dressed up as intelligence". Getting the
 side "wrong" costs a little level; Mix can cost you the audio.
 
-Below that, three independent, collapsible sections:
+Below that are three independent, collapsible sections.
 
-- **Vintage Resample** — pick `EMU Emulator II` (8-bit µ-law companded,
-  27,777 Hz — the defining lo-fi grit) or `EMU Emax I` (12-bit linear,
-  27,500 Hz — cleaner). **Apply bandpass coloring** (on by default)
-  simulates the output filter stage; unchecking it isolates the raw
-  bit/rate reduction. **Keep gain-staged (hot) level** skips restoring
-  each sample to its original peak level afterward, leaving the louder,
-  gain-staged level the DSP works at internally.
-- **Limit Maximum Sample Rate** — an independent step (not gated behind
-  Vintage Resample also being on): clean-downsamples anything above the
-  chosen rate. Only ever downsamples, never up.
-- **Reduce Sample Count** — **Reduce Key Zones by** / **Reduce Velocity
-  Layers by**, each an independent percentage slider. The percentage is
-  how much to **remove**, not a target to shrink *to* — 30% removes
-  ~30%, keeping ~70% spread evenly across the range (matches mpc2emu's
-  own CLI semantics and wording exactly). With small counts, rounding
-  means the actual fraction removed won't always be exact.
+#### Vintage Resample
+
+Pick `EMU Emulator II` (8-bit µ-law companded, 27,777 Hz — the defining
+lo-fi grit) or `EMU Emax I` (12-bit linear, 27,500 Hz — cleaner).
+**Apply bandpass coloring** (on by default) simulates the output filter
+stage; unchecking it isolates the raw bit/rate reduction. **Keep
+gain-staged (hot) level** skips restoring each sample to its original
+peak level afterward, leaving the louder, gain-staged level the DSP
+works at internally.
+
+#### Limit Maximum Sample Rate
+
+An independent step (not gated behind Vintage Resample also being on):
+clean-downsamples anything above the chosen rate. Only ever
+downsamples, never up.
+
+#### Reduce Sample Count
+
+**Reduce Key Zones by** / **Reduce Velocity Layers by**, each an
+independent percentage slider. The percentage is how much to
+**remove**, not a target to shrink *to* — 30% removes ~30%, keeping
+~70% spread evenly across the range (matches mpc2emu's own CLI
+semantics and wording exactly). With small counts, rounding means the
+actual fraction removed won't always be exact.
+
+#### Behavior shared by every section
 
 The dialog auto-resizes as you check more sections, and the title/
 wording adapts to which feature opened it (e.g. "Import via mpc2emu" vs.
@@ -552,22 +579,49 @@ main queue and the per-bank contents list in Pending for Image.
 
 ## Known Limitations
 
+### EIII / ESI-32
+
 | Feature | Status |
 |---|---|
 | EIII / ESI-32 bank format | ✅ readable and buildable (`.e3x`/`.esi`) — browse, summarize, combine into a New Bank, Save as…, and convert to/from E4B and KRZ. No reference implementation existed anywhere, so this is a from-scratch RE effort, corpus-verified by round-tripping 600 real banks out of the author's own discs |
 | EIII banks on a disk image | ✅ EIII banks can now be sent to Pending for Image and built onto a real EMU3 CD/HD image the same way E4B banks are (mpc2emu's EIII writer/`iso_builder` fix, hardware-confirmed 2026-07-28, made this possible — see `build/images.py`'s `append_banks()`). Per-bank "Process before building…" isn't wired up for EIII yet, same scope decision as KRZ (see below) |
 | Writing the `.esi` (ESI-32) variant | ⚠️ `banks/eiii.py`'s `assemble()` supports it, but nothing in the UI exposes the choice — Save as… always writes the `.e3x` variant (which the E4XT's backward-compatibility loader also reads) |
 | EIII banks with shared preset link-chains | ⚠️ an EIII preset stacks layers by link-chaining preset slots, and several presets can share one chain tail. Assembling gives each its own copy, so selecting *every* preset of a few unusually dense commercial banks can exceed the 256-slot format ceiling even though the source bank fit — 2 of 600 corpus banks. Save as… reports it rather than writing a corrupt bank; drop a few presets to get under it |
+
+### Conversion sources and scope
+
+| Feature | Status |
+|---|---|
 | KRZ as a conversion *source* | ✅ mpc2emu's own KRZ reader (added 2026-07-27, corpus-verified against 593 real files) made this possible — KRZ presets/programs can now be converted the same way E4B ones can, via Explorer's "Import via mpc2emu…" |
 | Per-bank KRZ/EIII conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for both now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ/EIII queues yet |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
 | Some coverage-remapped KRZ presets can't be re-processed | ⚠️ a real mpc2emu bug (`writers/krz_writer.py`, tracked in mpc2emu's own TODO): a preset needing the octave-slice-stack "coverage remap" rebuild can crash on write when reprocessed; most real content is unaffected — VinSamLib surfaces the real error if it happens rather than silently failing |
+
+### Disk images
+
+| Feature | Status |
+|---|---|
 | Gotek floppy images | ⚠️ create-only — not appendable (a real FAT12 floppy constraint, not a bug) |
+
+### Zone and velocity reduction
+
+| Feature | Status |
+|---|---|
 | Aggressive `reduce_velocity_layers_pct` can collapse key-range coverage | ⚠️ a real mpc2emu `zone_reducer` finding from hardware confirmation (2026-07-28): a 75% reduction on a dense real multi-zone preset collapsed coverage from the full keyboard down to a single surviving 4-semitone zone, rather than thinning velocity layers while preserving spread across keys — disproportionate for what's meant to be a velocity-only reduction. Not yet root-caused; tracked in mpc2emu's own TODO. Lower percentages (confirmed up to 40-50%) behave as expected |
+
+### Stereo and mono reduction
+
+| Feature | Status |
+|---|---|
 | Stereo samples — E4B | ✅ kept in stereo end-to-end (Convert Options → Stereo Samples, default **Keep Stereo**), or reduced to mono on purpose as a vintage-fit/size step. **Hardware-confirmed 2026-07-31** on a real E4XT, and confirmed by *measurement* rather than by ear: a stereo bank loads and plays as stereo with the correct channel order (a left-only key measured L 440 Hz / R silent, rms 0.092 vs 0.00006; a split-pitch key measured 440 Hz left / 659 Hz right — mpc2emu `0868233`). This was the one part of the E4B stereo RE that no offline work could settle |
 | Stereo samples — KRZ / EIII | ⚠️ **always downmixed**, whatever the Stereo Samples setting says — mpc2emu's KRZ and EIII writers downmix explicitly rather than emitting stereo, which those formats' encodings aren't implemented for yet. The setting still controls *how* (Mix vs. picking a side) for E4B; for KRZ/EIII targets it's mpc2emu's own averaging downmix. **Tracked as an open TODO** — the work is upstream in mpc2emu's `writers/krz_writer.py`/`writers/eiii_writer.py`, which downmix explicitly (and log it) rather than emitting stereo; VinSamLib only passes the choice through and can't fix it on its own side |
 | Hard-panned voices lose the stereo image on hardware | ⚠️ an E4XT behavior, corrected against real measurement 2026-07-31 (mpc2emu `0868233`): per-voice **pan mono-sums** a stereo voice onto the pan position — it does not balance it and does not discard a channel, as previously believed from a by-ear report. At hard left, the left output carries both channels' content and the right is silent. So a preset kept in stereo but carrying an extreme per-voice pan costs the stereo **image**, not the content; keeping stereo voices centred is the fix. VinSamLib never sets pan itself — it only passes through whatever the source preset already had |
 | Averaging downmix (Mix) can cancel signal | ⚠️ inherent to averaging, not a bug: decorrelated channels partially or fully cancel when summed, and across 247 real stereo E-mu samples mpc2emu measured a median channel correlation of only 0.076. The Convert Options dialog's **Test** button and its OK-time confirmation exist to surface this per-sample before you commit; **Left**/**Right** avoid it entirely |
+
+### Hardware confirmation
+
+| Feature | Status |
+|---|---|
 | Real hardware confirmation — E4B / EIII | ✅ **confirmed 2026-07-28** on real E-mu E4XT hardware (via ZuluSCSI): building a bank, sending it through Pending for Image, and building/appending it onto a real EMU3 disk image — including the new EIII-on-image capability — all load and play correctly, for every vintage resample profile and reduce combination in the project's own HW confirmation matrix (`tests/manual_hw_convert_matrix.py`) |
 | Real hardware confirmation — KRZ / K2000R | ⏳ **pending** — not yet tested by loading a VinSamLib-built image onto a real K2000R. Considered **very likely to work**: VinSamLib's KRZ image writing goes entirely through mpc2emu's own K2000 disk builders (no VinSamLib-specific KRZ write logic of its own), and mpc2emu's KRZ writer already carries its own separate, real K2000R/Gotek hardware confirmation (filters, envelopes, LFOs — see [mpc2emu's own DISCLAIMER.md](https://github.com/lentferj/mpc2emu/blob/main/DISCLAIMER.md)) — this row will be updated once VinSamLib's own K2000R test is actually run |
 
