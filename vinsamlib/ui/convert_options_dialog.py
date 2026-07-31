@@ -37,9 +37,12 @@ _DEFAULT_HZ = 24000
 _DEFAULT_REDUCE_PCT = 30
 
 # QComboBox row index -> build.convert.ConversionOptions.mono. "Keep Stereo"
-# (None) is first/default: mpc2emu itself now defaults to keeping stereo
-# (stereoE2E branch), and it is the one choice with zero cancellation risk,
-# so it is not worth nudging users away from with a different pre-selection.
+# (None) is first/default: mpc2emu itself defaults to keeping stereo since
+# its own f936b8c ("--mono becomes a vintage-fit reduction"), and it is the
+# one choice with zero cancellation risk, so it is not worth nudging users
+# away from with a different pre-selection. E-mu hardware confirmed a stereo
+# E4B bank loads and plays as stereo with the correct channel order
+# (measured per-channel on a real E4XT, mpc2emu 0868233, 2026-07-31).
 _MONO_CHOICES: list[tuple[str, Optional[str]]] = [
     ("Keep Stereo", None),
     ("Reduce to Mono — Mix (average both sides)", "mix"),
@@ -149,16 +152,19 @@ class ConvertOptionsDialog(QDialog):
         row.addWidget(self._test_button)
         outer.addLayout(row)
 
-        self._stereo_result_label = QLabel(
-            "Averaging (Mix) can cancel signal on decorrelated stereo "
-            "content -- across 247 real stereo E-mu samples, mpc2emu found "
-            "a median channel correlation of just 0.076, so this is common, "
-            "not an edge case. Use Test to check the actual samples, or "
-            "prefer Left/Right if in doubt.")
+        self._stereo_result_label = QLabel()
         self._stereo_result_label.setWordWrap(True)
         self._stereo_result_label.setStyleSheet(
             "color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(self._stereo_result_label)
+
+        # Fill the label from the CURRENT selection rather than hard-coding
+        # any one method's text here: currentIndexChanged never fires for
+        # the initial index, so a hard-coded string would sit under a
+        # selection it doesn't describe until the user touched the combo
+        # box -- the default (Keep Stereo) showed Mix's cancellation
+        # warning, which reads as if keeping stereo were the risky choice.
+        self._on_mono_choice_changed(self._mono_box.currentIndex())
 
         return group
 
@@ -230,6 +236,8 @@ class ConvertOptionsDialog(QDialog):
             # here too so Testing already tells the user what it would
             # suggest, not just that Mix is risky. See suggest_mono_side()'s
             # own docstring for why this is deliberately hedged.
+            # (mpc2emu's own db5d599 -- the 111dacd this used to cite was
+            # rebased away and is no longer reachable from its main.)
             suggestion = suggest_mono_side(samples)
             side_note = (f" (measured ~{suggestion['avg_db']:.1f} dB louder on average)"
                          if suggestion["n"] else "")
