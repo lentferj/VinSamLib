@@ -144,6 +144,24 @@ class Config:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Vintage resample/reduce is available"
 
+    def check_trim_support(self) -> tuple[bool, str]:
+        """Start/tail trim needs mpc2emu's two trim processors. Kept out of
+        check_conversion_support()'s `required` list on purpose: an older
+        checkout missing these should lose only the Trim Silence group, not
+        the whole resample/reduce feature -- same reasoning as
+        check_xpm_import_support() below."""
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        required = [
+            Path("processors") / "start_trim.py",
+            Path("processors") / "tail_trim.py",
+        ]
+        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        if missing:
+            return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
+        return True, "Trim silence is available"
+
     def check_xpm_import_support(self) -> tuple[bool, str]:
         """XPM import (build/xpm_import.py) needs mpc2emu's own Akai XPM
         program parser specifically -- a checkout could satisfy

@@ -94,10 +94,17 @@ class SettingsDialog(QDialog):
         ok, reason = probe.check_mpc2emu_path()
         if ok:
             conv_ok, conv_reason = probe.check_conversion_support()
+            trim_ok, trim_reason = probe.check_trim_support()
             if conv_ok:
-                self._status_label.setText(f"✓ {reason} — {conv_reason}")
+                text = f"✓ {reason} — {conv_reason}"
             else:
-                self._status_label.setText(f"✓ {reason}\n✗ {conv_reason}")
+                text = f"✓ {reason}\n✗ {conv_reason}"
+            # Only worth a line when it's MISSING: trim is an extra on top of
+            # resample/reduce, so "available" is the unremarkable case and
+            # saying so twice just crowds the status area.
+            if not trim_ok:
+                text += f"\n✗ {trim_reason}"
+            self._status_label.setText(text)
         else:
             self._status_label.setText(f"✗ {reason}")
         changed = Path(text) != self._config.mpc2emu_path if text else False

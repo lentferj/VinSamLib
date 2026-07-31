@@ -381,7 +381,7 @@ times as you like (handy while iterating on conversion options).
 
 ### Convert Options dialog
 
-![Convert Options dialog with the "Import as:" target-format picker at the top, and Vintage Resample and Reduce Sample Count both expanded](docs/screenshots/05_convert_options.png)
+![Convert Options dialog with the "Import as:" target-format picker at the top, and Trim Start, Constant-Power Pan Compensation, Vintage Resample and Reduce Sample Count all expanded](docs/screenshots/05_convert_options.png)
 
 Shared by "Import via mpc2emu", Pending's per-bank conversion, and XPM
 import.
@@ -441,7 +441,57 @@ one-sided clipping) either never fired or came down to about 1 dB of
 RMS asymmetry: "a coin-flip dressed up as intelligence". Getting the
 side "wrong" costs a little level; Mix can cost you the audio.
 
-Below that are three independent, collapsible sections.
+Around that are the independent, collapsible sections below.
+
+#### Trim Silence
+
+**Trim Start (leading silence)** and **Trim Tail (trailing
+decay/silence)**, each independently toggleable — an autosampler capture
+typically wants its lead-in cut but its natural release left alone.
+Trimming runs first in the pipeline, so every later step sees the
+shortened samples at their real sizes.
+
+**Threshold** is a *ceiling below the sample's own peak*, so the numbers
+run the opposite way to most "amount" controls: the default of 72 dB
+removes silence only, while a lower value such as 45 dB cuts into the
+natural attack or release for a tighter sample. **Fade** is the short
+linear fade at the new cut point that keeps it click-free.
+
+By default, a sample whose loop lies in the region being cut (an
+autosampler's whole-take loop) has that loop **dropped**, leaving a clean
+one-shot. **Keep loops** instead skips the trim for those samples,
+preserving the loop at the cost of the silence.
+
+This is useful for MPC Auto Sampler output in particular: the MPC's own
+"Auto Trim Start" only moves a playback *marker* inside the MPC project,
+which is gone once the sample is exported as a bare WAV — so the audible
+lead-in silence is back in anything VinSamLib imports.
+
+#### Constant-Power Pan Compensation
+
+**E4B only** — greyed out for KRZ and EIII targets, since the law behind
+it was measured on an E4XT and nothing equivalent is known for the K2000
+or the EIII.
+
+Panning the E4XT makes a voice **louder**: mpc2emu measured +2.88 dB at
+half pan and +4.32 dB hard-panned, and confirmed the curve is identical
+at every volume (0.00/0.00/0.21 dB spread across 0/−6/−12) and unchanged
+by the filter — which is what makes a single correction curve valid at
+all.
+
+Left **off** (the default), a converted preset behaves exactly like one
+panned on the E4XT's own front panel. Turned **on**, the excess is
+subtracted from each voice's volume so loudness stays put across pan —
+roughly what SFZ and SF2 sources assume, so it restores the balance the
+source author actually heard rather than the instrument's behaviour.
+
+Note this is **one-way**, which is why it's opt-in rather than an
+always-on correction like the cutoff and zone-gain fixes: those fix a
+*mapping* and mpc2emu's parser inverts them exactly on read-back, whereas
+this alters the *material*. It lands in the volume byte where it is
+indistinguishable from a volume you set deliberately, so re-reading the
+bank cannot undo it and applying it twice to the same material drifts
+further each time.
 
 #### Vintage Resample
 
@@ -470,9 +520,16 @@ actual fraction removed won't always be exact.
 
 #### Behavior shared by every section
 
-The dialog auto-resizes as you check more sections, and the title/
-wording adapts to which feature opened it (e.g. "Import via mpc2emu" vs.
-"Import XPM") so it never says the wrong thing.
+The dialog grows as you check more sections, and the title/wording adapts
+to which feature opened it (e.g. "Import via mpc2emu" vs. "Import XPM")
+so it never says the wrong thing. Expanding everything wants more height
+than a window is allowed to occupy, so the sections scroll once they run
+out of room; the OK/Cancel buttons sit outside that and stay reachable.
+
+Leaving every section untouched is recognised as a genuine no-op, and
+when the source and target formats also match, the mpc2emu round trip is
+skipped entirely rather than needlessly re-encoding the bank through
+mpc2emu's model.
 
 ### Image Column
 

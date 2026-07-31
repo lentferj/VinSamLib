@@ -38,7 +38,7 @@ from typing import Any, Callable, Optional
 
 from ..mpc2emu_bridge import (e4b_parser, e4b_writer, eiii_parser, eiii_writer,
                                 krz_parser, krz_writer, models_common, resampler,
-                                zone_reducer)
+                                start_trim, tail_trim, zone_reducer)
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
@@ -69,6 +69,17 @@ class ConversionOptions:
     reduce_key_zones_pct: float = 0.0
     reduce_velocity_layers_pct: float = 0.0
     mono: Optional[str] = None                     # None (keep stereo) | "mix" | "left" | "right"
+    pan_law: str = "hardware"                      # "hardware" | "constant-power"; E4B only
+    # Trim thresholds are stored the way mpc2emu's CLI accepts them -- a
+    # POSITIVE depth below peak (72 = "silence only", 45 = into the attack/
+    # release) -- and negated at the call site, exactly as convert.py's own
+    # `-abs(args.trim_start)` does. None means the step is off.
+    trim_start_db: Optional[float] = None
+    trim_start_fade_ms: float = 5.0
+    trim_start_keep_loops: bool = False
+    trim_tail_db: Optional[float] = None
+    trim_tail_fade_ms: float = 5.0
+    trim_tail_keep_loops: bool = False
 
     def is_noop(self, source_format: str = "E4B") -> bool:
         """`source_format` matters now that KRZ can be a source too: a
@@ -84,7 +95,10 @@ class ConversionOptions:
                 and not self.max_sample_rate
                 and self.reduce_key_zones_pct <= 0
                 and self.reduce_velocity_layers_pct <= 0
-                and self.mono is None)
+                and self.mono is None
+                and self.pan_law == "hardware"
+                and self.trim_start_db is None
+                and self.trim_tail_db is None)
 
 
 def _run_captured(fn: Callable, *args, **kwargs) -> Any:
@@ -118,6 +132,44 @@ def _apply_max_sample_rate(bank: Any, hz: int) -> None:
 # 0.3 sits well clear of ordinary decorrelated material while still catching
 # it, rather than flagging everything.
 MONO_MIX_RISK_THRESHOLD = 0.3
+
+
+def _apply_pan_law(bank: Any) -> int:
+    """Subtract the E4XT's pan-loudness excess from every panned zone, so
+    total power stays put across pan instead of rising with it. Returns the
+    number of zones touched.
+
+    Panning the E4XT makes a voice LOUDER -- measured +2.88 dB at pan 0.5 and
+    +4.32 dB at pan 1.0, and the curve is identical at every volume (spread
+    0.00/0.00/0.21 dB across 0/-6/-12) and unaffected by the filter, which is
+    what makes one correction curve valid at all (mpc2emu 413d84c, measured
+    2026-08-01). SFZ and SF2 assume roughly constant power, so without this a
+    hard-panned voice from such a source arrives ~4.5 dB hotter than its
+    author intended relative to a centred one.
+
+    What actually gets subtracted is mpc2emu's FIT of those measurements,
+    4.54 * |pan|^0.75, not the measurements themselves -- so at pan 0.5 the
+    correction is 2.70 dB rather than the 2.88 dB measured there, within the
+    fit's stated 0.50 dB max residual. e4xt_pan_excess_db() owns that curve;
+    don't second-guess it here.
+
+    Applied here in the pipeline rather than left to mpc2emu's writer, and
+    that placement is the point: unlike the cutoff and zone-gain corrections
+    -- which fix a MAPPING, are always on, and which e4b_parser inverts
+    exactly on read-back -- this alters the MATERIAL. It lands in the volume
+    byte where it is indistinguishable from a volume the user chose, so the
+    parser cannot undo it and an E4B->E4B pass would drift further every
+    time. That makes it one-way and opt-in, belonging with mono/resample/
+    trim rather than with the corrections."""
+    n = 0
+    for preset in bank.presets:
+        for voice in preset.voices:
+            for zone in voice.zones:
+                excess = models_common.e4xt_pan_excess_db(zone.pan)
+                if excess > 0.01:      # same negligible-excess floor as convert.py
+                    zone.volume -= excess
+                    n += 1
+    return n
 
 
 def _apply_mono(bank: Any, method: str) -> None:
@@ -222,13 +274,36 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str) -> str:
     """Shared tail end of apply_conversion() and build/xpm_import.py's
     import_xpm(): both start from a different parse step (an already-
     native E4B vs. a foreign XPM) but from an already-parsed mpc2emu Bank
-    onward the pipeline is identical -- mono reduction, then reduce, then
-    resample, then the independent max-sample-rate pass, then write to
-    whichever target format was chosen. Mono runs first so every later
-    stage sees the halved sizes, matching mpc2emu's own convert.py CLI
-    pipeline order; reduce before resample matches its existing comment
-    that thinning first means the slower vintage-resample step has fewer
-    surviving samples to process."""
+    onward the pipeline is identical -- start trim, tail trim, pan law,
+    mono reduction, then reduce, then resample, then the independent
+    max-sample-rate pass, then write to whichever target format was chosen.
+
+    That order is mpc2emu's own convert.py CLI order: the trims run first so
+    every later stage sees the shortened samples at their real sizes; mono
+    before reduce/resample so those see the halved sizes; reduce before
+    resample matches convert.py's existing comment that thinning first means
+    the slower vintage-resample step has fewer surviving samples to process.
+    Pan law sits where convert.py puts it, just before mono, though nothing
+    depends on that: it rewrites zone volumes while mono rewrites sample
+    data, so the two don't interact."""
+    if opts.trim_start_db is not None:
+        _run_captured(start_trim.trim_start_bank, bank,
+                      thresh_db=-abs(opts.trim_start_db),
+                      fade_ms=opts.trim_start_fade_ms,
+                      drop_full_loop=not opts.trim_start_keep_loops)
+
+    if opts.trim_tail_db is not None:
+        _run_captured(tail_trim.trim_tail_bank, bank,
+                      thresh_db=-abs(opts.trim_tail_db),
+                      fade_ms=opts.trim_tail_fade_ms,
+                      drop_full_loop=not opts.trim_tail_keep_loops)
+
+    # E4B only -- the law was measured on an E4XT and says nothing about
+    # what a K2000 or an EIII does with pan, so applying it to those
+    # targets would be guesswork baked irreversibly into the volume byte.
+    if opts.pan_law == "constant-power" and opts.target_format == "E4B":
+        _run_captured(_apply_pan_law, bank)
+
     if opts.mono is not None:
         _run_captured(_apply_mono, bank, opts.mono)
 

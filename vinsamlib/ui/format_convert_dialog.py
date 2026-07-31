@@ -95,10 +95,24 @@ class FormatConvertDialog(ConvertOptionsDialog):
 
         if initial is None and self._format_box.currentText() == "KRZ":
             self._apply_krz_sane_default()
+        # The base class already ran this once from its own __init__, but at
+        # that point _format_box didn't exist yet and _current_target_format()
+        # fell back to "E4B". Re-run now that the real picker is in place.
+        self._refresh_pan_law_availability()
+
+    def _current_target_format(self) -> str:
+        # Python dispatches to this override from the BASE __init__, which runs
+        # before _format_box exists -- fall back to the base answer until it
+        # does (the __init__ above re-runs the gate once it has been built).
+        box = getattr(self, "_format_box", None)
+        return box.currentText() if box is not None else super()._current_target_format()
 
     def _on_target_format_changed(self, fmt: str) -> None:
         if fmt == "KRZ":
             self._apply_krz_sane_default()
+        # Pan compensation is E4B-only, so switching the target has to grey it
+        # out (and clear it) rather than leave a setting that would be dropped.
+        self._refresh_pan_law_availability()
 
     def _apply_krz_sane_default(self) -> None:
         # Only nudges the max-sample-rate step (now its own independent
