@@ -73,8 +73,8 @@ skeleton it reuses. What genuinely needs mpc2emu: **creating or
 appending to any disk image** (every image kind's writer lives there,
 E4B/EIII and KRZ alike), **E4B/EIII** preset-level zone/velocity/
 bit-depth detail in the Detail pane (KRZ's own detail view is
-self-contained), building an EIII bank at all, XPM import, and vintage
-conversion. Settings shows exactly which of these is unavailable and
+self-contained), building an EIII bank at all, XPM import, sample-folder
+import, and vintage conversion. Settings shows exactly which of these is unavailable and
 why if mpc2emu isn't configured.
 
 ### Browse your whole library at once
@@ -132,6 +132,17 @@ defaults its target format to the preset's own source format, so
 "same format, with options" (apply processing without converting) is
 one click away — the same "Add" a plain drag would do, plus optional
 processing.
+
+### Turn a folder of WAVs into a multisampled preset
+
+Also when mpc2emu is available: **File > Import Sample Folder…** takes a
+folder of loose WAVs whose filenames carry their root notes
+(`Piano C3.wav`, `Cello-A#2.wav`, `Pad_60.wav`) and auto-maps each one to
+the keys nearest its root, producing a single playable multisample in New
+Bank. Pick which octave convention the filenames use, or let it detect
+that from the names themselves, and override any sample's key range or
+root by hand — against an 88-key piano — when the automatic split isn't
+what you wanted.
 
 ---
 
@@ -223,6 +234,19 @@ library, not real commercial content.)*
 3. Pick your options (say, the Emulator II profile with a 30% key-zone
    reduction) and confirm; the converted result lands in New Bank
    alongside anything already there, labeled `"<name> (mpc2emu)"`.
+
+### Import a folder of WAVs as a multisample (needs mpc2emu)
+
+1. **File → Import Sample Folder…** and pick a folder whose WAV
+   filenames carry their root notes (`Piano C3.wav`, `Pad_60.wav`).
+2. Set **Middle C is:** to the convention those names use — `C3` for
+   K2000-era material, `C4` for general MIDI — or leave it on
+   **Auto-detect**. Choose a target format and any conversion options.
+3. Optionally hit **Adjust Sample Placement…** to check the automatic
+   key split against an 88-key piano and correct any sample's range or
+   root by hand.
+4. Confirm; the whole folder lands in **New Bank** as one multisampled
+   preset named after the folder.
 
 ---
 
@@ -600,6 +624,73 @@ converted and added in turn (not one dialog per preset). If the
 selection spans presets from different source banks, the target-format
 picker just falls back to defaulting on E4B rather than guessing —
 pick explicitly in that case.
+
+### Sample Folder Import
+
+![Import Sample Folder dialog: the target-format picker, a "Middle C is:" octave-convention picker set to C3, and the "Adjust Sample Placement…" button reading "Auto-computed placement (default)", above the usual conversion sections](docs/screenshots/08_sample_folder_import.png)
+
+**File > Import Sample Folder…** turns a folder of loose WAVs into a real
+native E4B, KRZ or EIII bank — no XPM, no existing preset, nothing to
+export first. Each file's **root note comes from its filename**
+(`Piano C3.wav`, `Cello-A#2.wav`, `Pad_60.wav`), and mpc2emu's
+`parse_sample_dir` maps every sample to the keys nearest its own root,
+splitting at the midpoints between adjacent roots and key-tracking across
+each span. The result is one multisampled preset, landing straight in New
+Bank under the folder's name — exactly the way XPM import lands one
+preset, never a whole bank of its own.
+
+It is offered **only from the File menu**, never from an Explorer
+right-click. Unlike an `.xpm` file or an already-native preset, a folder
+of loose WAVs isn't something you browse to and recognize as "one
+importable thing" — you pick a folder and decide about it case by case.
+
+The dialog is the [Convert Options dialog](#convert-options-dialog):
+the same target-format picker, and the same Trim Silence,
+Constant-Power Pan Compensation, Stereo Samples, Vintage Resample and
+reduction sections, all behaving identically — plus two controls that
+only make sense for a bare WAV folder.
+
+**Middle C is:** decides where MIDI 60 falls for filenames that name an
+octave — `C3` (the K2000 and most vintage samplers), `C4` (general MIDI),
+`C5`, or **Auto-detect**, which is mpc2emu's own CLI default and takes a
+majority vote across the folder's filenames. An XPM never needs this: its
+zones already carry real MIDI key numbers, whereas `C3` in a filename is
+just text until something decides which octave numbering wrote it.
+
+**Adjust Sample Placement…** opens the editor described below; the label
+beside it reads *Auto-computed placement (default)* until you accept an
+override, then *Custom placement set for N sample(s)*. Stereo Samples'
+**Test** button works here too, checking the actual WAVs for stereo
+content. Both re-read the folder using whatever **Middle C is:** is
+selected at that moment, not whatever it was when the dialog opened.
+
+#### Sample Placement
+
+![Sample Placement dialog: five demo samples as Sample/Low/Root/High rows, each in its own color, over an 88-key piano showing each sample's key range and root in the matching color; two rows have been edited to overlap and their note fields are tinted light red](docs/screenshots/09_sample_placement.png)
+
+One row per sample — **Sample / Low / Root / High** — beside an 88-key
+piano that colors each sample's range in that sample's own color, the
+same color in both places. Colors are assigned once from the initial
+low-to-high order and never change afterwards, so a sample stays
+recognizable even as rows move: rows are kept sorted low to high and
+**reorder live** when an edit changes their relative order.
+
+Two kinds of trouble tint the note fields. **Overlapping ranges** turn
+light red. A row that **can never sound** — low above high, or a root
+outside its own range — turns a stronger red. Both are **warnings only**
+and never block OK: real hardware samplers do use deliberately
+overlapping zones for layering, so that stays your judgment call, and
+keeping the same rule for the unplayable case means one bad row can't
+trap you in the dialog. OK applies exactly what is shown; Cancel leaves
+any override you had already accepted in place.
+
+The spin boxes accept the **full MIDI range 0–127** — the piano's A0–C8
+span is a drawing limit, not an editing one, so a zone can legitimately
+extend past the drawn keyboard. Note names are labelled using the
+convention picked above; on **Auto-detect** the labels fall back to
+C4 = 60, since the parser resolves its real offset internally without
+reporting it. That affects the **labels only**, never the actual key
+numbers written to the bank.
 
 ### Settings
 
