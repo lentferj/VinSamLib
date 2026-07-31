@@ -68,7 +68,7 @@ def _duplicate_blocks(meta: bytearray, block_offsets: list[int], block_size: int
     than once among `block_offsets` (byte offsets into `meta`), ignoring
     an all-zero block -- that's the normal, expected shape for
     legitimately unused directory space. Seen verbatim on a real
-    reference disc (a Dan Dean "Bass Collection" CD) where 3 of its 4
+    reference disc (an acoustic-bass library CD) where 3 of its 4
     root-directory blocks are byte-for-byte copies of each other --
     real-looking-but-bogus data (not a simple repeating pattern, so
     `_is_filler_pattern` alone doesn't catch it), apparently stale/reused
@@ -211,8 +211,8 @@ class Emu3Volume(WritableVolume):
                 size = self._true_size(fields["n_clusters"], fields["blks"],
                                          fields["brem"], self.cluster_size)
                 # `props == '\x00E4B0'` is confirmed on some reference discs
-                # (e.g. "Post Industrial Cybr-Sound Depot") but all-zero on
-                # others (e.g. "Formula 4000") — not a reliable tag. And the
+                # (an industrial sound-design library) but all-zero on others
+                # (a synth-and-drums library series) — not a reliable tag. And the
                 # EMU3 *filesystem* is shared by EIII/ESI/EIV alike (emu3fs),
                 # so an EMU3-filesystem disc can hold EIII-format bank data
                 # rather than E4B ('FORM'...'E4B0') even when the directory-
