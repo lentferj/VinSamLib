@@ -152,7 +152,7 @@ def suggest_mono_side(samples: list) -> dict:
     """Best-effort LEFT/RIGHT suggestion for when Mix is risky, based on
     average per-sample RMS loudness across the stereo samples given.
 
-    mpc2emu's own 111dacd investigated -- and explicitly declined to ship --
+    mpc2emu's own db5d599 investigated -- and explicitly declined to ship --
     an automatic side-picker in the library itself: every signal it measured
     (dead channel, high correlation, one-sided clipping) either never fired
     or came down to about 1 dB of RMS asymmetry, "a coin-flip dressed up as

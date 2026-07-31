@@ -393,6 +393,37 @@ a real (possibly slow) mpc2emu conversion, only to have it rejected
 afterward once New Bank refuses to mix formats. Clear New Bank (or send
 it to Pending first) to import as the other format instead.
 
+**Stereo Samples** — what happens to stereo source samples, as a plain
+(always-visible) row above the collapsible sections:
+
+- **Keep Stereo** (the default) — stereo survives the whole pipeline
+  into the E4B output. Note this is an **E4B-only** capability: the KRZ
+  and EIII writers still downmix regardless of this setting, since
+  mpc2emu doesn't emit stereo for those formats yet.
+- **Reduce to Mono — Mix / Left channel only / Right channel only** —
+  a deliberate size reduction (it halves every stereo sample), in the
+  same spirit as the vintage-fit options below it.
+
+**Mix averages both sides, which cancels signal on decorrelated
+stereo content** — and that is the common case, not an edge case:
+across 247 real stereo E-mu samples mpc2emu measured a median channel
+correlation of just 0.076. Picking one side instead can never cancel
+anything; it only costs you the other channel.
+
+The **Test** button checks the samples this conversion would actually
+run on, and for Mix reports how many have decorrelated channels, names
+the worst offender with its correlation, and suggests a side. If you
+click OK on Mix without having tested, the dialog checks then and asks
+you to confirm, offering **Go Ahead Anyway**, **Use Left/Right
+Instead**, or **Go Back**. The suggested side comes from a rough
+average-loudness comparison and is deliberately presented as a nudge,
+not a verdict — mpc2emu investigated automating that choice and
+[explicitly declined to ship it](https://github.com/lentferj/mpc2emu/commit/db5d599),
+having found every signal it measured (dead channel, high correlation,
+one-sided clipping) either never fired or came down to about 1 dB of
+RMS asymmetry: "a coin-flip dressed up as intelligence". Getting the
+side "wrong" costs a little level; Mix can cost you the audio.
+
 Below that, three independent, collapsible sections:
 
 - **Vintage Resample** — pick `EMU Emulator II` (8-bit µ-law companded,
@@ -533,6 +564,10 @@ main queue and the per-bank contents list in Pending for Image.
 | Some coverage-remapped KRZ presets can't be re-processed | ⚠️ a real mpc2emu bug (`writers/krz_writer.py`, tracked in mpc2emu's own TODO): a preset needing the octave-slice-stack "coverage remap" rebuild can crash on write when reprocessed; most real content is unaffected — VinSamLib surfaces the real error if it happens rather than silently failing |
 | Gotek floppy images | ⚠️ create-only — not appendable (a real FAT12 floppy constraint, not a bug) |
 | Aggressive `reduce_velocity_layers_pct` can collapse key-range coverage | ⚠️ a real mpc2emu `zone_reducer` finding from hardware confirmation (2026-07-28): a 75% reduction on a dense real multi-zone preset collapsed coverage from the full keyboard down to a single surviving 4-semitone zone, rather than thinning velocity layers while preserving spread across keys — disproportionate for what's meant to be a velocity-only reduction. Not yet root-caused; tracked in mpc2emu's own TODO. Lower percentages (confirmed up to 40-50%) behave as expected |
+| Stereo samples — E4B | ✅ kept in stereo end-to-end (Convert Options → Stereo Samples, default **Keep Stereo**), or reduced to mono on purpose as a vintage-fit/size step. **Hardware-confirmed 2026-07-31** on a real E4XT, and confirmed by *measurement* rather than by ear: a stereo bank loads and plays as stereo with the correct channel order (a left-only key measured L 440 Hz / R silent, rms 0.092 vs 0.00006; a split-pitch key measured 440 Hz left / 659 Hz right — mpc2emu `0868233`). This was the one part of the E4B stereo RE that no offline work could settle |
+| Stereo samples — KRZ / EIII | ⚠️ **always downmixed**, whatever the Stereo Samples setting says — mpc2emu's KRZ and EIII writers downmix explicitly rather than emitting stereo, which those formats' encodings aren't implemented for yet. The setting still controls *how* (Mix vs. picking a side) for E4B; for KRZ/EIII targets it's mpc2emu's own averaging downmix. **Tracked as an open TODO** — the work is upstream in mpc2emu's `writers/krz_writer.py`/`writers/eiii_writer.py`, which downmix explicitly (and log it) rather than emitting stereo; VinSamLib only passes the choice through and can't fix it on its own side |
+| Hard-panned voices lose the stereo image on hardware | ⚠️ an E4XT behavior, corrected against real measurement 2026-07-31 (mpc2emu `0868233`): per-voice **pan mono-sums** a stereo voice onto the pan position — it does not balance it and does not discard a channel, as previously believed from a by-ear report. At hard left, the left output carries both channels' content and the right is silent. So a preset kept in stereo but carrying an extreme per-voice pan costs the stereo **image**, not the content; keeping stereo voices centred is the fix. VinSamLib never sets pan itself — it only passes through whatever the source preset already had |
+| Averaging downmix (Mix) can cancel signal | ⚠️ inherent to averaging, not a bug: decorrelated channels partially or fully cancel when summed, and across 247 real stereo E-mu samples mpc2emu measured a median channel correlation of only 0.076. The Convert Options dialog's **Test** button and its OK-time confirmation exist to surface this per-sample before you commit; **Left**/**Right** avoid it entirely |
 | Real hardware confirmation — E4B / EIII | ✅ **confirmed 2026-07-28** on real E-mu E4XT hardware (via ZuluSCSI): building a bank, sending it through Pending for Image, and building/appending it onto a real EMU3 disk image — including the new EIII-on-image capability — all load and play correctly, for every vintage resample profile and reduce combination in the project's own HW confirmation matrix (`tests/manual_hw_convert_matrix.py`) |
 | Real hardware confirmation — KRZ / K2000R | ⏳ **pending** — not yet tested by loading a VinSamLib-built image onto a real K2000R. Considered **very likely to work**: VinSamLib's KRZ image writing goes entirely through mpc2emu's own K2000 disk builders (no VinSamLib-specific KRZ write logic of its own), and mpc2emu's KRZ writer already carries its own separate, real K2000R/Gotek hardware confirmation (filters, envelopes, LFOs — see [mpc2emu's own DISCLAIMER.md](https://github.com/lentferj/mpc2emu/blob/main/DISCLAIMER.md)) — this row will be updated once VinSamLib's own K2000R test is actually run |
 
