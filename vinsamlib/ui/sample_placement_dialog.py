@@ -10,11 +10,15 @@ cases it isn't.
 A simple box matrix -- one row per sample, columns Sample / Low / Root /
 High -- next to an 88-key piano image coloring each sample's range in
 its own color (same color both places). Rows are kept sorted low-to-high
-and reorder live if an edit changes that relative order. Overlapping
-ranges are flagged by turning the offending rows' note fields red -- a
-warning only, never blocking OK/Continue (real hardware samplers do
-sometimes use intentional overlapping zones for layering, so this stays
-the user's judgment call, not an error mpc2emu or VinSamLib enforces).
+and reorder live if an edit changes that relative order. Two kinds of
+trouble are flagged by tinting the offending rows' note fields: ranges
+that overlap each other (light red) and rows that aren't a playable zone
+at all -- low above high, or a root outside its own range (stronger
+red). Both are warnings only, never blocking OK/Continue: real hardware
+samplers do sometimes use intentional overlapping zones for layering, so
+that stays the user's judgment call rather than an error mpc2emu or
+VinSamLib enforces, and the same "show, don't block" rule is kept for
+the unplayable case so one bad row can't trap a user in the dialog.
 """
 
 from __future__ import annotations
@@ -38,6 +42,15 @@ MIDI_MIN, MIDI_MAX = 0, 127
 # Two ranges [lo1,hi1]/[lo2,hi2] overlap iff lo1 <= hi2 and lo2 <= hi1 --
 # the standard interval-intersection test.
 _OVERLAP_BG = "#ffb3b3"
+
+# A row whose own numbers don't form a playable zone: lo above hi (an
+# inverted, empty range), or a root note outside the range it belongs to.
+# Deliberately a stronger red than _OVERLAP_BG: overlapping zones are a
+# legitimate layering technique, but these never sound on real hardware,
+# and note that the interval test above can NEVER flag an inverted range
+# (lo > hi fails both of its comparisons), so this is not redundant with
+# it. Still only a warning -- OK stays enabled, same as for overlaps.
+_INVALID_BG = "#ff6b6b"
 
 
 def _contrasting_text(color: QColor) -> QColor:
@@ -103,8 +116,10 @@ class SamplePlacementDialog(QDialog):
         info = QLabel(
             "Override each sample's key range and root note. Rows stay "
             "sorted low to high and reorder automatically if an edit "
-            "changes that order. Overlapping ranges turn red -- a "
-            "warning only; OK still applies whatever is shown.")
+            "changes that order. Overlapping ranges turn light red; a row "
+            "that can never sound (low above high, or a root outside its "
+            "own range) turns a stronger red. Both are warnings only -- OK "
+            "still applies whatever is shown.")
         info.setWordWrap(True)
         info.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(info)
@@ -149,7 +164,7 @@ class SamplePlacementDialog(QDialog):
                 self._table.setCellWidget(r, col, spin)
                 if focus == (row["name"], col):
                     spin.setFocus()
-        self._refresh_overlaps()
+        self._refresh_warnings()
         self._refresh_piano()
 
     def _on_value_changed(self, name: str, key: str, value: int) -> None:
@@ -168,10 +183,10 @@ class SamplePlacementDialog(QDialog):
         else:
             # Same order: update styling/piano in place, without touching
             # any widget identity (avoids stealing focus/clicks mid-edit).
-            self._refresh_overlaps()
+            self._refresh_warnings()
             self._refresh_piano()
 
-    def _refresh_overlaps(self) -> None:
+    def _refresh_warnings(self) -> None:
         n = len(self._rows)
         overlapping = set()
         for i in range(n):
@@ -181,8 +196,15 @@ class SamplePlacementDialog(QDialog):
                 if a["lo"] <= b["hi"] and b["lo"] <= a["hi"]:
                     overlapping.add(a["name"])
                     overlapping.add(b["name"])
+        invalid = {row["name"] for row in self._rows
+                   if row["lo"] > row["hi"] or not (row["lo"] <= row["root"] <= row["hi"])}
         for r, row in enumerate(self._rows):
-            style = f"background-color: {_OVERLAP_BG};" if row["name"] in overlapping else ""
+            if row["name"] in invalid:
+                style = f"background-color: {_INVALID_BG};"
+            elif row["name"] in overlapping:
+                style = f"background-color: {_OVERLAP_BG};"
+            else:
+                style = ""
             for col in (1, 2, 3):
                 widget = self._table.cellWidget(r, col)
                 if widget is not None:
