@@ -447,9 +447,11 @@ What happens to stereo source samples, as a plain (always-visible) row
 above the collapsible sections:
 
 - **Keep Stereo** (the default) — stereo survives the whole pipeline
-  into the E4B output. Note this is an **E4B-only** capability: the KRZ
-  and EIII writers still downmix regardless of this setting, since
-  mpc2emu doesn't emit stereo for those formats yet.
+  into the E4B output. Note this is an **E4B-only** capability with a
+  released mpc2emu: its KRZ and EIII writers downmix regardless of this
+  setting. KRZ stereo does now exist upstream, on an unmerged mpc2emu
+  branch — a checkout sitting on that branch will pass stereo through to
+  a KRZ target, and this row becomes E4B **and** KRZ once it merges.
 - **Reduce to Mono — Mix / Left channel only / Right channel only** —
   a deliberate size reduction (it halves every stereo sample), in the
   same spirit as the vintage-fit options below it.
@@ -607,9 +609,12 @@ way, and the count is taken *after* mono reduction and the zone reducer
 have run, so it describes the file you actually got.
 
 **E4B only.** KRZ and EIII have their own, smaller voice budgets, but no
-per-note limit has been measured on either, and both still downmix to
-mono anyway, so the stereo cost cannot bite there — mpc2emu leaves them
-out rather than warn on a guess, and so does this.
+per-note limit has been measured on either — mpc2emu leaves them out of
+its limit table rather than warn on a guess, and so does this. What gates
+the check is that missing measurement, not the fact that those targets
+currently downmix: KRZ stereo already exists on an unmerged mpc2emu
+branch, so the "no stereo, no doubled cost" half of the argument has a
+shelf life.
 
 ### Image Column
 
@@ -818,7 +823,7 @@ main queue and the per-bank contents list in Pending for Image.
 | Feature | Status |
 |---|---|
 | Stereo samples — E4B | ✅ kept in stereo end-to-end (Convert Options → Stereo Samples, default **Keep Stereo**), or reduced to mono on purpose as a vintage-fit/size step. **Hardware-confirmed 2026-07-31** on a real E4XT, and confirmed by *measurement* rather than by ear: a stereo bank loads and plays as stereo with the correct channel order (a left-only key measured L 440 Hz / R silent, rms 0.092 vs 0.00006; a split-pitch key measured 440 Hz left / 659 Hz right — mpc2emu `0868233`). This was the one part of the E4B stereo RE that no offline work could settle |
-| Stereo samples — KRZ / EIII | ⚠️ **always downmixed**, whatever the Stereo Samples setting says — mpc2emu's KRZ and EIII writers downmix explicitly rather than emitting stereo, which those formats' encodings aren't implemented for yet. The setting still controls *how* (Mix vs. picking a side) for E4B; for KRZ/EIII targets it's mpc2emu's own averaging downmix. **Tracked as an open TODO** — the work is upstream in mpc2emu's `writers/krz_writer.py`/`writers/eiii_writer.py`, which downmix explicitly (and log it) rather than emitting stereo; VinSamLib only passes the choice through and can't fix it on its own side |
+| Stereo samples — KRZ / EIII | ⚠️ **downmixed with a released mpc2emu**, whatever the Stereo Samples setting says: its KRZ and EIII writers downmix explicitly rather than emitting stereo. The setting still controls *how* (Mix vs. picking a side) for E4B; for KRZ/EIII targets it's mpc2emu's own averaging downmix. VinSamLib only passes the choice through and cannot fix this on its own side — the work is upstream in `writers/krz_writer.py`/`writers/eiii_writer.py`. **KRZ is close:** stereo read and write both exist on an unmerged mpc2emu branch (planar layout read off 533 real stereo samples in its own corpus, 51 byte-exact KRZ→KRZ round trips), pending a K2000R check of channel order. A checkout on that branch already writes stereo KRZ through VinSamLib. EIII remains open |
 | Hard-panned voices lose the stereo image on hardware | ⚠️ an E4XT behavior, corrected against real measurement 2026-07-31 (mpc2emu `0868233`): per-voice **pan mono-sums** a stereo voice onto the pan position — it does not balance it and does not discard a channel, as previously believed from a by-ear report. At hard left, the left output carries both channels' content and the right is silent. So a preset kept in stereo but carrying an extreme per-voice pan costs the stereo **image**, not the content; keeping stereo voices centred is the fix. VinSamLib never sets pan itself — it only passes through whatever the source preset already had |
 | Averaging downmix (Mix) can cancel signal | ⚠️ inherent to averaging, not a bug: decorrelated channels partially or fully cancel when summed, and across 247 real stereo E-mu samples mpc2emu measured a median channel correlation of only 0.076. The Convert Options dialog's **Test** button and its OK-time confirmation exist to surface this per-sample before you commit; **Left**/**Right** avoid it entirely |
 

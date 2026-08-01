@@ -11,8 +11,10 @@ file, producing a NEW temp file -- the input file itself is never mutated.
 E4B, KRZ and EIII are all readable *inputs*: mpc2emu's parsers.krz_parser
 (added 2026-07-27, corpus-verified against 593 real .KRZ files) made KRZ
 a real source format, and parsers.eiii_parser (added 2026-07-28,
-corpus-verified against 1118 real EIII/EIIIX/ESI banks) does the same for
-EIII. The *output* format is a free, independent choice (target_format)
+corpus-verified against 1118 real EIII/EIIIX/ESI bank images, all parsing
+cleanly -- 1017 of them are the directory-listed banks of those discs, the
+rest deleted banks still physically present in free space, per mpc2emu's
+2026-08-01 filesystem audit) does the same for EIII. The *output* format is a free, independent choice (target_format)
 regardless of source -- any of the three can go to any of the three, all
 through the identical reduce/resample/write pipeline. _sniff_format()
 below reads the real on-disk magic bytes to pick the right parser rather
@@ -222,9 +224,11 @@ def polyphony_risk(bank: Any, target_format: str) -> list[dict]:
     of a measured hardware law it could drift away from.
 
     E4B only: KRZ and EIII have their own, smaller voice budgets, but no
-    per-note limit has been measured on either, and both still downmix to
-    mono anyway, so the stereo cost can't bite there. mpc2emu leaves them out
-    rather than warn on a guess, and so does this.
+    per-note limit has been measured on either, so mpc2emu leaves them out
+    of its limit table rather than warn on a guess, and so does this. The
+    second half of that argument -- that both downmix to mono anyway, so the
+    stereo cost cannot bite -- is expiring: KRZ stereo exists on an unmerged
+    mpc2emu branch. The measurement is what gates this, not the downmix.
 
     Returns one dict per over-budget preset: {"preset", "voices", "limit",
     "key" (note name), "velocity", "stereo", "samples"} -- empty when the
