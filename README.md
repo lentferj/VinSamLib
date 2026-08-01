@@ -518,6 +518,22 @@ subtracted from each voice's volume so loudness stays put across pan —
 roughly what SFZ and SF2 sources assume, so it restores the balance the
 source author actually heard rather than the instrument's behaviour.
 
+**The correction itself is hardware-verified**, not just the problem it
+fixes: mpc2emu played two banks built from one source differing only in
+this flag through an E4XT and measured both.
+
+| pan | off (hardware law) | on (constant power) |
+|---|---|---|
+| 0.25 | +1.07 dB | −0.40 dB |
+| 0.50 | +2.88 dB | −0.36 dB |
+| 0.75 | +3.94 dB | −0.28 dB |
+| 1.00 | +4.32 dB | −0.47 dB |
+
+Worst deviation from flat is **0.47 dB**, against 4.32 dB uncompensated —
+a 9× reduction, and close to the ±0.25 dB predicted beforehand. What's
+left is not error but quantisation: the E4B volume field steps in about
+0.767 dB, so a correction can only ever land on the nearest step.
+
 Note this is **one-way**, which is why it's opt-in rather than an
 always-on correction like the cutoff and zone-gain fixes: those fix a
 *mapping* and mpc2emu's parser inverts them exactly on read-back, whereas
