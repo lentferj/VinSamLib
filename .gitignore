@@ -11,6 +11,10 @@ __pycache__/
 CLAUDE.md
 .claude/
 
+# Sibling-project review notes (mpc2emu, eosed): maintenance bookkeeping
+# about checkouts only on this machine, not documentation of this project.
+docs/UPSTREAM_*.md
+
 # Manual test/verification scripts and hardware-confirmation tooling —
 # hardcoded to the author's own local library paths, not distributable,
 # not needed to run or develop the app itself (mirrors mpc2emu's own
