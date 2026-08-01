@@ -357,7 +357,15 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]]) -> bytes:
         for zone_off, old_idx in preset.zone_refs:
             samp = src.samples.get(old_idx)
             if samp is None:
-                continue   # dangling reference (ROM sample / corrupt source); leave byte as-is
+                # Dangling reference: leave the byte exactly as it is. Not
+                # necessarily damage — the sibling eosed project measured an
+                # E4XT leaving every voice pointing at its old sample number
+                # after erasing all RAM samples, so "this voice plays sample
+                # N" and "sample N exists" are independent questions on real
+                # hardware. Also covers a ROM sample and the empty-zone
+                # sentinels (3FFFh/3FFEh), which resolve to no sample here
+                # and must survive into the new bank unrewritten.
+                continue
             key = (samp.name, samp.body)
             new_idx = dedupe_key_to_new_idx.get(key)
             if new_idx is None:
