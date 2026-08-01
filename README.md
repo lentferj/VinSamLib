@@ -144,6 +144,15 @@ that from the names themselves, and override any sample's key range or
 root by hand — against an 88-key piano — when the automatic split isn't
 what you wanted.
 
+### Catch presets that will lose layers before the hardware does
+
+Every conversion that runs through mpc2emu is checked for presets that
+stack more voices on one *note* than an E4XT can sound — a ceiling no
+size check can see, where the extra layers aren't quiet but **stolen**.
+Both numbers behind it were measured on real hardware: a stereo sample
+costs two voices, and the limit is per note, not the 128-voice global
+polyphony. See [Voice budget warning](#voice-budget-warning).
+
 ---
 
 ## Requirements
@@ -554,6 +563,37 @@ Leaving every section untouched is recognised as a genuine no-op, and
 when the source and target formats also match, the mpc2emu round trip is
 skipped entirely rather than needlessly re-encoding the bank through
 mpc2emu's model.
+
+#### Voice budget warning
+
+Every conversion that goes through mpc2emu — XPM import, sample-folder
+import, "Import via mpc2emu", and a per-bank conversion in Pending for
+Image — is checked afterwards for presets that stack more voices on a
+**single note** than the hardware will sound, and warns naming the preset,
+the note, and the velocity.
+
+This is a separate ceiling from size, so no size check can catch it: a
+preset can be tiny in bytes and still over budget. Over the limit the
+extra voices are not merely quiet, they are **stolen**, and which layers
+survive is the hardware's choice, so an over-budget preset plays back
+differently than it looks.
+
+Two numbers behind it, both measured on an E4XT: a **stereo sample costs
+two voices**, and the ceiling is about **32 voices per note** rather than
+the E4XT's 128-voice global polyphony (32 voices on each of four separate
+keys all sound). It bites hardest since stereo became the default —
+presets that used to be downmixed now carry twice the voice cost.
+
+The fixes are both in this same dialog: **Reduce Velocity Layers**, or any
+Stereo Samples method other than Keep Stereo, which halves every stereo
+zone's cost. The warning is never blocking: the bank is written either
+way, and the count is taken *after* mono reduction and the zone reducer
+have run, so it describes the file you actually got.
+
+**E4B only.** KRZ and EIII have their own, smaller voice budgets, but no
+per-note limit has been measured on either, and both still downmix to
+mono anyway, so the stereo cost cannot bite there — mpc2emu leaves them
+out rather than warn on a guess, and so does this.
 
 ### Image Column
 

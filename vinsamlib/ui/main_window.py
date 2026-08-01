@@ -52,6 +52,9 @@ class MainWindow(QMainWindow):
         self._preset_convert_worker: workers.Worker | None = None
         self._preset_convert_queue: list = []
         self._preset_convert_opts: Optional[convert.ConversionOptions] = None
+        # Accumulated across a whole queue, reported once when it drains --
+        # converting 20 presets at once must not mean 20 modal warnings.
+        self._preset_convert_risks: list = []
 
         self._model = LibraryTreeModel(list(config.library_roots))
 
@@ -273,8 +276,10 @@ class MainWindow(QMainWindow):
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
-        w = workers.Worker(xpm_import.import_xpm, path, opts)
-        w.signals.finished.connect(lambda tmp_path, p=path: self._on_xpm_imported(tmp_path, p, opts))
+        risks: list = []
+        w = workers.Worker(xpm_import.import_xpm, path, opts, None, risks)
+        w.signals.finished.connect(
+            lambda tmp_path, p=path, r=risks: self._on_xpm_imported(tmp_path, p, opts, r))
         w.signals.error.connect(self._on_xpm_import_error)
         w.signals.finished.connect(lambda *_: setattr(self, "_xpm_import_worker", None))
         w.signals.error.connect(lambda *_: setattr(self, "_xpm_import_worker", None))
@@ -282,7 +287,8 @@ class MainWindow(QMainWindow):
         workers.run(w)
 
     def _on_xpm_imported(self, tmp_path: str, xpm_path: str,
-                          opts: convert.ConversionOptions) -> None:
+                          opts: convert.ConversionOptions,
+                          risks: Optional[list] = None) -> None:
         # No save dialog, no library folder at all -- an XPM always holds
         # exactly one preset (mpc2emu's own parse_xpm() appends exactly
         # one Preset, never more; see its docstring), so it belongs in New
@@ -322,6 +328,28 @@ class MainWindow(QMainWindow):
         # a second distinct item.
         name = Path(xpm_path).stem or preset.name.strip() or "Imported XPM"
         self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
+        self._warn_polyphony(risks or [], "Import XPM")
+
+    def _warn_polyphony(self, risks: list, title: str) -> None:
+        """Per-note voice budget, reported after a conversion rather than
+        before it: the count only becomes final once mono reduction and the
+        zone reducer have run (see build/convert.py's polyphony_risk()).
+        The import still lands in New Bank either way -- an over-budget
+        preset is playable, it just won't sound every layer, and only the
+        user can decide whether that matters for this material."""
+        if not risks:
+            return
+        lines = convert.polyphony_risk_lines(risks)
+        self.statusBar().showMessage(
+            f"{len(lines)} preset(s) over the per-note voice limit", 8000)
+        QMessageBox.warning(
+            self, title,
+            "\n\n".join(lines)
+            + "\n\nMeasured on an E4XT: a stereo sample costs two voices, and "
+              "the ceiling is per NOTE, not the 128-voice global polyphony.\n\n"
+              "To fix, re-import with Convert Options' \"Reduce Velocity "
+              "Layers\", or pick a Stereo Samples method other than Keep "
+              "Stereo to halve every stereo zone's cost.")
 
     def _on_xpm_import_error(self, message: str) -> None:
         last_line = message.strip().splitlines()[-1] if message else "error"
@@ -352,8 +380,11 @@ class MainWindow(QMainWindow):
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
-        w = workers.Worker(sampledir_import.import_sample_dir, path, opts, octave_offset, zone_overrides)
-        w.signals.finished.connect(lambda tmp_path, p=path: self._on_sample_dir_imported(tmp_path, p, opts))
+        risks: list = []
+        w = workers.Worker(sampledir_import.import_sample_dir, path, opts,
+                           octave_offset, zone_overrides, risks)
+        w.signals.finished.connect(
+            lambda tmp_path, p=path, r=risks: self._on_sample_dir_imported(tmp_path, p, opts, r))
         w.signals.error.connect(self._on_sample_dir_import_error)
         w.signals.finished.connect(lambda *_: setattr(self, "_sample_dir_import_worker", None))
         w.signals.error.connect(lambda *_: setattr(self, "_sample_dir_import_worker", None))
@@ -361,7 +392,8 @@ class MainWindow(QMainWindow):
         workers.run(w)
 
     def _on_sample_dir_imported(self, tmp_path: str, dir_path: str,
-                                 opts: convert.ConversionOptions) -> None:
+                                 opts: convert.ConversionOptions,
+                                 risks: Optional[list] = None) -> None:
         # Same "single preset, straight into New Bank" landing as XPM
         # import -- parse_sample_dir() always produces exactly one
         # multisampled preset per folder, never a whole bank of its own.
@@ -371,6 +403,7 @@ class MainWindow(QMainWindow):
         bank, preset = result
         name = Path(dir_path).name or preset.name.strip() or "Imported Samples"
         self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
+        self._warn_polyphony(risks or [], "Import Sample Folder")
 
     def _on_sample_dir_import_error(self, message: str) -> None:
         last_line = message.strip().splitlines()[-1] if message else "error"
@@ -456,16 +489,22 @@ class MainWindow(QMainWindow):
             return
         self._preset_convert_queue = list(nodes)
         self._preset_convert_opts = opts
+        self._preset_convert_risks = []
         self._run_next_preset_conversion()
 
     def _run_next_preset_conversion(self) -> None:
         if not self._preset_convert_queue:
+            # Queue drained (this is also the path a failed last conversion
+            # takes) -- report the whole batch's voice-budget findings once.
+            risks, self._preset_convert_risks = self._preset_convert_risks, []
+            self._warn_polyphony(risks, "Import via mpc2emu")
             return
         node = self._preset_convert_queue.pop(0)
         opts = self._preset_convert_opts
         bank, preset_obj = node.payload
         self.statusBar().showMessage(f"Converting {node.label}…")
-        w = workers.Worker(convert.convert_preset, bank, preset_obj, opts)
+        w = workers.Worker(convert.convert_preset, bank, preset_obj, opts,
+                           self._preset_convert_risks)
         w.signals.finished.connect(
             lambda tmp_path, n=node, o=opts: self._on_preset_converted(tmp_path, n, o))
         w.signals.error.connect(self._on_preset_convert_error)

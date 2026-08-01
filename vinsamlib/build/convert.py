@@ -36,9 +36,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from ..mpc2emu_bridge import (e4b_parser, e4b_writer, eiii_parser, eiii_writer,
-                                krz_parser, krz_writer, models_common, resampler,
-                                start_trim, tail_trim, zone_reducer)
+from ..mpc2emu_bridge import (bank_splitter, e4b_parser, e4b_writer, eiii_parser,
+                                eiii_writer, krz_parser, krz_writer, models_common,
+                                resampler, start_trim, tail_trim, zone_reducer)
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
@@ -200,6 +200,79 @@ def stereo_mono_risk(samples: list, method: str = "mix") -> dict:
     return {"stereo_count": len(stereo), "decorrelated": decorrelated, "worst_r": worst_r}
 
 
+def _note_name(midi: int) -> str:
+    names = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+    return f"{names[midi % 12]}{midi // 12 - 1}"
+
+
+def polyphony_risk(bank: Any, target_format: str) -> list[dict]:
+    """Presets that stack more voices on a SINGLE note than the hardware
+    can sound. Over that ceiling the extra voices aren't merely quiet --
+    they're stolen, and which layers survive is the hardware's choice, so
+    this is silent damage a size check can never catch: a preset can be
+    tiny in bytes and still over budget.
+
+    Both facts behind it were measured on the E4XT on 2026-07-31 and reached
+    mpc2emu's own sizing path in its 6b12209: a STEREO sample costs TWO
+    voices, and the ceiling is ~32 voices per NOTE rather than the E4XT's
+    128-voice global polyphony. The counting itself (bank_splitter's
+    peak_note_voices(), which sweeps key x velocity, and knows that zones
+    inside one voice layer don't stack) and the limit itself are read out of
+    mpc2emu rather than reimplemented here -- VinSamLib holds no second copy
+    of a measured hardware law it could drift away from.
+
+    E4B only: KRZ and EIII have their own, smaller voice budgets, but no
+    per-note limit has been measured on either, and both still downmix to
+    mono anyway, so the stereo cost can't bite there. mpc2emu leaves them out
+    rather than warn on a guess, and so does this.
+
+    Returns one dict per over-budget preset: {"preset", "voices", "limit",
+    "key" (note name), "velocity", "stereo", "samples"} -- empty when the
+    format has no measured limit, or nothing is over it."""
+    if target_format != "E4B":
+        return []
+    # Private in mpc2emu, deliberately read rather than copied: 32 is a
+    # measured number, and the one thing worse than reaching into a private
+    # name is silently disagreeing with the measurement it came from. Absent
+    # (an older mpc2emu checkout) simply means no check.
+    limit = getattr(bank_splitter, "_VOICES_PER_NOTE", {}).get("e4b")
+    if not limit:
+        return []
+
+    out: list[dict] = []
+    for preset in bank.presets:
+        needed = bank_splitter.preset_needed_samples(preset, bank.samples)
+        voices, key, vel = bank_splitter.peak_note_voices(preset, needed)
+        if voices <= limit:
+            continue
+        out.append({
+            "preset": preset.name,
+            "voices": voices,
+            "limit": limit,
+            "key": _note_name(key),
+            "velocity": vel,
+            "stereo": sum(1 for s in needed
+                          if bank_splitter.sample_voice_cost(s) > 1),
+            "samples": len(needed),
+        })
+    return out
+
+
+def polyphony_risk_lines(risks: list[dict]) -> list[str]:
+    """polyphony_risk() rendered for a GUI message box -- one line per
+    preset, naming the two Convert Options controls that actually fix it
+    (mpc2emu's own warning names its CLI flags, which don't exist here)."""
+    lines = []
+    for r in risks:
+        why = (f" ({r['stereo']} of {r['samples']} samples are stereo, and a "
+               f"stereo sample costs two voices)") if r["stereo"] else ""
+        lines.append(
+            f"\"{r['preset']}\" stacks {r['voices']} voices on {r['key']} at "
+            f"velocity {r['velocity']}, over the {r['limit']}-voice-per-note "
+            f"limit{why} -- the extra layers will be stolen on playback.")
+    return lines
+
+
 def suggest_mono_side(samples: list) -> dict:
     """Best-effort LEFT/RIGHT suggestion for when Mix is risky, based on
     average per-sample RMS loudness across the stereo samples given.
@@ -270,7 +343,8 @@ def load_sources_samples_for_test(sources: list, fmt: str) -> list:
     return load_samples_for_test(str(tmp_path))
 
 
-def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str) -> str:
+def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
+                     risks_out: Optional[list] = None) -> str:
     """Shared tail end of apply_conversion() and build/xpm_import.py's
     import_xpm(): both start from a different parse step (an already-
     native E4B vs. a foreign XPM) but from an already-parsed mpc2emu Bank
@@ -285,7 +359,12 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str) -> str:
     the slower vintage-resample step has fewer surviving samples to process.
     Pan law sits where convert.py puts it, just before mono, though nothing
     depends on that: it rewrites zone volumes while mono rewrites sample
-    data, so the two don't interact."""
+    data, so the two don't interact.
+
+    `risks_out`, when a list is passed, collects polyphony_risk() dicts for
+    the FINISHED bank -- an out-parameter rather than a second return value
+    so the three callers that don't care (and the workers that thread their
+    return value straight into the UI) keep the signature they have."""
     if opts.trim_start_db is not None:
         _run_captured(start_trim.trim_start_bank, bank,
                       thresh_db=-abs(opts.trim_start_db),
@@ -318,6 +397,12 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str) -> str:
 
     if opts.max_sample_rate:
         _run_captured(_apply_max_sample_rate, bank, opts.max_sample_rate)
+
+    # After every step, never before: --mono halves each stereo zone's voice
+    # cost and the zone reducer removes layers outright, so the only voice
+    # count worth reporting is the one the file being written actually has.
+    if risks_out is not None:
+        risks_out.extend(polyphony_risk(bank, opts.target_format))
 
     tmp_dir = Path(tempfile.mkdtemp(prefix=_CONVERT_TEMP_PREFIX))
     if opts.target_format == "KRZ":
@@ -356,20 +441,26 @@ def _parse_by_format(bank_path: str, fmt: str) -> Any:
     return _run_captured(e4b_parser.parse_e4b, bank_path)
 
 
-def apply_conversion(bank_path: str, opts: ConversionOptions) -> str:
+def apply_conversion(bank_path: str, opts: ConversionOptions,
+                     risks_out: Optional[list] = None) -> str:
     """Runs mpc2emu's own parse -> Bank -> resample/reduce -> write round
     trip on an already-assembled E4B, KRZ or EIII file, producing a NEW
     temp file (the original is never touched). Returns the new file's
     path -- or bank_path itself, unchanged, if every option is off and the
-    target format matches the source (a genuine no-op)."""
+    target format matches the source (a genuine no-op).
+
+    `risks_out` collects polyphony_risk() dicts (see _apply_and_write).
+    Deliberately left empty by the no-op path: nothing was converted, so
+    there is no conversion to warn about."""
     fmt = _sniff_format(bank_path)
     if opts.is_noop(fmt):
         return bank_path
     bank = _parse_by_format(bank_path, fmt)
-    return _apply_and_write(bank, opts, Path(bank_path).stem)
+    return _apply_and_write(bank, opts, Path(bank_path).stem, risks_out)
 
 
-def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions) -> str:
+def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
+                   risks_out: Optional[list] = None) -> str:
     """Applies mpc2emu resample/reduce/format-conversion to a SINGLE
     already-native preset/program, rather than a whole assembled bank --
     the same "convert via mpc2emu" pipeline offered for XPM import and
@@ -405,4 +496,4 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions) -> str:
     else:
         raise ConvertOpError(f"not a recognized E4B, KRZ or EIII bank: {type(bank)!r}")
     tmp_path.write_bytes(data)
-    return apply_conversion(str(tmp_path), opts)
+    return apply_conversion(str(tmp_path), opts, risks_out)

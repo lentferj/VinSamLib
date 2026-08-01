@@ -54,7 +54,8 @@ def parse_preview(dir_path: str, octave_offset: Optional[int] = None) -> Any:
 
 def import_sample_dir(dir_path: str, opts: ConversionOptions,
                        octave_offset: Optional[int] = None,
-                       zone_overrides: Optional[dict] = None) -> str:
+                       zone_overrides: Optional[dict] = None,
+                       risks_out: Optional[list] = None) -> str:
     """Parses a folder of WAV files (via mpc2emu's own parse_sample_dir)
     into a single multisampled preset and writes it out as a real E4B/
     KRZ/EIII bank file in a fresh temp dir, applying whatever resample/
@@ -73,7 +74,12 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
     function of dir_path/octave_offset, so the zone set it produces here
     is identical to whatever parse_preview() already showed the dialog.
     A zone whose sample_name isn't in the dict keeps its auto-computed
-    placement; None (the default) applies no overrides at all."""
+    placement; None (the default) applies no overrides at all.
+
+    risks_out: collects convert.polyphony_risk() dicts for the written
+    bank. Manual placement overrides feed straight into it -- widening
+    several zones over the same keys is exactly how a folder that placed
+    cleanly ends up stacking voices on one note."""
     bank = _run_captured(sampledir_parser.parse_sample_dir, dir_path,
                           octave_offset=octave_offset)
     if zone_overrides:
@@ -82,4 +88,4 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
                 override = zone_overrides.get(zone.sample_name)
                 if override is not None:
                     zone.lo_key, zone.root_key, zone.hi_key = override
-    return _apply_and_write(bank, opts, Path(dir_path).name)
+    return _apply_and_write(bank, opts, Path(dir_path).name, risks_out)

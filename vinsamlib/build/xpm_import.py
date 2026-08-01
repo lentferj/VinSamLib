@@ -90,7 +90,8 @@ def load_samples_for_test(xpm_path: str, wav_dir: Optional[str] = None) -> list:
     return bank.samples
 
 
-def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = None) -> str:
+def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = None,
+               risks_out: Optional[list] = None) -> str:
     """Parses an XPM program (via mpc2emu's own parse_xpm) and writes it
     out as a real E4B or KRZ bank file in a fresh temp dir, applying
     whatever resample/reduce options were chosen along the way -- see
@@ -99,8 +100,13 @@ def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = 
 
     wav_dir: directory to search for the XPM's referenced WAV/AIFF sample
     files if they aren't sitting right next to the .xpm (defaults to the
-    XPM's own directory, mpc2emu's own convention, when None)."""
+    XPM's own directory, mpc2emu's own convention, when None).
+
+    risks_out: collects convert.polyphony_risk() dicts for the written bank.
+    An XPM is the likeliest source to trip it -- an MPC keygroup program
+    stacks up to four layers per pad by design, and every stereo one of them
+    costs two E4B voices."""
     if wav_dir is None:
         wav_dir = str(Path(xpm_path).resolve().parent)
     bank = _run_captured(xpm_parser.parse_xpm, xpm_path, wav_dir)
-    return _apply_and_write(bank, opts, Path(xpm_path).stem)
+    return _apply_and_write(bank, opts, Path(xpm_path).stem, risks_out)

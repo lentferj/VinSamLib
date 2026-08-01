@@ -28,18 +28,19 @@ from typing import Any, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDialog,
-                             QLabel, QListWidget, QListWidgetItem, QMenu,
+                             QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox,
                              QPushButton, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import workers
 from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _sanitize_bank_name
 from .convert_options_dialog import ConvertOptionsDialog
-from ..build.convert import apply_conversion, load_sources_samples_for_test
+from ..build.convert import (apply_conversion, load_sources_samples_for_test,
+                              polyphony_risk_lines)
 
 _PENDING_TEMP_PREFIX = "vinsamlib_pending_"
 
 
-def _assemble_all(pending: list[dict]) -> list[str]:
+def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list[str]:
     """Runs off the GUI thread: assemble every pending bank's real bytes
     and write each to its own throwaway temp file, in order. Raising here
     (e.g. one bank's selection no longer resolves) aborts the whole build
@@ -70,7 +71,7 @@ def _assemble_all(pending: list[dict]) -> list[str]:
         final_path = str(tmp_path)
         convert_opts = entry.get("convert_opts")
         if fmt == "E4B" and convert_opts is not None:
-            final_path = apply_conversion(final_path, convert_opts)
+            final_path = apply_conversion(final_path, convert_opts, risks_out)
         paths.append(final_path)
     return paths
 
@@ -414,15 +415,18 @@ class PendingBanksPane(QWidget):
         pending_snapshot = list(self._pending)
         self._build_btn.setEnabled(False)
         self.statusMessage.emit(f"Assembling {len(pending_snapshot)} pending bank(s)…")
-        w = workers.Worker(_assemble_all, pending_snapshot)
-        w.signals.finished.connect(lambda paths, f=fmt: self._on_build_assembled(paths, f))
+        risks: list = []
+        w = workers.Worker(_assemble_all, pending_snapshot, risks)
+        w.signals.finished.connect(
+            lambda paths, f=fmt, r=risks: self._on_build_assembled(paths, f, r))
         w.signals.error.connect(self._on_build_error)
         w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
         w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
         self._live_workers.append(w)
         workers.run(w)
 
-    def _on_build_assembled(self, paths: list[str], fmt: str) -> None:
+    def _on_build_assembled(self, paths: list[str], fmt: str,
+                             risks: Optional[list] = None) -> None:
         # Building no longer empties the queue automatically -- the temp
         # files handed to buildRequested are independent copies, so the
         # pending recipes stay available to rebuild, tweak, or send to a
@@ -430,6 +434,20 @@ class PendingBanksPane(QWidget):
         # it, same as New Bank's own explicit Clear button.
         self._build_btn.setEnabled(bool(self._pending))
         self.buildRequested.emit(paths, fmt)
+        # Voice-budget findings from the per-bank conversions above, if any
+        # bank had convert options set (see build/convert.py's
+        # polyphony_risk()) -- reported after the handoff, since the banks
+        # are perfectly buildable, they just won't sound every layer.
+        if risks:
+            lines = polyphony_risk_lines(risks)
+            QMessageBox.warning(
+                self, "Build Image",
+                "\n\n".join(lines)
+                + "\n\nMeasured on an E4XT: a stereo sample costs two voices, "
+                  "and the ceiling is per NOTE, not the 128-voice global "
+                  "polyphony. Convert Options' \"Reduce Velocity Layers\", or "
+                  "any Stereo Samples method other than Keep Stereo, brings it "
+                  "down.")
 
     def _on_build_error(self, message: str) -> None:
         self._build_btn.setEnabled(bool(self._pending))
