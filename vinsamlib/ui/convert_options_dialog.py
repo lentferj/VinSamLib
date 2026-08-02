@@ -423,10 +423,9 @@ class ConvertOptionsDialog(QDialog):
                 "Keeping stereo samples in stereo -- no cancellation risk, "
                 "but roughly doubles the size of every stereo sample "
                 "(mpc2emu's E4B writer stores both channels in one object; "
-                "a released mpc2emu still downmixes for KRZ and EIII "
-                "regardless of this setting -- KRZ stereo exists on an "
-                "unmerged branch, and a checkout on it passes stereo "
-                "through here too).")
+                "KRZ does too since 2026-08-02, so only EIII still "
+                "downmixes regardless of this setting -- an mpc2emu "
+                "checkout older than that downmixes KRZ as well).")
         elif self._current_mono_method() == "mix":
             self._stereo_result_label.setText(
                 "Averaging (Mix) can cancel signal on decorrelated stereo "

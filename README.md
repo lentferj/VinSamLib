@@ -146,8 +146,8 @@ what you wanted.
 
 ### Catch presets that will lose layers before the hardware does
 
-Every conversion that runs through mpc2emu is checked for presets that
-stack more voices on one *note* than an E4XT can sound — a ceiling no
+Every E4B conversion that runs through mpc2emu is checked for presets
+that stack more voices on one *note* than an E4XT can sound — a ceiling no
 size check can see, where the extra layers aren't quiet but **stolen**.
 Both numbers behind it were measured on real hardware: a stereo sample
 costs two voices, and the limit is per note, not the 128-voice global
@@ -447,11 +447,12 @@ What happens to stereo source samples, as a plain (always-visible) row
 above the collapsible sections:
 
 - **Keep Stereo** (the default) — stereo survives the whole pipeline
-  into the E4B output. Note this is an **E4B-only** capability with a
-  released mpc2emu: its KRZ and EIII writers downmix regardless of this
-  setting. KRZ stereo does now exist upstream, on an unmerged mpc2emu
-  branch — a checkout sitting on that branch will pass stereo through to
-  a KRZ target, and this row becomes E4B **and** KRZ once it merges.
+  into an **E4B or KRZ** output. **EIII** is the exception: its writer
+  still downmixes regardless of this setting. KRZ stereo landed in
+  mpc2emu on 2026-08-02 (`ff19e78`, hardware-confirmed on a K2000R,
+  header 0 = left), so an older checkout will still downmix it — the
+  capability arrives when you pull mpc2emu, not when you update
+  VinSamLib.
 - **Reduce to Mono — Mix / Left channel only / Right channel only** —
   a deliberate size reduction (it halves every stereo sample), in the
   same spirit as the vintage-fit options below it.
@@ -560,6 +561,16 @@ An independent step (not gated behind Vintage Resample also being on):
 clean-downsamples anything above the chosen rate. Only ever
 downsamples, never up.
 
+"Clean" became considerably cleaner in mpc2emu on 2026-08-02
+(`6bccce9`): the old two-pole prefilter was far too gentle for the job
+and let content above the new Nyquist fold back audibly — a full-scale
+sweep that should have come back silent aliased at −5.3 dB, and the same
+softness dulled the passband 3 dB at 8 kHz. It is now a
+Blackman-windowed sinc: −89.4 dB and flat to 9.5 kHz. This is the
+default path for KRZ output, so it applies to more banks than the
+opt-in name suggests. Vintage Resample is untouched — its aliasing is
+the point.
+
 #### Reduce Sample Count
 
 **Reduce Key Zones by** / **Reduce Velocity Layers by**, each an
@@ -611,10 +622,10 @@ have run, so it describes the file you actually got.
 **E4B only.** KRZ and EIII have their own, smaller voice budgets, but no
 per-note limit has been measured on either — mpc2emu leaves them out of
 its limit table rather than warn on a guess, and so does this. What gates
-the check is that missing measurement, not the fact that those targets
-currently downmix: KRZ stereo already exists on an unmerged mpc2emu
-branch, so the "no stereo, no doubled cost" half of the argument has a
-shelf life.
+the check is that missing measurement, and nothing else: since KRZ gained
+stereo output (2026-08-02) a KRZ bank carries the doubled voice cost too,
+unwarned, and whether a K2000 even has a per-note ceiling is itself
+unmeasured. The check extends to KRZ when that number exists.
 
 ### Image Column
 
@@ -696,9 +707,19 @@ export first. Each file's **root note comes from its filename**
 (`Piano C3.wav`, `Cello-A#2.wav`, `Pad_60.wav`), and mpc2emu's
 `parse_sample_dir` maps every sample to the keys nearest its own root,
 splitting at the midpoints between adjacent roots and key-tracking across
-each span. The result is one multisampled preset, landing straight in New
-Bank under the folder's name — exactly the way XPM import lands one
-preset, never a whole bank of its own.
+each span. Files that end up sharing a root — a folder of drum one-shots,
+where no filename names a pitch and everything lands on the default root
+— are spread onto consecutive keys instead, one per key, each root moving
+with its sample so nothing plays transposed. The result is one
+multisampled preset, landing straight in New Bank under the folder's
+name — exactly the way XPM import lands one preset, never a whole bank of
+its own.
+
+**Targeting KRZ:** a multisampled *KRZ* program currently plays only its
+first sample on a real K2000 — see [Known
+Limitations](#conversion-sources-and-scope). Nothing here warns about it,
+and the bank is written correctly; the instrument is what ignores the
+per-key assignment.
 
 It is offered **only from the File menu**, never from an Explorer
 right-click. Unlike an `.xpm` file or an already-native preset, a folder
@@ -710,6 +731,13 @@ the same target-format picker, and the same Trim Silence,
 Constant-Power Pan Compensation, Stereo Samples, Vintage Resample and
 reduction sections, all behaving identically — plus two controls that
 only make sense for a bare WAV folder.
+
+**Which WAVs are readable** widened on 2026-08-02 (mpc2emu `07aea81`,
+`780eab3`): 32-bit float and 32-bit integer PCM, and
+`WAVE_FORMAT_EXTENSIBLE` — the usual encoding a modern DAW writes for
+24-bit — used to be rejected outright, taking the file out of the
+import with an error. All three now load. FLAC is deliberately not
+supported and won't be; convert it beforehand.
 
 **Middle C is:** decides where MIDI 60 falls for filenames that name an
 octave — `C3` (the K2000 and most vintage samplers), `C4` (general MIDI),
@@ -802,6 +830,7 @@ main queue and the per-bank contents list in Pending for Image.
 | Feature | Status |
 |---|---|
 | KRZ as a conversion *source* | ✅ mpc2emu's own KRZ reader (added 2026-07-27, corpus-verified against 593 real files) made this possible — KRZ presets/programs can now be converted the same way E4B ones can, via Explorer's "Import via mpc2emu…" |
+| Multisample KRZ output plays only its first sample | ⚠️ **a K2000 behaviour, found on hardware 2026-08-02** (mpc2emu §KRZKEYMAP): a KRZ keymap that puts *different* samples on adjacent keys plays only the **first** one, key-tracked across the whole range — audible as one sample rising in pitch. The file itself is written correctly; the instrument does not honour the per-entry assignment. This hits anything that produces a multisampled KRZ program — **Import Sample Folder** with KRZ as the target, and any multi-zone preset converted to KRZ — while single-sample programs are unaffected. Not root-caused: mpc2emu's keymap is byte-comparable to real multi-sample ones on every field checkable offline (method `0x13`, the 28-byte header, the 5-byte entry layout), and whether a *commercial* bank does per-key assignment on that same K2000R has never been measured. Workaround: one sample per program. E4B and EIII targets are unaffected |
 | Per-bank KRZ/EIII conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for both now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ/EIII queues yet |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
 | Some coverage-remapped KRZ presets can't be re-processed | ⚠️ a real mpc2emu bug (`writers/krz_writer.py`, tracked in mpc2emu's own TODO): a preset needing the octave-slice-stack "coverage remap" rebuild can crash on write when reprocessed; most real content is unaffected — VinSamLib surfaces the real error if it happens rather than silently failing |
@@ -823,7 +852,8 @@ main queue and the per-bank contents list in Pending for Image.
 | Feature | Status |
 |---|---|
 | Stereo samples — E4B | ✅ kept in stereo end-to-end (Convert Options → Stereo Samples, default **Keep Stereo**), or reduced to mono on purpose as a vintage-fit/size step. **Hardware-confirmed 2026-07-31** on a real E4XT, and confirmed by *measurement* rather than by ear: a stereo bank loads and plays as stereo with the correct channel order (a left-only key measured L 440 Hz / R silent, rms 0.092 vs 0.00006; a split-pitch key measured 440 Hz left / 659 Hz right — mpc2emu `0868233`). This was the one part of the E4B stereo RE that no offline work could settle |
-| Stereo samples — KRZ / EIII | ⚠️ **downmixed with a released mpc2emu**, whatever the Stereo Samples setting says: its KRZ and EIII writers downmix explicitly rather than emitting stereo. The setting still controls *how* (Mix vs. picking a side) for E4B; for KRZ/EIII targets it's mpc2emu's own averaging downmix. VinSamLib only passes the choice through and cannot fix this on its own side — the work is upstream in `writers/krz_writer.py`/`writers/eiii_writer.py`. **KRZ is close:** stereo read and write both exist on an unmerged mpc2emu branch (planar layout read off 533 real stereo samples in its own corpus, 51 byte-exact KRZ→KRZ round trips), pending a K2000R check of channel order. A checkout on that branch already writes stereo KRZ through VinSamLib. EIII remains open |
+| Stereo samples — KRZ | ✅ since mpc2emu `ff19e78` (2026-08-02) — **hardware-confirmed on a K2000R**: two planar `Soundfilehead` blocks, the `LYR[8]` `0x20` stereo marker, a keymap id in *both* `CAL` slots (one per channel), and the HOB `0x52`/`0x53` channel routing; a 440/660 sample measured 440 on the left output and 660 on the right, so header 0 is the left channel. Read side too — 51 byte-exact KRZ→KRZ round trips, and mono output is byte-identical to before. **Needs a current mpc2emu checkout:** an older one downmixes, and nothing on VinSamLib's side can tell you which you have |
+| Stereo samples — EIII | ⚠️ **downmixed**, whatever the Stereo Samples setting says: `writers/eiii_writer.py` calls `ensure_mono()` explicitly rather than emitting stereo. The setting still controls *how* (Mix vs. picking a side) for E4B and KRZ; for an EIII target it's mpc2emu's own averaging downmix. VinSamLib only passes the choice through and cannot fix this on its own side — the work is upstream, and KRZ is the precedent for how it gets done |
 | Hard-panned voices lose the stereo image on hardware | ⚠️ an E4XT behavior, corrected against real measurement 2026-07-31 (mpc2emu `0868233`): per-voice **pan mono-sums** a stereo voice onto the pan position — it does not balance it and does not discard a channel, as previously believed from a by-ear report. At hard left, the left output carries both channels' content and the right is silent. So a preset kept in stereo but carrying an extreme per-voice pan costs the stereo **image**, not the content; keeping stereo voices centred is the fix. VinSamLib never sets pan itself — it only passes through whatever the source preset already had |
 | Averaging downmix (Mix) can cancel signal | ⚠️ inherent to averaging, not a bug: decorrelated channels partially or fully cancel when summed, and across 247 real stereo E-mu samples mpc2emu measured a median channel correlation of only 0.076. The Convert Options dialog's **Test** button and its OK-time confirmation exist to surface this per-sample before you commit; **Left**/**Right** avoid it entirely |
 

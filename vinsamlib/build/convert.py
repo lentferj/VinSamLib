@@ -226,9 +226,12 @@ def polyphony_risk(bank: Any, target_format: str) -> list[dict]:
     E4B only: KRZ and EIII have their own, smaller voice budgets, but no
     per-note limit has been measured on either, so mpc2emu leaves them out
     of its limit table rather than warn on a guess, and so does this. The
-    second half of that argument -- that both downmix to mono anyway, so the
-    stereo cost cannot bite -- is expiring: KRZ stereo exists on an unmerged
-    mpc2emu branch. The measurement is what gates this, not the downmix.
+    missing measurement is the whole of the reason. The other half of the
+    old argument -- that those targets downmix anyway, so the doubled
+    stereo cost cannot bite -- died with mpc2emu's ff19e78 (2026-08-02):
+    KRZ now writes stereo, so a KRZ bank carries the same doubled cost,
+    unwarned. Extend this the moment a K2000 per-note ceiling reaches
+    mpc2emu's own _VOICES_PER_NOTE; do not guess one here.
 
     Returns one dict per over-budget preset: {"preset", "voices", "limit",
     "key" (note name), "velocity", "stereo", "samples"} -- empty when the
