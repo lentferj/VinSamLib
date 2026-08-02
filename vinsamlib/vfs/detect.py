@@ -73,11 +73,11 @@ def sniff(path: str) -> Optional[type[Volume]]:
     # the FS-type label to open a volume (see its _part_offset()/
     # _read_bpb_fat16() -- only the numeric BPB fields matter), and real
     # vintage K2000-format CDs predating mpc2emu's own writer
-    # (e.g. third-party "Best Service"/Kurzweil-branded sample discs from
-    # the 1990s) can be missing both cosmetic fields while every numeric
-    # BPB field otherwise matches the documented K2000 form exactly
-    # (KRZ_FORMAT.md §5.1) -- confirmed byte-for-byte against a real
-    # BestServiceGigaSetCD1.iso. Validating several BPB fields together
+    # (third-party sample discs pressed in the 1990s) can be missing both
+    # cosmetic fields while every numeric BPB field otherwise matches the
+    # documented K2000 form exactly (KRZ_FORMAT.md §5.1) -- confirmed
+    # byte-for-byte against a commercial K2000 library CD-ROM of that
+    # vintage. Validating several BPB fields together
     # (not just one) keeps this from false-triggering on an arbitrary file
     # that happens to start with the same jump opcode.
     cls = _sniff_fat_without_signature(head, p)
