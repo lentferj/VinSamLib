@@ -22,27 +22,36 @@ bank from its source, which is why this only reports.
                 subSample bytes instead. Fixed in this project's
                 `685179f`.
 
-  SOURCE-DRIFT  Only with `--against`. Compares each keymap's entry
-                boundaries with its counterpart in the bank it was built
-                from. A conversion may renumber samples, rename objects
-                and re-encode PCM, but it must not move where the
-                keyboard is split — so unlike KEYMAP-SHIFT above, any
-                difference here is a fact rather than an inference. This
-                is what catches damage that isn't a clean 12-entry shift,
-                including the pre-fix KRZ→KRZ round trip that dropped a
-                zone outright.
+  SOURCE-DRIFT  Only with `--against`. Compares each keymap against the
+                bank it was built from. A conversion may renumber
+                samples, rename objects and re-encode PCM, but it must
+                not move where the keyboard is split — so unlike
+                KEYMAP-SHIFT above, any difference here is a fact rather
+                than an inference. This is what catches damage that is
+                not a clean 12-entry shift, including the pre-fix KRZ→KRZ
+                round trip that dropped a zone outright.
 
 Usage:
     python3 tools/check_krz_banks.py PATH [PATH ...]
-    python3 tools/check_krz_banks.py --against SOURCE.KRZ PATH [PATH ...]
+    python3 tools/check_krz_banks.py --against SOURCE PATH [PATH ...]
 
 PATH may be a `.krz` file, a directory (searched recursively), or a disk
 image / floppy image VinSamLib can read, in which case every KRZ bank
-inside it is scanned. `--against` takes the loose `.krz` the scanned
-banks were converted from, so it applies to KRZ→KRZ work only: a bank
-built from an E4B or a WAV folder has no KRZ counterpart and is reported
-as *not compared* rather than as a defect. Point it at an unrelated bank
-and there is nothing to compare, which is why it is opt-in.
+inside it is scanned.
+
+SOURCE is the bank the scanned files were built from — either the `.krz`
+of a KRZ→KRZ conversion, or the `.e4b` an E4B→KRZ one started from (that
+form needs a configured mpc2emu, for its zone model). A bank the source
+cannot account for is reported as *not compared*, not as a defect, and
+does not affect the exit code; give each source its own run when a batch
+mixes them. Comparing against an unrelated bank tells you nothing, which
+is why this is opt-in.
+
+Only the splits *between* zones are compared, never the outer edges: a
+KRZ keymap always fills all 128 entries, so a source zone reaching the
+end of the keyboard and one stopping short both end at entry 127. An
+E4B source with velocity-split zones is skipped rather than guessed at,
+since only the first velocity table is read here.
 
 Exits 0 clean, 1 flagged, 2 on a bad path or bad arguments.
 """
@@ -242,6 +251,96 @@ def _boundaries(km: krz.KrzObject) -> list[tuple[int, int]] | None:
     return runs
 
 
+def _internal_splits(runs: list[tuple[int, int]]) -> list[int]:
+    """Entry indices where one run gives way to the next.
+
+    The outer edges carry no information: a KRZ keymap always fills all
+    128 entries, so a source zone reaching the end of the keyboard and one
+    stopping short both come out as a run ending at 127. Only the splits
+    between runs reflect a decision the writer had to get right."""
+    return [lo for lo, _hi in runs[1:]]
+
+
+def _expected_splits_from_voice(voice) -> list[int] | None:
+    """Where a source E4B voice's zones say the KRZ keymap must split.
+
+    Zones are in MIDI keys and keymap entries run 12 lower, so a boundary
+    at key K belongs at entry K-12. Adjacent zones naming the same sample
+    produce no boundary at all — the K2000 keymap stores one id per entry,
+    so they merge into a single run. Returns None when the voice is
+    velocity-split, since only the first velocity table is read here and a
+    comparison would be against the wrong data."""
+    zones = sorted(voice.zones, key=lambda z: (z.lo_key, z.lo_vel))
+    if not zones:
+        return None
+    if any((z.lo_vel, z.hi_vel) != (zones[0].lo_vel, zones[0].hi_vel)
+           for z in zones):
+        return None
+
+    splits = []
+    for prev, cur in zip(zones, zones[1:]):
+        if cur.sample_name == prev.sample_name:
+            continue                      # merges into one run
+        entry = cur.lo_key - krz.KEYMAP_ENTRY_NOTE_OFFSET
+        if 0 < entry < krz.NUM_KEYS:      # outside the table, unrepresentable
+            splits.append(entry)
+    return sorted(set(splits))
+
+
+def check_against_e4b(bank: krz.KrzFile, source) -> tuple[list[str], list[str]]:
+    """Compare KRZ keymaps against the E4B preset they were converted from.
+
+    mpc2emu writes one keymap per voice layer and names it after the
+    preset, so the match is by name and then by whichever of that preset's
+    voices fits — several voices can legitimately split the same way."""
+    by_name: dict[str, list] = {}
+    for preset in source.presets:
+        by_name.setdefault(_norm(preset.name), []).append(preset)
+
+    findings: list[str] = []
+    unverified: list[str] = []
+    for kid, km in bank.keymaps.items():
+        runs = _boundaries(km)
+        if runs is None:
+            continue
+        presets = by_name.get(_norm(km.name), [])
+        if not presets and len(source.presets) == 1:
+            presets = list(source.presets)
+        if not presets:
+            unverified.append(f"keymap {kid} ({km.name.strip()!r})")
+            continue
+
+        expected = [s for p in presets for v in p.voices
+                    if (s := _expected_splits_from_voice(v)) is not None]
+        if not expected:
+            unverified.append(
+                f"keymap {kid} ({km.name.strip()!r}, velocity-split source)")
+            continue
+
+        mine = _internal_splits(runs)
+        if any(mine == e for e in expected):
+            continue
+
+        best = min(expected, key=lambda e: abs(len(e) - len(mine)))
+        if len(best) == len(mine) and mine:
+            deltas = {m - b for m, b in zip(mine, best)}
+            if len(deltas) == 1:
+                k = deltas.pop()
+                detail = (f"every split moved by {k:+d} entries — the "
+                          f"off-by-12 signature" if abs(k) == 12 else
+                          f"every split moved by {k:+d} entries")
+            else:
+                detail = f"{len(mine)} splits, in different places"
+        else:
+            detail = (f"{len(mine)} split(s) here vs {len(best)} the source "
+                      f"calls for")
+        findings.append(
+            f"keymap {kid} ({km.name.strip()!r}): {detail}\n"
+            f"           built:  {mine}\n"
+            f"           source: {best}")
+    return findings, unverified
+
+
 def _norm(name: str) -> str:
     """Keymap names survive conversion with punctuation churn — a source
     `*Flugelhorn` comes back as `*>Flugelhorn` — so match on letters and
@@ -317,8 +416,18 @@ def check_against_source(bank: krz.KrzFile,
 
 # ── plumbing ─────────────────────────────────────────────────────────────────
 
-def scan_bytes(data: bytes, label: str,
-               source: krz.KrzFile | None = None) -> tuple[bool, bool]:
+def load_source(path: Path):
+    """The bank the scanned KRZ files were built from: another `.krz`, or
+    an `.e4b` they were converted from. An E4B needs mpc2emu's parser for
+    the zone model — the KRZ side needs nothing but this project."""
+    if path.suffix.lower() in (".e4b",):
+        from vinsamlib.mpc2emu_bridge import e4b_parser
+        return "e4b", e4b_parser.parse_e4b(str(path))
+    return "krz", krz.parse(str(path))
+
+
+def scan_bytes(data: bytes, label: str, source=None,
+               source_kind: str = "krz") -> tuple[bool, bool]:
     """Returns (flagged, had_unverified_keymaps)."""
     try:
         bank = krz.parse_bytes(data, label)
@@ -328,8 +437,12 @@ def scan_bytes(data: bytes, label: str,
 
     shift = check_keymap_shift(bank)
     scribble = check_entry_scribble(bank)
-    drift, unverified = (check_against_source(bank, source)
-                         if source is not None else ([], []))
+    if source is None:
+        drift, unverified = [], []
+    elif source_kind == "e4b":
+        drift, unverified = check_against_e4b(bank, source)
+    else:
+        drift, unverified = check_against_source(bank, source)
 
     if shift or scribble or drift:
         print(f"  ⚠  {label}")
@@ -394,19 +507,22 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
 
-    source = None
+    source, source_kind = None, "krz"
     if against is not None:
         sp = Path(against).expanduser()
         if not sp.exists():
             print(f"  ?  {sp}: no such source bank")
             return 2
         try:
-            source = krz.parse(str(sp))
+            source_kind, source = load_source(sp)
         except Exception as ex:
-            print(f"  ?  {sp}: source not readable as KRZ ({ex})")
+            print(f"  ?  {sp}: source not readable ({ex})")
             return 2
+        n = (len(source.presets) if source_kind == "e4b"
+             else len(source.keymaps))
         print(f"Comparing against {sp.name} "
-              f"({len(source.keymaps)} keymap(s))")
+              f"({source_kind.upper()}, {n} "
+              f"{'preset' if source_kind == 'e4b' else 'keymap'}(s))")
 
     scanned = flagged = uncompared = 0
     bad_path = False
@@ -420,7 +536,7 @@ def main(argv: list[str]) -> int:
         print(f"Scanning {p} …")
         for label, data in _iter_targets(p):
             scanned += 1
-            hit, skipped = scan_bytes(data, label, source)
+            hit, skipped = scan_bytes(data, label, source, source_kind)
             flagged += hit
             uncompared += skipped
 

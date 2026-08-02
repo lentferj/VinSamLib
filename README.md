@@ -66,15 +66,15 @@ It takes `.krz` files, directories, and disk/floppy images, reports what
 it finds, and changes nothing. **The fix in both cases is to rebuild the
 bank from its source material** with a current mpc2emu and VinSamLib.
 
-For a **KRZ→KRZ** conversion — where you still have the `.krz` it was
-built from — add `--against`:
+If you still have the bank a KRZ was built *from*, add `--against`:
 
 ```
-python3 tools/check_krz_banks.py --against SOURCE.KRZ ~/path/to/built
+python3 tools/check_krz_banks.py --against SOURCE.krz ~/path/to/built
+python3 tools/check_krz_banks.py --against SOURCE.e4b ~/path/to/built
 ```
 
-That compares where each keymap splits the keyboard against the source's
-own layout. A conversion may renumber samples, rename objects and
+That compares where each keymap splits the keyboard against what the
+source calls for. A conversion may renumber samples, rename objects and
 re-encode audio, but it must not move those split points — so this is an
 exact check rather than the inference the plain scan has to make, and it
 catches damage that isn't a clean 12-semitone shift. It is how this
@@ -82,11 +82,11 @@ project's own hardware-confirmation batch was verified after the fix, and
 it caught the pre-fix version of the same banks, which had silently lost
 a zone.
 
-**Both sides must be KRZ.** A bank converted from an E4B or a WAV folder
-has no KRZ source to compare against, so those are reported as *not
-compared* and fall back to the two detectors above — not as defects, and
-they don't affect the exit code. Give each source its own run when a
-batch mixes them.
+Either source format works: the `.krz` of a KRZ→KRZ conversion, or the
+`.e4b` an E4B→KRZ one started from (that form needs mpc2emu configured).
+A bank the given source can't account for is reported as *not compared*
+rather than as a defect, and doesn't affect the exit code — give each
+source its own run when a batch mixes them.
 
 ---
 
