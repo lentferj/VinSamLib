@@ -22,12 +22,27 @@ bank from its source, which is why this only reports.
                 subSample bytes instead. Fixed in this project's
                 `685179f`.
 
+  SOURCE-DRIFT  Only with `--against`. Compares each keymap's entry
+                boundaries with its counterpart in the bank it was built
+                from. A conversion may renumber samples, rename objects
+                and re-encode PCM, but it must not move where the
+                keyboard is split — so unlike KEYMAP-SHIFT above, any
+                difference here is a fact rather than an inference. This
+                is what catches damage that isn't a clean 12-entry shift,
+                including the pre-fix KRZ→KRZ round trip that dropped a
+                zone outright.
+
 Usage:
     python3 tools/check_krz_banks.py PATH [PATH ...]
+    python3 tools/check_krz_banks.py --against SOURCE.KRZ PATH [PATH ...]
 
 PATH may be a `.krz` file, a directory (searched recursively), or a disk
 image / floppy image VinSamLib can read, in which case every KRZ bank
-inside it is scanned. Exits 1 if anything was flagged.
+inside it is scanned. `--against` takes the loose `.krz` the scanned
+banks were converted from; point it at an unrelated bank and every
+comparison is meaningless, which is why it is opt-in.
+
+Exits 0 clean, 1 flagged, 2 on a bad path or bad arguments.
 """
 from __future__ import annotations
 
@@ -193,9 +208,110 @@ def check_entry_scribble(bank: krz.KrzFile) -> list[str]:
     return findings
 
 
+# ── comparison against the source a bank was built from ──────────────────────
+
+def _boundaries(km: krz.KrzObject) -> list[tuple[int, int]] | None:
+    """A keymap's entry runs as (first_entry, last_entry) pairs, ignoring
+    which sample each names. Two keymaps describing the same instrument
+    must split the keyboard at the same places, whatever the samples were
+    renumbered to."""
+    body = km.body()
+    lay = krz.keymap_layout(body)
+    if lay is None:
+        return None
+    if lay.id_off is None:
+        return [(0, lay.num_keys - 1)]      # compacted: one run by definition
+
+    ids = []
+    for k in range(lay.num_keys):
+        p = lay.table + k * lay.stride + lay.id_off
+        if p + 2 > len(body):
+            break
+        ids.append(struct.unpack_from(">H", body, p)[0])
+    if not ids:
+        return None
+
+    runs, lo, prev = [], 0, ids[0]
+    for i, sid in enumerate(ids[1:], 1):
+        if sid != prev:
+            runs.append((lo, i - 1))
+            lo, prev = i, sid
+    runs.append((lo, len(ids) - 1))
+    return runs
+
+
+def _norm(name: str) -> str:
+    """Keymap names survive conversion with punctuation churn — a source
+    `*Flugelhorn` comes back as `*>Flugelhorn` — so match on letters and
+    digits only."""
+    return "".join(c for c in name.lower() if c.isalnum())
+
+
+def check_against_source(bank: krz.KrzFile, source: krz.KrzFile) -> list[str]:
+    """Compare each keymap's entry boundaries with its counterpart in the
+    bank this one was built from.
+
+    This is the exact check the inferential KEYMAP-SHIFT one cannot be: a
+    conversion may renumber samples, rename objects and re-encode PCM, but
+    it must not move where the keyboard is split. Any difference is real,
+    and a uniform difference is the off-by-12 signature outright.
+
+    Only meaningful against the actual source. Pointed at an unrelated
+    bank it reports mismatches that mean nothing, which is why it is an
+    explicit flag rather than something the scan does on its own."""
+    by_name: dict[str, list[krz.KrzObject]] = {}
+    for km in source.keymaps.values():
+        by_name.setdefault(_norm(km.name), []).append(km)
+
+    findings = []
+    for kid, km in bank.keymaps.items():
+        mine = _boundaries(km)
+        if mine is None:
+            continue
+        candidates = by_name.get(_norm(km.name), [])
+        if not candidates and len(source.keymaps) == 1:
+            candidates = list(source.keymaps.values())
+        if not candidates:
+            findings.append(
+                f"keymap {kid} ({km.name.strip()!r}): no counterpart in the "
+                f"source — cannot verify (is this the right source bank?)")
+            continue
+
+        # Any source keymap splitting the keyboard the same way is a match;
+        # several programs can legitimately share one keymap's shape.
+        theirs = [b for b in (_boundaries(c) for c in candidates) if b]
+        if any(b == mine for b in theirs):
+            continue
+
+        best = min(theirs, key=lambda b: abs(len(b) - len(mine)), default=None)
+        if best is None:
+            continue
+        detail = f"{len(mine)} zones here vs {len(best)} in the source"
+        if len(best) == len(mine):
+            # Interior boundaries only: shifting inside a fixed-size entry
+            # table pins the first run's start at 0 and the last run's end
+            # at the final entry, so those two never move and would hide an
+            # otherwise perfectly uniform shift.
+            deltas = {m[0] - s[0] for m, s in zip(mine[1:], best[1:])} | \
+                     {m[1] - s[1] for m, s in zip(mine[:-1], best[:-1])}
+            if len(deltas) == 1:
+                k = deltas.pop()
+                detail = (f"every boundary moved by {k:+d} entries — the "
+                          f"off-by-12 signature" if abs(k) == 12 else
+                          f"every boundary moved by {k:+d} entries")
+            else:
+                detail = f"{len(mine)} zones, boundaries differ"
+        findings.append(
+            f"keymap {kid} ({km.name.strip()!r}): {detail}\n"
+            f"           built:  {mine}\n"
+            f"           source: {best}")
+    return findings
+
+
 # ── plumbing ─────────────────────────────────────────────────────────────────
 
-def scan_bytes(data: bytes, label: str) -> bool:
+def scan_bytes(data: bytes, label: str,
+               source: krz.KrzFile | None = None) -> bool:
     try:
         bank = krz.parse_bytes(data, label)
     except Exception as ex:
@@ -204,7 +320,8 @@ def scan_bytes(data: bytes, label: str) -> bool:
 
     shift = check_keymap_shift(bank)
     scribble = check_entry_scribble(bank)
-    if not shift and not scribble:
+    drift = check_against_source(bank, source) if source is not None else []
+    if not shift and not scribble and not drift:
         return False
 
     print(f"  ⚠  {label}")
@@ -212,6 +329,8 @@ def scan_bytes(data: bytes, label: str) -> bool:
         print(f"       KEYMAP-SHIFT   {f}")
     for f in scribble:
         print(f"       ENTRY-SCRIBBLE {f}")
+    for f in drift:
+        print(f"       SOURCE-DRIFT   {f}")
     return True
 
 
@@ -241,13 +360,42 @@ def _iter_targets(path: Path):
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2:
+    args, paths, against = argv[1:], [], None
+    while args:
+        a = args.pop(0)
+        if a in ("-h", "--help"):
+            print(__doc__)
+            return 0
+        if a == "--against":
+            if not args:
+                print("--against needs the path of the source bank")
+                return 2
+            against = args.pop(0)
+        elif a.startswith("--against="):
+            against = a.split("=", 1)[1]
+        else:
+            paths.append(a)
+    if not paths:
         print(__doc__)
         return 2
 
+    source = None
+    if against is not None:
+        sp = Path(against).expanduser()
+        if not sp.exists():
+            print(f"  ?  {sp}: no such source bank")
+            return 2
+        try:
+            source = krz.parse(str(sp))
+        except Exception as ex:
+            print(f"  ?  {sp}: source not readable as KRZ ({ex})")
+            return 2
+        print(f"Comparing against {sp.name} "
+              f"({len(source.keymaps)} keymap(s))")
+
     scanned = flagged = 0
     bad_path = False
-    for arg in argv[1:]:
+    for arg in paths:
         p = Path(arg).expanduser()
         if not p.exists():
             # Exits 2, not 0: a mistyped path must never read as "all clear".
@@ -257,7 +405,7 @@ def main(argv: list[str]) -> int:
         print(f"Scanning {p} …")
         for label, data in _iter_targets(p):
             scanned += 1
-            if scan_bytes(data, label):
+            if scan_bytes(data, label, source):
                 flagged += 1
 
     print(f"\n{scanned} KRZ bank(s) scanned, {flagged} flagged.")
@@ -265,8 +413,9 @@ def main(argv: list[str]) -> int:
         print("Neither defect can be repaired in place: rebuild an affected "
               "bank from its source material with a current mpc2emu and "
               "VinSamLib.\nENTRY-SCRIBBLE is a byte pattern only the old "
-              "assembler produced. KEYMAP-SHIFT is inference — on a bank you "
-              "did not build yourself, confirm by ear before rebuilding.")
+              "assembler produced, and SOURCE-DRIFT is an exact comparison. "
+              "KEYMAP-SHIFT is inference — on a bank you did not build "
+              "yourself, confirm by ear before rebuilding.")
     if bad_path:
         return 2
     return 1 if flagged else 0
