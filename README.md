@@ -37,6 +37,35 @@ for the honest account. Always keep an untouched copy of anything
 irreplaceable, and test unfamiliar images on a spare SD card / floppy
 before touching real hardware.
 
+### If you built KRZ banks before 2026-08-03, check them
+
+Two defects produced `.KRZ` files that parse cleanly, re-read correctly,
+and look completely normal — the damage shows only on a K2000, or not at
+all. Both are fixed; neither can be repaired in place, and nothing warns
+you about a file you already have.
+
+- **Multisample banks built before 2026-08-02** carry mpc2emu's keymap
+  off-by-12 (its `791364a`). The K2000 sounds keymap entry `i` at MIDI
+  key `i + 12`, and each zone was written 12 semitones from the key it
+  was asked for, so the program plays **one sample key-tracked across
+  the whole keyboard** instead of the right sample per key.
+  Single-sample programs are unaffected.
+- **Banks assembled before 2026-08-03** from a *compacted* source keymap
+  were corrupted by VinSamLib itself: assembly walked keymap entries at
+  a fixed stride that most real K2000 content doesn't use, overwriting
+  tuning and subSample bytes. Compacted keymaps are the common case —
+  1145 of 1584 in this project's own 201-file library.
+
+To find affected files:
+
+```
+python3 tools/check_krz_banks.py ~/path/to/banks-or-images
+```
+
+It takes `.krz` files, directories, and disk/floppy images, reports what
+it finds, and changes nothing. **The fix in both cases is to rebuild the
+bank from its source material** with a current mpc2emu and VinSamLib.
+
 ---
 
 ## AI assistance & human authorship
