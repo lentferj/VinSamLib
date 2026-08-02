@@ -247,7 +247,8 @@ def _norm(name: str) -> str:
     return "".join(c for c in name.lower() if c.isalnum())
 
 
-def check_against_source(bank: krz.KrzFile, source: krz.KrzFile) -> list[str]:
+def check_against_source(bank: krz.KrzFile,
+                         source: krz.KrzFile) -> tuple[list[str], list[str]]:
     """Compare each keymap's entry boundaries with its counterpart in the
     bank this one was built from.
 
@@ -257,13 +258,19 @@ def check_against_source(bank: krz.KrzFile, source: krz.KrzFile) -> list[str]:
     and a uniform difference is the off-by-12 signature outright.
 
     Only meaningful against the actual source. Pointed at an unrelated
-    bank it reports mismatches that mean nothing, which is why it is an
-    explicit flag rather than something the scan does on its own."""
+    bank it can compare nothing, which is why it is an explicit flag
+    rather than something the scan does on its own.
+
+    Returns (findings, unverified). A keymap with no counterpart is
+    **not** a finding — a batch built from several different sources will
+    always have some, and calling that damage would make the exit code
+    useless as a gate."""
     by_name: dict[str, list[krz.KrzObject]] = {}
     for km in source.keymaps.values():
         by_name.setdefault(_norm(km.name), []).append(km)
 
-    findings = []
+    findings: list[str] = []
+    unverified: list[str] = []
     for kid, km in bank.keymaps.items():
         mine = _boundaries(km)
         if mine is None:
@@ -272,9 +279,7 @@ def check_against_source(bank: krz.KrzFile, source: krz.KrzFile) -> list[str]:
         if not candidates and len(source.keymaps) == 1:
             candidates = list(source.keymaps.values())
         if not candidates:
-            findings.append(
-                f"keymap {kid} ({km.name.strip()!r}): no counterpart in the "
-                f"source — cannot verify (is this the right source bank?)")
+            unverified.append(f"keymap {kid} ({km.name.strip()!r})")
             continue
 
         # Any source keymap splitting the keyboard the same way is a match;
@@ -305,33 +310,41 @@ def check_against_source(bank: krz.KrzFile, source: krz.KrzFile) -> list[str]:
             f"keymap {kid} ({km.name.strip()!r}): {detail}\n"
             f"           built:  {mine}\n"
             f"           source: {best}")
-    return findings
+    return findings, unverified
 
 
 # ── plumbing ─────────────────────────────────────────────────────────────────
 
 def scan_bytes(data: bytes, label: str,
-               source: krz.KrzFile | None = None) -> bool:
+               source: krz.KrzFile | None = None) -> tuple[bool, bool]:
+    """Returns (flagged, had_unverified_keymaps)."""
     try:
         bank = krz.parse_bytes(data, label)
     except Exception as ex:
         print(f"  ?  {label}: not readable as KRZ ({ex})")
-        return False
+        return False, False
 
     shift = check_keymap_shift(bank)
     scribble = check_entry_scribble(bank)
-    drift = check_against_source(bank, source) if source is not None else []
-    if not shift and not scribble and not drift:
-        return False
+    drift, unverified = (check_against_source(bank, source)
+                         if source is not None else ([], []))
 
-    print(f"  ⚠  {label}")
-    for f in shift:
-        print(f"       KEYMAP-SHIFT   {f}")
-    for f in scribble:
-        print(f"       ENTRY-SCRIBBLE {f}")
-    for f in drift:
-        print(f"       SOURCE-DRIFT   {f}")
-    return True
+    if shift or scribble or drift:
+        print(f"  ⚠  {label}")
+        for f in shift:
+            print(f"       KEYMAP-SHIFT   {f}")
+        for f in scribble:
+            print(f"       ENTRY-SCRIBBLE {f}")
+        for f in drift:
+            print(f"       SOURCE-DRIFT   {f}")
+        return True, bool(unverified)
+
+    if unverified:
+        # Not a defect: this bank came from some other source. Say so once
+        # per bank rather than once per keymap, and keep it out of the count.
+        print(f"  ·  {label}: not built from this source, "
+              f"{len(unverified)} keymap(s) not compared")
+    return False, bool(unverified)
 
 
 def _iter_targets(path: Path):
@@ -393,7 +406,7 @@ def main(argv: list[str]) -> int:
         print(f"Comparing against {sp.name} "
               f"({len(source.keymaps)} keymap(s))")
 
-    scanned = flagged = 0
+    scanned = flagged = uncompared = 0
     bad_path = False
     for arg in paths:
         p = Path(arg).expanduser()
@@ -405,10 +418,15 @@ def main(argv: list[str]) -> int:
         print(f"Scanning {p} …")
         for label, data in _iter_targets(p):
             scanned += 1
-            if scan_bytes(data, label, source):
-                flagged += 1
+            hit, skipped = scan_bytes(data, label, source)
+            flagged += hit
+            uncompared += skipped
 
     print(f"\n{scanned} KRZ bank(s) scanned, {flagged} flagged.")
+    if uncompared:
+        print(f"{uncompared} were not built from the given source and were "
+              f"checked by the other two detectors only — pass each source "
+              f"with its own --against run to compare those too.")
     if flagged:
         print("Neither defect can be repaired in place: rebuild an affected "
               "bank from its source material with a current mpc2emu and "
