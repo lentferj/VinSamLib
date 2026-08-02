@@ -443,9 +443,10 @@ class PendingBanksPane(QWidget):
             QMessageBox.warning(
                 self, "Build Image",
                 "\n\n".join(lines)
-                + "\n\nMeasured on an E4XT: a stereo sample costs two voices, "
-                  "and the ceiling is per NOTE, not the 128-voice global "
-                  "polyphony. Convert Options' \"Reduce Velocity Layers\", or "
+                + "\n\nA stereo sample costs two voices, and the ceiling is "
+                  "per NOTE rather than global polyphony -- both measured on "
+                  "the machine itself (32 per note on an E4XT, 24 on a "
+                  "K2000R). Convert Options' \"Reduce Velocity Layers\", or "
                   "any Stereo Samples method other than Keep Stereo, brings it "
                   "down.")
 

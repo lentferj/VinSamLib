@@ -345,8 +345,10 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(
             self, title,
             "\n\n".join(lines)
-            + "\n\nMeasured on an E4XT: a stereo sample costs two voices, and "
-              "the ceiling is per NOTE, not the 128-voice global polyphony.\n\n"
+            + "\n\nA stereo sample costs two voices, and the ceiling is per "
+              "NOTE -- both measured on the machine itself: 32 per note on "
+              "the E4XT (whose global polyphony is 128), and 24 on the "
+              "K2000R, which is its whole polyphony.\n\n"
               "To fix, re-import with Convert Options' \"Reduce Velocity "
               "Layers\", or pick a Stereo Samples method other than Keep "
               "Stereo to halve every stereo zone's cost.")

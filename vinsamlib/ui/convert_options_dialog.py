@@ -20,9 +20,10 @@ runs them, and they sit in a QScrollArea because expanding them all wants
 more height than a window is allowed to take (see __init__).
 
 Pan compensation is the one target-dependent control: the loudness law
-behind it was measured on an E4XT, so it is offered for E4B output only
-and greys out for KRZ/EIII. _current_target_format() is the hook for
-that, overridden by FormatConvertDialog's live "Import as:" picker.
+behind it was measured on an E4XT and the K2000's differs (the EIII's is
+unmeasured), so it is offered for E4B output only and greys out for
+KRZ/EIII. _current_target_format() is the hook for that, overridden by
+FormatConvertDialog's live "Import as:" picker.
 """
 
 from __future__ import annotations
@@ -352,17 +353,25 @@ class ConvertOptionsDialog(QDialog):
 
     def _refresh_pan_law_availability(self) -> None:
         """Pan compensation is E4B-only and says so, rather than silently
-        doing nothing: the law was measured on a real E4XT (+2.88 dB at pan
-        0.5, +4.32 at 1.0) and nothing equivalent has been measured for the
-        K2000 or the EIII, so applying it to those targets would bake a
-        guess irreversibly into the volume byte."""
-        is_e4b = self._current_target_format() == "E4B"
+        doing nothing. The law was measured on a real E4XT (+2.88 dB at pan
+        0.5, +4.32 at 1.0). The K2000's own law was measured on 2026-08-02
+        and is also constant power, but at +3.0 dB hard-panned it is a
+        DIFFERENT number, so the E4XT's correction is not transferable; the
+        EIII's has never been measured at all. Either way, applying this to
+        a non-E4B target would bake a wrong value irreversibly into the
+        volume byte."""
+        fmt = self._current_target_format()
+        is_e4b = fmt == "E4B"
         self._pan_law_group.setEnabled(is_e4b)
         if not is_e4b:
             self._pan_law_group.setChecked(False)
             self._pan_law_group.setToolTip(
-                f"E4B only — the pan loudness law was measured on an E4XT and "
-                f"nothing equivalent is known for {self._current_target_format()}.")
+                "E4B only — the K2000's pan law is constant power too, but "
+                "+3.0 dB hard-panned against the E4XT's +4.5, so this "
+                "correction would be the wrong number for it."
+                if fmt == "KRZ" else
+                f"E4B only — the pan loudness law was measured on an E4XT "
+                f"and nothing equivalent is known for {fmt}.")
         else:
             self._pan_law_group.setToolTip("")
 

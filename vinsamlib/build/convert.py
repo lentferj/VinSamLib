@@ -223,26 +223,24 @@ def polyphony_risk(bank: Any, target_format: str) -> list[dict]:
     mpc2emu rather than reimplemented here -- VinSamLib holds no second copy
     of a measured hardware law it could drift away from.
 
-    E4B only: KRZ and EIII have their own, smaller voice budgets, but no
-    per-note limit has been measured on either, so mpc2emu leaves them out
-    of its limit table rather than warn on a guess, and so does this. The
-    missing measurement is the whole of the reason. The other half of the
-    old argument -- that those targets downmix anyway, so the doubled
-    stereo cost cannot bite -- died with mpc2emu's ff19e78 (2026-08-02):
-    KRZ now writes stereo, so a KRZ bank carries the same doubled cost,
-    unwarned. Extend this the moment a K2000 per-note ceiling reaches
-    mpc2emu's own _VOICES_PER_NOTE; do not guess one here.
+    Which formats have a ceiling is mpc2emu's answer too, not a list kept
+    here: whatever is in its _VOICES_PER_NOTE gets checked. That was E4B
+    alone until 2026-08-02, when a K2000R measurement added 'krz': 24 -- a
+    stereo sample plateaus at 12 simultaneous notes where the same material
+    in mono reaches 24, identically at velocity 100, 45 and 25, so the
+    plateau is voice allocation and not output clipping. EIII has no
+    measured per-note limit and so is still not checked; it will be the day
+    upstream measures one, with no change needed here.
 
     Returns one dict per over-budget preset: {"preset", "voices", "limit",
     "key" (note name), "velocity", "stereo", "samples"} -- empty when the
     format has no measured limit, or nothing is over it."""
-    if target_format != "E4B":
-        return []
-    # Private in mpc2emu, deliberately read rather than copied: 32 is a
-    # measured number, and the one thing worse than reaching into a private
+    # Private in mpc2emu, deliberately read rather than copied: these are
+    # measured numbers, and the one thing worse than reaching into a private
     # name is silently disagreeing with the measurement it came from. Absent
     # (an older mpc2emu checkout) simply means no check.
-    limit = getattr(bank_splitter, "_VOICES_PER_NOTE", {}).get("e4b")
+    limit = getattr(bank_splitter, "_VOICES_PER_NOTE", {}).get(
+        target_format.lower())
     if not limit:
         return []
 
@@ -384,9 +382,13 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
                       fade_ms=opts.trim_tail_fade_ms,
                       drop_full_loop=not opts.trim_tail_keep_loops)
 
-    # E4B only -- the law was measured on an E4XT and says nothing about
-    # what a K2000 or an EIII does with pan, so applying it to those
-    # targets would be guesswork baked irreversibly into the volume byte.
+    # E4B only, matching mpc2emu's own gate (its convert.py applies --pan-law
+    # for 'e4b' alone). No longer for want of a measurement on the K2000: as
+    # of 2026-08-02 its law is measured and IS constant power, but hard pan
+    # raises the live channel +3.0 dB there against the E4XT's +4.5 dB, so
+    # the two cannot share one correction -- applying the E4XT's here would
+    # bake the wrong number irreversibly into the volume byte. EIII remains
+    # simply unmeasured.
     if opts.pan_law == "constant-power" and opts.target_format == "E4B":
         _run_captured(_apply_pan_law, bank)
 

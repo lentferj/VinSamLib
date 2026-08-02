@@ -146,12 +146,13 @@ what you wanted.
 
 ### Catch presets that will lose layers before the hardware does
 
-Every E4B conversion that runs through mpc2emu is checked for presets
-that stack more voices on one *note* than an E4XT can sound — a ceiling no
-size check can see, where the extra layers aren't quiet but **stolen**.
-Both numbers behind it were measured on real hardware: a stereo sample
-costs two voices, and the limit is per note, not the 128-voice global
-polyphony. See [Voice budget warning](#voice-budget-warning).
+Every E4B or KRZ conversion that runs through mpc2emu is checked for
+presets that stack more voices on one *note* than the machine can sound —
+a ceiling no size check can see, where the extra layers aren't quiet but
+**stolen**. Both numbers behind it were measured on real hardware: a
+stereo sample costs two voices, and the limit is per note (32 on an E4XT,
+24 on a K2000R), not global polyphony. See [Voice budget
+warning](#voice-budget-warning).
 
 ---
 
@@ -505,9 +506,14 @@ lead-in silence is back in anything VinSamLib imports.
 
 #### Constant-Power Pan Compensation
 
-**E4B only** — greyed out for KRZ and EIII targets, since the law behind
-it was measured on an E4XT and nothing equivalent is known for the K2000
-or the EIII.
+**E4B only** — greyed out for KRZ and EIII targets. For the EIII that is
+still for want of a measurement. For the **K2000 it is no longer**: its
+law was measured on 2026-08-02 and is constant power like the E4XT's, but
+hard pan raises the live channel **+3.0 dB there against the E4XT's
++4.5**, so the two machines cannot share one correction and applying this
+curve to a KRZ target would bake in the wrong number. (mpc2emu does now
+write KRZ pan itself, for mono layers, into the high nibble of HOB `0x53`
+byte 14 — so a source preset's pan reaches a K2000, just uncorrected.)
 
 Panning the E4XT makes a voice **louder**: mpc2emu measured +2.88 dB at
 half pan and +4.32 dB hard-panned, and confirmed the curve is identical
@@ -607,11 +613,12 @@ extra voices are not merely quiet, they are **stolen**, and which layers
 survive is the hardware's choice, so an over-budget preset plays back
 differently than it looks.
 
-Two numbers behind it, both measured on an E4XT: a **stereo sample costs
-two voices**, and the ceiling is about **32 voices per note** rather than
-the E4XT's 128-voice global polyphony (32 voices on each of four separate
-keys all sound). It bites hardest since stereo became the default —
-presets that used to be downmixed now carry twice the voice cost.
+Two numbers behind it, both measured on hardware: a **stereo sample costs
+two voices**, and the ceiling is per note — about **32 voices** on an
+E4XT, rather than its 128-voice global polyphony (32 voices on each of
+four separate keys all sound). It bites hardest since stereo became the
+default — presets that used to be downmixed now carry twice the voice
+cost.
 
 The fixes are both in this same dialog: **Reduce Velocity Layers**, or any
 Stereo Samples method other than Keep Stereo, which halves every stereo
@@ -619,13 +626,15 @@ zone's cost. The warning is never blocking: the bank is written either
 way, and the count is taken *after* mono reduction and the zone reducer
 have run, so it describes the file you actually got.
 
-**E4B only.** KRZ and EIII have their own, smaller voice budgets, but no
-per-note limit has been measured on either — mpc2emu leaves them out of
-its limit table rather than warn on a guess, and so does this. What gates
-the check is that missing measurement, and nothing else: since KRZ gained
-stereo output (2026-08-02) a KRZ bank carries the doubled voice cost too,
-unwarned, and whether a K2000 even has a per-note ceiling is itself
-unmeasured. The check extends to KRZ when that number exists.
+**E4B and KRZ.** The K2000R was measured on 2026-08-02 and its ceiling is
+**24 voices per note** — its entire polyphony, so 12 stereo layers reach
+it. The plateau held identically at velocity 100, 45 and 25, which is how
+voice stealing was told apart from output clipping. **EIII** is the one
+target still unchecked: no per-note limit has been measured on it, and
+mpc2emu leaves it out of its limit table rather than warn on a guess.
+VinSamLib doesn't keep a list of which formats have a ceiling — it checks
+whatever mpc2emu has measured, so EIII starts being covered the day that
+number exists.
 
 ### Image Column
 
@@ -715,11 +724,13 @@ multisampled preset, landing straight in New Bank under the folder's
 name — exactly the way XPM import lands one preset, never a whole bank of
 its own.
 
-**Targeting KRZ:** a multisampled *KRZ* program currently plays only its
-first sample on a real K2000 — see [Known
-Limitations](#conversion-sources-and-scope). Nothing here warns about it,
-and the bank is written correctly; the instrument is what ignores the
-per-key assignment.
+**Targeting KRZ:** multisampled KRZ output was broken on real hardware
+until mpc2emu's 2026-08-02 keymap fix — every zone landed 12 semitones
+from the key it was asked for, so the program played one sample across
+the whole keyboard. **Folders you imported to KRZ before then need
+re-importing**, and the bottom octave (keys 0–11) is unreachable on a
+K2000 whatever placement you set. See [Known
+Limitations](#conversion-sources-and-scope).
 
 It is offered **only from the File menu**, never from an Explorer
 right-click. Unlike an `.xpm` file or an already-native preset, a folder
@@ -830,7 +841,8 @@ main queue and the per-bank contents list in Pending for Image.
 | Feature | Status |
 |---|---|
 | KRZ as a conversion *source* | ✅ mpc2emu's own KRZ reader (added 2026-07-27, corpus-verified against 593 real files) made this possible — KRZ presets/programs can now be converted the same way E4B ones can, via Explorer's "Import via mpc2emu…" |
-| Multisample KRZ output plays only its first sample | ⚠️ **a K2000 behaviour, found on hardware 2026-08-02** (mpc2emu §KRZKEYMAP): a KRZ keymap that puts *different* samples on adjacent keys plays only the **first** one, key-tracked across the whole range — audible as one sample rising in pitch. The file itself is written correctly; the instrument does not honour the per-entry assignment. This hits anything that produces a multisampled KRZ program — **Import Sample Folder** with KRZ as the target, and any multi-zone preset converted to KRZ — while single-sample programs are unaffected. Not root-caused: mpc2emu's keymap is byte-comparable to real multi-sample ones on every field checkable offline (method `0x13`, the 28-byte header, the 5-byte entry layout), and whether a *commercial* bank does per-key assignment on that same K2000R has never been measured. Workaround: one sample per program. E4B and EIII targets are unaffected |
+| Multisample KRZ banks built before 2026-08-02 are wrong | ⚠️ **fixed upstream, but existing files must be rebuilt.** The K2000 sounds keymap entry `i` at MIDI key `i + 12`, and mpc2emu wrote each zone into `entry[key]` instead of `entry[key - 12]`, so a multisampled program played **one sample key-tracked across the whole keyboard** instead of the right sample per key. A four-tone test bank measured 440/466/494/524 where it should have given 440/550/660/880 — indistinguishable from a single stretched sample, which is what it was. Fixed in mpc2emu `791364a` (hardware-confirmed against a commercial bank whose entries begin at 48 and which sounds from key 60 up). **Any multisampled KRZ bank you built before that is affected and cannot be repaired — rebuild it.** Nothing warns about old files: the `.KRZ` looks correct and re-reads correctly, because the reader carried the matching error. Single-sample programs are unaffected, as are E4B and EIII |
+| KRZ zones cannot reach keys 0–11 | ⚠️ a consequence of the same `i + 12` rule: with `basePitch` 0 a keymap's 128 entries cover keys 12–139, so the bottom octave of the keyboard cannot be addressed at all and a zone asked for from key 0 starts at 12. Relevant when using **Sample Placement** to set an explicit low key for a KRZ target |
 | Per-bank KRZ/EIII conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for both now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ/EIII queues yet |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
 | Some coverage-remapped KRZ presets can't be re-processed | ⚠️ a real mpc2emu bug (`writers/krz_writer.py`, tracked in mpc2emu's own TODO): a preset needing the octave-slice-stack "coverage remap" rebuild can crash on write when reprocessed; most real content is unaffected — VinSamLib surfaces the real error if it happens rather than silently failing |
