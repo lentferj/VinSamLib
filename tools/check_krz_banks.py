@@ -106,7 +106,17 @@ def check_keymap_shift(bank: krz.KrzFile) -> list[str]:
     K2000-authored floppies. So treat a KEYMAP-SHIFT flag as "play this
     one and listen", not as a verdict — unlike ENTRY-SCRIBBLE, which
     matches a byte pattern only the old assembler produces and flagged
-    none of those 2289."""
+    none of those 2289.
+
+    **It detects a clean +12 shift, not keymap damage in general.**
+    Measured 2026-08-03 against the pre-fix hardware-confirmation batch: a
+    KRZ→KRZ row built before the fix came out with 4 zones where its
+    source has 5, and boundaries matching neither the source nor a uniform
+    shift — because the old *reader* was off by 12 too, so a KRZ→KRZ round
+    trip mangled the keymap instead of translating it. This check stayed
+    silent on that. A missing flag means "no clean shift signature", not
+    "this bank is fine". To verify a KRZ→KRZ rebuild, compare its keymap
+    entry boundaries against the source's: they should match exactly."""
     findings = []
     for kid, km in bank.keymaps.items():
         body = km.body()
