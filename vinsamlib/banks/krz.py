@@ -56,6 +56,17 @@ KEYMAP_HDR = 28
 KEYMAP_ENTRY_SIZE = 5
 NUM_KEYS = 128
 
+KEYMAP_HDR_FIXED = 12   # `>6h`: sampleId, method, basePitch, centsPerEntry,
+                        # entriesPerVel, entrySize
+KEYMAP_LEVELS_OFF = 12  # velocity-level table: 2-byte signed offset each,
+                        # relative to its own position
+
+#: The K2000 sounds keymap entry `i` at MIDI key `i + 12`, so entries cover
+#: keys 12..139 and keys 0..11 cannot be addressed. Hardware-confirmed by
+#: mpc2emu 2026-08-02 (`791364a`); its corpus-only reading before that, like
+#: this project's, had entry `i` at key `i` and was wrong.
+KEYMAP_ENTRY_NOTE_OFFSET = 12
+
 SAMPLE_HDR = 12
 SFH_SIZE = 32
 ENV_SIZE = 12
@@ -69,6 +80,68 @@ MAX_PRESETS = 1000      # K2000 hardware limit on user object ids per type (id s
 
 class KrzFormatError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class KeymapLayout:
+    """Where a keymap's entries live and what each one carries.
+
+    A keymap's entry layout is NOT fixed: the header's `method` bitfield says
+    which per-entry fields are present, which sets both the stride and where
+    the sample id sits (KRZ_FORMAT.md §3.2).
+
+        0x10 tuning i16   0x08 tuning i8   0x04 volAdj u8
+        0x02 sampleID u16                  0x01 subSample u8
+
+    `id_off` is None when bit 0x02 is clear — a **compacted** keymap, whose
+    entries carry no sample id at all: every key plays `header_sid`.
+
+    Assuming mpc2emu's own write form (method 0x13: a 5-byte entry with the
+    id at offset 2) does not survive contact with real content. Of 1584
+    keymaps across this project's 201-file K2000 library, 1450 use a
+    different stride and 1145 are compacted."""
+    header_sid: int
+    method: int
+    num_keys: int
+    table: int          # body offset of the first velocity level's entry table
+    stride: int
+    id_off: int | None  # offset of the sample id within an entry, or None
+
+
+def keymap_layout(body: bytes) -> KeymapLayout | None:
+    """Decode a keymap body's header into a KeymapLayout, or None if it is
+    too short to be one. Mirrors mpc2emu's `krz_parser._parse_keymap_object()`
+    — keep the two in step."""
+    if len(body) < KEYMAP_HDR_FIXED:
+        return None
+    header_sid, method, _base, _cents, entries_per_vel, _entry_size = \
+        struct.unpack_from(">6h", body, 0)
+    method &= 0xFFFF
+
+    # Recomputed from the method bits rather than trusted from the header's
+    # own entrySize field, since it must agree with how entries are walked.
+    id_off, stride = None, 0
+    if method & 0x10:
+        stride += 2
+    elif method & 0x08:
+        stride += 1
+    if method & 0x04:
+        stride += 1
+    if method & 0x02:
+        id_off, stride = stride, stride + 2
+    if method & 0x01:
+        stride += 1
+    stride = max(1, stride)
+
+    if len(body) < KEYMAP_LEVELS_OFF + 2:
+        return None
+    table = KEYMAP_LEVELS_OFF + struct.unpack_from(">h", body,
+                                                   KEYMAP_LEVELS_OFF)[0]
+    if table < 0 or table > len(body):
+        return None
+    return KeymapLayout(header_sid=header_sid & 0xFFFF, method=method,
+                        num_keys=entries_per_vel + 1, table=table,
+                        stride=stride, id_off=id_off)
 
 
 def _decode_hash(hash_val: int) -> tuple[int, int]:
@@ -178,19 +251,26 @@ class KrzFile:
 
     def keymap_sample_refs(self, km: KrzObject) -> list[int]:
         """Every (nonzero) sample id referenced by a Keymap: the default
-        sampleId in its header plus every one of its 128 entries, in
-        encounter order (may repeat many times — most keys share a
-        sample)."""
+        sampleId in its header plus every one of its entries, in encounter
+        order (may repeat many times — most keys share a sample).
+
+        A compacted keymap has no per-entry ids, so the header's own id is
+        all there is; walking it at a fixed stride anyway would collect
+        tuning bytes read as ids and pull unrelated samples into an
+        assembled bank."""
         body = km.body()
         out = []
         default_sid = struct.unpack_from(">H", body, 0)[0]
         if default_sid:
             out.append(default_sid)
-        for k in range(NUM_KEYS):
-            eo = KEYMAP_HDR + k * KEYMAP_ENTRY_SIZE
-            if eo + KEYMAP_ENTRY_SIZE > len(body):
+        lay = keymap_layout(body)
+        if lay is None or lay.id_off is None:
+            return out
+        for k in range(lay.num_keys):
+            eo = lay.table + k * lay.stride + lay.id_off
+            if eo + 2 > len(body):
                 break
-            sid = struct.unpack_from(">H", body, eo + 2)[0]
+            sid = struct.unpack_from(">H", body, eo)[0]
             if sid:
                 out.append(sid)
         return out
@@ -531,12 +611,21 @@ def _repatch_keymap_samples(km: KrzObject, src_key: tuple[int, int],
     default_sid = struct.unpack_from(">H", block, body_start)[0]
     struct.pack_into(">H", block, body_start, _remap(default_sid))
 
-    for k in range(NUM_KEYS):
-        eo = body_start + KEYMAP_HDR + k * KEYMAP_ENTRY_SIZE
-        if eo + KEYMAP_ENTRY_SIZE > len(block):
+    # Only a keymap that HAS per-entry sample ids gets its entries patched.
+    # A compacted one carries none: its header id (already remapped above) is
+    # the whole story, and writing ids at a fixed stride into it overwrites
+    # tuning and subSample bytes instead -- measured on this project's own
+    # library, that corrupted every one of 941 compacted-keymap programs.
+    lay = keymap_layout(km.body())
+    if lay is None or lay.id_off is None:
+        return bytes(block)
+
+    for k in range(lay.num_keys):
+        eo = body_start + lay.table + k * lay.stride + lay.id_off
+        if eo + 2 > len(block):
             break
-        old_sid = struct.unpack_from(">H", block, eo + 2)[0]
-        struct.pack_into(">H", block, eo + 2, _remap(old_sid))
+        old_sid = struct.unpack_from(">H", block, eo)[0]
+        struct.pack_into(">H", block, eo, _remap(old_sid))
     return bytes(block)
 
 

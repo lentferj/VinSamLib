@@ -14,11 +14,14 @@ semantic reader to lean on:
   `parsers.eiii_parser.parse_eiii()` for the rich, hardware-accurate
   `models.common` zone model — the same reuse-not-reinvent approach the rest
   of this project takes toward mpc2emu.
-- **KRZ**: mpc2emu has no semantic KRZ reader (it's write-only), so this walks
-  `banks/krz.py`'s own reference graph directly: each referenced keymap's 128
-  raw key entries are collapsed into runs of consecutive keys pointing at the
-  same sample, since a K2000 keymap has no explicit key-range field at all
-  (KRZ_FORMAT.md §3.2) — each of the 128 keys just names its own sample.
+- **KRZ**: walks `banks/krz.py`'s own reference graph directly, so that
+  browsing a K2000 library needs no mpc2emu checkout at all (mpc2emu has had
+  a KRZ reader since 2026-07-27, but reaching for it here would make the
+  Explorer's KRZ support conditional on configuration the E4B path can
+  demand and this one doesn't need). A keymap's entries are collapsed into
+  runs of consecutive keys pointing at the same sample, since a K2000 keymap
+  has no explicit key-range field at all (KRZ_FORMAT.md §3.2) — each entry
+  just names its own sample, and entry `i` sounds at key `i + 12`.
 """
 
 from __future__ import annotations
@@ -197,9 +200,30 @@ def summarize_krz_program(bank: krz.KrzFile, prog: krz.KrzObject) -> PresetSumma
                           total_sample_bytes=total_sample_bytes)
 
 
+def _keymap_entry_sample_ids(km: krz.KrzObject) -> list[int]:
+    """The sample id each of a keymap's entries names, in entry order —
+    every entry naming the header's own sample when the keymap is compacted.
+    The layout rules live in `banks/krz.py`'s `keymap_layout()`; this only
+    reads them out."""
+    body = km.body()
+    lay = krz.keymap_layout(body)
+    if lay is None:
+        return []
+    if lay.id_off is None:
+        return [lay.header_sid] * lay.num_keys
+
+    ids = []
+    for k in range(lay.num_keys):
+        p = lay.table + k * lay.stride + lay.id_off
+        if p + 2 > len(body):
+            break
+        ids.append(struct.unpack_from(">H", body, p)[0])
+    return ids
+
+
 def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSummary], set[int]]:
-    """Collapse a keymap's 128 individual key->sample entries into runs of
-    consecutive keys sharing the same sample id.
+    """Collapse a keymap's key->sample entries into runs of consecutive keys
+    sharing the same sample id.
 
     Real hardware-saved banks can carry keymap slots pointing at a sample id
     that doesn't exist in this bank at all — leftover/uninitialized entries
@@ -208,27 +232,25 @@ def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSu
     genuinely-referenced samples in the same keymap). Those runs are
     dropped rather than shown as `<sample NNNN>` noise — a librarian is
     for finding real, playable content, not surfacing hardware artifacts."""
-    body = km.body()
-    sample_by_key = []
-    for k in range(krz.NUM_KEYS):
-        eo = krz.KEYMAP_HDR + k * krz.KEYMAP_ENTRY_SIZE
-        if eo + krz.KEYMAP_ENTRY_SIZE > len(body):
-            sample_by_key.append(0)
-            continue
-        sample_by_key.append(struct.unpack_from(">H", body, eo + 2)[0])
+    sample_by_entry = _keymap_entry_sample_ids(km)
+
+    def key_of(entry: int) -> int:
+        # Entry i sounds at key i+12, so entries run past 127 and the tail is
+        # clamped rather than shown as a key the keyboard doesn't have.
+        return min(127, entry + krz.KEYMAP_ENTRY_NOTE_OFFSET)
 
     runs: list[ZoneSummary] = []
     sample_ids: set[int] = set()
     lo, prev_sid = None, None
-    for key in range(krz.NUM_KEYS):
-        sid = sample_by_key[key]
+    for entry, sid in enumerate(sample_by_entry):
         if sid != prev_sid:
             if prev_sid and prev_sid in bank.samples:
-                runs.append(_krz_zone(bank, prev_sid, lo, key - 1))
+                runs.append(_krz_zone(bank, prev_sid, key_of(lo), key_of(entry) - 1))
                 sample_ids.add(prev_sid)
-            lo, prev_sid = key, sid
+            lo, prev_sid = entry, sid
     if prev_sid and prev_sid in bank.samples:
-        runs.append(_krz_zone(bank, prev_sid, lo, krz.NUM_KEYS - 1))
+        runs.append(_krz_zone(bank, prev_sid, key_of(lo),
+                              key_of(len(sample_by_entry) - 1)))
         sample_ids.add(prev_sid)
     return runs, sample_ids
 
