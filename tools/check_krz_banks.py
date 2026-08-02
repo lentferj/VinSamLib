@@ -39,8 +39,10 @@ Usage:
 PATH may be a `.krz` file, a directory (searched recursively), or a disk
 image / floppy image VinSamLib can read, in which case every KRZ bank
 inside it is scanned. `--against` takes the loose `.krz` the scanned
-banks were converted from; point it at an unrelated bank and every
-comparison is meaningless, which is why it is opt-in.
+banks were converted from, so it applies to KRZ→KRZ work only: a bank
+built from an E4B or a WAV folder has no KRZ counterpart and is reported
+as *not compared* rather than as a defect. Point it at an unrelated bank
+and there is nothing to compare, which is why it is opt-in.
 
 Exits 0 clean, 1 flagged, 2 on a bad path or bad arguments.
 """
