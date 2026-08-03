@@ -101,6 +101,16 @@ class IndexDB:
         # see MainWindow._run_scan) is mid-commit on the same file, instead
         # of blocking or hitting "database is locked".
         self._conn.execute("PRAGMA journal_mode = WAL")
+        # The scanner commits once per container so search results appear
+        # while a scan is still running, which under the default
+        # synchronous=FULL means an fsync per container — 2392 of them, 7.6s
+        # of a scan measured here, against 4.9s at NORMAL. NORMAL is the
+        # documented companion to WAL and still survives an application
+        # crash; only an OS crash or power loss can lose recent commits.
+        # That is the right trade for this file: it is a derived cache of
+        # what is on disk, and File ▸ Rescan Library rebuilds it from
+        # scratch. Nothing here is a source of truth.
+        self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
