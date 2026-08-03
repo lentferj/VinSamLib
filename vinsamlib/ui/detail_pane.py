@@ -155,7 +155,7 @@ class DetailPane(QWidget):
     def _apply_error(self, gen: int, message: str) -> None:
         if gen != self._gen:
             return
-        last_line = message.strip().splitlines()[-1] if message else "error"
+        last_line = workers.last_error_line(message)
         self._browser.setHtml(f"<i>Failed to load: {_escape(last_line)}</i>")
 
     # -- background work --------------------------------------------------------

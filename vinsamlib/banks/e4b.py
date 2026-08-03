@@ -44,6 +44,7 @@ Sample body:
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass, field
 
@@ -173,6 +174,13 @@ def _parse_zone_refs(body: bytes) -> list[tuple[int, int]]:
 
 # ── parsing ──────────────────────────────────────────────────────────────────
 
+# Padding between/after chunks: an all-zero header parses as a zero-size
+# chunk with a zero tag, which is how a 75.8 MB bank produced 6.9 M phantom
+# chunks before _walk_chunks_physical learned to skip the run in one search.
+_ZERO_TAG = b"\x00\x00\x00\x00"
+_NON_ZERO = re.compile(rb"[^\x00]")
+
+
 def _walk_chunks_physical(data: bytes, path: str, warnings: list[str]):
     """Yield (tag, body) by walking the FORM sequentially using each
     chunk's own physical header (tag + BE size). Mirrors mpc2emu's own
@@ -194,6 +202,18 @@ def _walk_chunks_physical(data: bytes, path: str, warnings: list[str]):
         for the tags it wants and silently ignores everything else. Doing
         the same here (skip, don't raise) is what makes real-world files
         parse at all instead of erroring on their first unrecognised chunk.
+      - A run of zero bytes is padding, not chunks. Reading it as chunks
+        "works" -- an all-zero header is tag `\\0\\0\\0\\0` with size 0, so
+        the walk simply advances 8 bytes and repeats -- but one real 75.8 MB
+        commercial bank is mostly such padding, and crawling it produced
+        6 949 036 phantom chunks: 8.8 s to parse, +717 MB resident, and (with
+        a warning appended per unrecognised chunk, as this used to do) 347 MB
+        of identical warning strings retained for the lifetime of the
+        E4BFile. The Explorer caches parsed banks on their tree node, so that
+        was 700 MB held for one expanded row. The run is now skipped in a
+        single search. Padding is skipped, NOT stopped at: the same bank's
+        real E3S1/E4P1 chunks continue afterwards.
+
       - EMSt must NOT be treated as an early-exit stop condition, even
         though it's documented as "always the last chunk": at least one
         real commercial bank in this project's library is a multi-part
@@ -212,6 +232,17 @@ def _walk_chunks_physical(data: bytes, path: str, warnings: list[str]):
     while pos + 8 <= end:
         tag = data[pos:pos + 4]
         size = struct.unpack_from(">I", data, pos + 4)[0]
+        if tag == _ZERO_TAG and size == 0:
+            # Padding, not a chunk (see the docstring). Jump the whole zero
+            # run at once. A chunk tag is ASCII and can hold no zero byte, so
+            # the first non-zero byte is the next real header; & ~1 keeps the
+            # IFF two-byte alignment a real chunk always starts on. The run is
+            # at least these 8 bytes, so pos always advances.
+            m = _NON_ZERO.search(data, pos, end)
+            if m is None:
+                return
+            pos = m.start() & ~1
+            continue
         body_start = pos + 8
         body_end = body_start + size
         if body_end > len(data):
@@ -252,6 +283,7 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> E4BFile:
     presets: list[E4BPreset] = []
     samples: dict[int, E4BSample] = {}
     warnings: list[str] = []
+    unknown_tags: dict[bytes, int] = {}
 
     for tag, body in _walk_chunks_physical(data, path, warnings):
         if tag == E4MA_TAG:
@@ -286,7 +318,16 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> E4BFile:
             # 'EMS0'-style variants seen in commercial libraries) — skip
             # them rather than failing the whole bank, exactly as
             # mpc2emu's own reference reader's caller does.
-            warnings.append(f"skipped unrecognised chunk tag {tag!r}")
+            #
+            # Counted, not appended one per chunk: a warning list is a
+            # diagnostic, and it must not be able to grow with the size of
+            # the file it describes. One malformed 75.8 MB bank used to leave
+            # 347 MB of identical strings alive inside the returned E4BFile.
+            unknown_tags[tag] = unknown_tags.get(tag, 0) + 1
+
+    for tag, count in unknown_tags.items():
+        warnings.append(f"skipped unrecognised chunk tag {tag!r}"
+                        + (f" ({count} of them)" if count > 1 else ""))
 
     # EMSt carries no TOC entry and is always the last chunk (E4B_FORMAT.md
     # §1); find it directly by its own tag (which cannot legitimately appear

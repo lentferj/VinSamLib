@@ -434,7 +434,7 @@ class MainWindow(QMainWindow):
         self._warn_polyphony(risks or [], "Import Sample Folder")
 
     def _on_sample_dir_import_error(self, message: str) -> None:
-        last_line = message.strip().splitlines()[-1] if message else "error"
+        last_line = workers.last_error_line(message)
         self.statusBar().showMessage(f"Sample folder import failed: {last_line}", 8000)
         QMessageBox.warning(self, "Import Sample Folder", f"Import failed:\n\n{last_line}")
 
@@ -573,7 +573,7 @@ class MainWindow(QMainWindow):
         self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
 
     def _on_preset_convert_error(self, message: str) -> None:
-        last_line = message.strip().splitlines()[-1] if message else "error"
+        last_line = workers.last_error_line(message)
         self.statusBar().showMessage(f"Conversion failed: {last_line}", 8000)
         QMessageBox.warning(self, "Import via mpc2emu", f"Conversion failed:\n\n{last_line}")
 
@@ -646,7 +646,7 @@ class MainWindow(QMainWindow):
 
     def _on_scan_error(self, message: str) -> None:
         self._scan_worker = None
-        last_line = message.strip().splitlines()[-1] if message else "error"
+        last_line = workers.last_error_line(message)
         self.statusBar().showMessage(f"Scan failed: {last_line}", 8000)
 
 

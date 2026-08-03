@@ -586,7 +586,7 @@ class ImagePane(QWidget):
         def _error(message: str):
             self._busy = False
             self._set_buttons_enabled(True)
-            last_line = message.strip().splitlines()[-1] if message else "error"
+            last_line = workers.last_error_line(message)
             self.statusMessage.emit(f"Failed: {last_line}")
 
         worker.signals.finished.connect(_finished)

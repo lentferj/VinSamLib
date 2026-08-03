@@ -507,7 +507,7 @@ class BankPane(QWidget):
     def _apply_preset_info_error(self, gen: int, message: str) -> None:
         if gen != self._info_gen:
             return
-        last_line = message.strip().splitlines()[-1] if message else "error"
+        last_line = workers.last_error_line(message)
         self._info_label.setText(f"<i>Failed to load: {_escape(last_line)}</i>")
 
     # -- size meter (recomputes via the real assemble(), not an estimate) -------
@@ -586,7 +586,7 @@ class BankPane(QWidget):
         if gen != self._gen:
             return
         self._last_bytes = None
-        last_line = message.strip().splitlines()[-1] if message else "error"
+        last_line = workers.last_error_line(message)
         self._meter_label.setText(f"Can't assemble: {last_line}")
         self._meter_label.setStyleSheet("color: #c0392b; font-size: 11px;")
         self._save_btn.setEnabled(False)

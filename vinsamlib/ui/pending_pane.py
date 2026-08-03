@@ -452,5 +452,5 @@ class PendingBanksPane(QWidget):
 
     def _on_build_error(self, message: str) -> None:
         self._build_btn.setEnabled(bool(self._pending))
-        last_line = message.strip().splitlines()[-1] if message else "error"
+        last_line = workers.last_error_line(message)
         self.statusMessage.emit(f"Build failed: {last_line}")
