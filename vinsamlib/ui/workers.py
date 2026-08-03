@@ -8,10 +8,24 @@ pattern, needed because `QRunnable` itself cannot emit signals.
 
 from __future__ import annotations
 
+import re
 import traceback
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+# The last line of a traceback is "some.module.SomeError: the real message",
+# and only the second half means anything to a user. Matches a dotted
+# identifier and nothing else before the colon, so a message that merely
+# contains one ("Foo.xpj is an MPC project...") is left alone.
+_EXC_PREFIX = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*: ")
+
+
+def last_error_line(message: str) -> str:
+    """The human-readable tail of a Worker's error payload (a formatted
+    traceback), for status bars, tooltips and message boxes."""
+    line = message.strip().splitlines()[-1] if message and message.strip() else "error"
+    return _EXC_PREFIX.sub("", line, count=1).strip() or line
 
 
 class WorkerSignals(QObject):

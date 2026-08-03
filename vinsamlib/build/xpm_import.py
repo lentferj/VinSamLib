@@ -1,12 +1,23 @@
 """
-Imports an Akai MPC XPM program (Instruments > Keygroup > Layer, XML,
-referencing external WAV/AIFF sample files -- MPC 2.x/X/Live/One; see
-mpc2emu's parsers/xpm_parser.py) into a real, native E4B or KRZ bank file,
-via mpc2emu's own parse_xpm -> Bank -> [resample/reduce] -> write_e4b /
-write_krz pipeline. This is the only way an XPM ever becomes usable here:
-VinSamLib has no XPM reader of its own and never will (all format-writing
-code in this project comes from mpc2emu; VinSamLib deliberately never
-edits mpc2emu, only wraps it).
+Imports an Akai MPC keygroup program (Instruments > Keygroup > Layer;
+referencing external WAV/AIFF sample files -- MPC 2.x/X/Live/One and MPC 3;
+see mpc2emu's parsers/xpm_parser.py) into a real, native E4B or KRZ bank
+file, via mpc2emu's own parse_xpm -> Bank -> [resample/reduce] -> write_e4b /
+write_krz pipeline. This is the only way an MPC program ever becomes usable
+here: VinSamLib has no XPM reader of its own and never will (all
+format-writing code in this project comes from mpc2emu; VinSamLib
+deliberately never edits mpc2emu, only wraps it).
+
+**Three file types, one reader.** The MPC saves the same keygroup program
+inside three containers -- a bare program (`.xpm`), a track (`.xty`) and a
+project (`.xpj`) -- and mpc2emu's parse_xpm dispatches on the payload, not
+the extension (its parsers/registry.py maps all three to it). A project
+carries one program per track, so it is the MPC's own equivalent of an E4B
+bank; since mpc2emu `8e20612`, parse_xpm returns one Preset per keygroup
+program in it, sharing one sample pool. Hence the split below: PROGRAM_EXTS
+always yield exactly one preset and stay leaves in the Explorer, while a
+PROJECT_EXT file is browsed like a bank (ui/models.py's "mpc_project" node),
+one row per program.
 
 Once written, the resulting file is a completely ordinary E4B/KRZ bank --
 it gets no special treatment anywhere else in VinSamLib (Explorer, New
@@ -22,6 +33,7 @@ E4B), not in what happens to it afterward.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -37,6 +49,76 @@ from ..mpc2emu_bridge import xpm_parser
 # layers otherwise.
 _LOOP_NAMES = {0: "none", 1: "forward", 2: "alternating", 3: "forward (release)"}
 
+# One keygroup program per file -- always exactly one preset, so these stay
+# importable leaves in the Explorer.
+PROGRAM_EXTS = (".xpm", ".xty")
+# A project holds one program per track: browsed like a bank, not a leaf.
+PROJECT_EXT = ".xpj"
+# The format label each one carries through the Explorer, the index and the
+# format filter. One definition, since the tree, the scanner and the search
+# results all have to agree on it.
+MPC_EXT_FORMAT = {".xpm": "XPM", ".xty": "XTY", PROJECT_EXT: "XPJ"}
+
+# A `.xpm` is a program of *some* kind, and only a Keygroup one converts:
+# mpc2emu's parse_xpm skips a Drum program explicitly (its pads are one-shot
+# hits, not pitched zones), and a MIDI, Plugin, Audio, CV or Clip track
+# references no sample data at all. None of them *fails* to parse -- each
+# yields a preset with zero voices and zero samples -- so offering them as
+# importable is worse than not: importing one silently adds an empty preset.
+#
+# The three get three different treatments in the Explorer (ui/models.py),
+# because they are three different situations, measured on a real 571-file
+# MPC One backup:
+#   KEYGROUP (82 files)  -- listed and importable.
+#   DRUM (90 files)      -- listed but greyed out. NOT nothing: those 90 hold
+#                           940 sample references, a median of 12 each, and in
+#                           this backup they carry more of the sampled
+#                           material than the keygroup programs do. Hiding
+#                           them hides the good stuff; offering them promises
+#                           an import that yields an empty preset. So: visible,
+#                           honest, waiting on an upstream converter.
+#   EVERYTHING ELSE (399) -- not listed at all, no more sample content than a
+#                           MIDI file has.
+KEYGROUP = "Keygroup"
+DRUM = "Drum"
+_XML_PROGRAM_TYPE = re.compile(rb'<Program\s+type="([^"]*)"')
+_SNIFF_BYTES = 8192
+
+
+def program_kind(path: str) -> Optional[str]:
+    """What kind of program an MPC file holds ("Keygroup", "Drum", "MIDI",
+    "Plugin", "Audio", "CV", "Clip"), or None when it cannot be told from a
+    header peek -- which is never a parse, since a real parse loads every
+    referenced WAV and listing a directory must not do that.
+
+    None is the honest answer for an MPC 3 program (gzipped JSON, whose type
+    only mpc2emu's own reader can name) and for anything unusual, and callers
+    treat it as "show it": no listing heuristic should hide a file it does not
+    understand.
+
+    Verified against a 571-file backup: every file declares its type within
+    the first few KB, and it agrees with the MPC's own `<name>.<Kind>.xpm`
+    filename convention in all 571 cases. The tag is read rather than the
+    name because a renamed file is still perfectly readable."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(_SNIFF_BYTES)
+    except OSError:
+        return None
+    if head.lstrip()[:1] != b"<":
+        return None     # MPC 3 (gzip+JSON) or not XML at all -- can't tell
+    m = _XML_PROGRAM_TYPE.search(head)
+    return m.group(1).decode("ascii", "replace") if m else None
+
+
+def holds_keygroup_program(path: str) -> bool:
+    """Whether a program file is worth indexing -- the search index carries
+    only what a user can act on, so the greyed-out drum rows the Explorer
+    shows are deliberately left out of it (same as the unsupported content
+    inside an image, which is displayed but never indexed)."""
+    kind = program_kind(path)
+    return kind is None or kind == KEYGROUP
+
 
 @dataclass(frozen=True)
 class XpmSummary:
@@ -46,18 +128,57 @@ class XpmSummary:
     zones: list = field(default_factory=list)   # list[ZoneSummary]
 
 
-def summarize_xpm(xpm_path: str, wav_dir: Optional[str] = None) -> XpmSummary:
-    """Read-only preview for Explorer's Detail pane -- parses via mpc2emu's
-    own xpm_parser (same as import_xpm(), just never writes anything) to
-    report the one preset's zones (same ZoneSummary shape banks/summary.py
-    uses for E4B/KRZ presets, so the Detail pane can show the same
-    sample/key/vel/root/loop table either way) and total referenced sample
-    data size, without doing a full import. Same wav_dir default as
-    import_xpm()."""
+@dataclass(frozen=True)
+class ProjectSummary:
+    """The container itself, not any one of its programs -- deliberately the
+    same set of facts banks/summary.py's BankSummary carries for a real E4B
+    or KRZ bank, since that is what the Detail pane shows for one."""
+    name: str
+    program_names: list[str] = field(default_factory=list)
+    sample_count: int = 0
+    total_sample_bytes: int = 0
+
+
+def parse_mpc(path: str, wav_dir: Optional[str] = None):
+    """Parse any MPC container mpc2emu accepts (program, track or project)
+    into its Bank -- the one parse every read-only caller here shares.
+
+    Not cheap: it loads every referenced WAV, so a project can pull tens of
+    MB. Callers that browse (ui/models.py) parse once and keep the Bank on
+    the tree node; callers that write re-parse, so a mutation never reaches
+    a cached one."""
     if wav_dir is None:
-        wav_dir = str(Path(xpm_path).resolve().parent)
-    bank = _run_captured(xpm_parser.parse_xpm, xpm_path, wav_dir)
-    preset = bank.presets[0]
+        wav_dir = str(Path(path).resolve().parent)
+    return _run_captured(xpm_parser.parse_xpm, path, wav_dir)
+
+
+def _preset_samples(bank, preset) -> list:
+    """The samples one preset actually references, in first-use order.
+
+    A project's presets SHARE bank.samples (mpc2emu loads each WAV once,
+    however many programs name it), so len(bank.samples) is the whole
+    project's pool -- reporting or writing that per program would multiply
+    the same megabytes by the number of programs."""
+    out, seen = [], set()
+    for voice in preset.voices:
+        for z in voice.zones:
+            if z.sample_name in seen:
+                continue
+            seen.add(z.sample_name)
+            sample = bank.find_sample(z.sample_name)
+            if sample is not None:
+                out.append(sample)
+    return out
+
+
+def summarize_program(bank, preset_index: int = 0) -> XpmSummary:
+    """One program's zones out of an already-parsed Bank -- same
+    ZoneSummary shape banks/summary.py uses for E4B/KRZ presets, so the
+    Detail pane shows the same sample/key/vel/root/loop table either way.
+
+    Split from summarize_xpm() so browsing a project's programs re-uses the
+    Bank the tree already parsed instead of re-reading every WAV per click."""
+    preset = bank.presets[preset_index]
     zones: list[ZoneSummary] = []
     for voice in preset.voices:
         for z in voice.zones:
@@ -70,43 +191,80 @@ def summarize_xpm(xpm_path: str, wav_dir: Optional[str] = None) -> XpmSummary:
                 loop=_LOOP_NAMES.get(int(sample.loop_type), "?") if sample else "?",
                 sample_rate=sample.sample_rate if sample else None,
             ))
-    total_bytes = sum(len(sample.data) for sample in bank.samples)
+    samples = _preset_samples(bank, preset)
     return XpmSummary(
         preset_name=preset.name.strip(),
-        sample_count=len(bank.samples),
-        total_sample_bytes=total_bytes,
+        sample_count=len(samples),
+        total_sample_bytes=sum(len(s.data) for s in samples),
         zones=zones,
     )
 
 
-def load_samples_for_test(xpm_path: str, wav_dir: Optional[str] = None) -> list:
+def summarize_project(bank) -> ProjectSummary:
+    """The whole container, for the Detail pane's project row. Sample count
+    and size are the shared pool's, counted once -- not the sum over
+    programs, which would double-count a WAV two tracks both use."""
+    return ProjectSummary(
+        name=bank.name.strip(),
+        program_names=[p.name.strip() for p in bank.presets],
+        sample_count=len(bank.samples),
+        total_sample_bytes=sum(len(s.data) for s in bank.samples),
+    )
+
+
+def summarize_xpm(xpm_path: str, wav_dir: Optional[str] = None,
+                  preset_index: int = 0) -> XpmSummary:
+    """Read-only preview for Explorer's Detail pane -- parses via mpc2emu's
+    own xpm_parser (same as import_xpm(), just never writes anything) to
+    report one preset's zones and referenced sample data size, without doing
+    a full import. Same wav_dir default as import_xpm()."""
+    return summarize_program(parse_mpc(xpm_path, wav_dir), preset_index)
+
+
+def load_samples_for_test(xpm_path: str, wav_dir: Optional[str] = None,
+                          preset_index: Optional[int] = None) -> list:
     """Read-only: parses just far enough to list samples, for the Convert
     Options dialog's stereo Test button -- same parse summarize_xpm()
     already does for the Detail pane preview, never writes anything.
-    Same wav_dir default as import_xpm()."""
-    if wav_dir is None:
-        wav_dir = str(Path(xpm_path).resolve().parent)
-    bank = _run_captured(xpm_parser.parse_xpm, xpm_path, wav_dir)
-    return bank.samples
+    Same wav_dir/preset_index meaning as import_xpm()."""
+    bank = parse_mpc(xpm_path, wav_dir)
+    if preset_index is None:
+        return bank.samples
+    return _preset_samples(bank, bank.presets[preset_index])
 
 
 def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = None,
-               risks_out: Optional[list] = None) -> str:
-    """Parses an XPM program (via mpc2emu's own parse_xpm) and writes it
-    out as a real E4B or KRZ bank file in a fresh temp dir, applying
-    whatever resample/reduce options were chosen along the way -- see
-    build/convert.py's _apply_and_write() for everything after the parse
-    step. Returns the new file's path; never touches xpm_path itself.
+               risks_out: Optional[list] = None,
+               preset_index: Optional[int] = None) -> str:
+    """Parses an MPC program, track or project (via mpc2emu's own
+    parse_xpm) and writes it out as a real E4B or KRZ bank file in a fresh
+    temp dir, applying whatever resample/reduce options were chosen along
+    the way -- see build/convert.py's _apply_and_write() for everything
+    after the parse step. Returns the new file's path; never touches
+    xpm_path itself.
 
-    wav_dir: directory to search for the XPM's referenced WAV/AIFF sample
-    files if they aren't sitting right next to the .xpm (defaults to the
-    XPM's own directory, mpc2emu's own convention, when None).
+    wav_dir: directory to search for the referenced WAV/AIFF sample files
+    if they aren't sitting right next to the source (defaults to its own
+    directory, mpc2emu's own convention, when None).
+
+    preset_index: import ONE program of a project rather than all of them
+    (Explorer's per-program row). None writes every preset the file
+    yielded, which for a project is the whole thing as one bank -- and for
+    a program or track is the single preset it always holds anyway.
 
     risks_out: collects convert.polyphony_risk() dicts for the written bank.
-    An XPM is the likeliest source to trip it -- an MPC keygroup program
+    An MPC program is the likeliest source to trip it -- a keygroup program
     stacks up to four layers per pad by design, and every stereo one of them
     costs two E4B voices."""
-    if wav_dir is None:
-        wav_dir = str(Path(xpm_path).resolve().parent)
-    bank = _run_captured(xpm_parser.parse_xpm, xpm_path, wav_dir)
+    bank = parse_mpc(xpm_path, wav_dir)
+    if preset_index is not None:
+        # Narrow the freshly-parsed Bank in place -- safe because parse_mpc()
+        # just built it for this call alone (the Explorer's cached Bank is
+        # never handed to a writer). Dropping the other programs' samples
+        # matters: they are one shared pool, so without this a single
+        # program would carry the whole project's audio into the bank.
+        preset = bank.presets[preset_index]
+        preset.program_number = 0
+        bank.presets = [preset]
+        bank.samples = _preset_samples(bank, preset)
     return _apply_and_write(bank, opts, Path(xpm_path).stem, risks_out)

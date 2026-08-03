@@ -10,8 +10,9 @@ A librarian and bank builder for vintage sampler content — E-mu E4B
 series). Browse a whole library of banks, discs, and floppy images at
 once; drag any preset or program straight into a new bank; queue
 several banks for a build; write real, loadable disk images. Where
-mpc2emu is available, you can also import an Akai MPC `.xpm` program
-directly, or run any existing preset through mpc2emu's vintage resample
+mpc2emu is available, you can also browse and import Akai MPC material
+directly — a `.xpm` program, or a whole `.xpj` project one program at a
+time — or run any existing preset through mpc2emu's vintage resample
 / sample-count reduction pipeline on its way into a bank.
 
 > **Legal:** [DISCLAIMER.md](DISCLAIMER.md) · [LICENSE](LICENSE)
@@ -132,9 +133,9 @@ why if mpc2emu isn't configured.
 
 Point VinSamLib at any number of folders — loose `.e4b`/`.KRZ` files,
 EMU3 CD/HD images, ISO 9660 discs, FAT12/16/32 floppy or hard-disk
-images, folders of `.xpm` programs — and it lazily walks the tree,
-showing banks, discs, folders, presets, and programs in one unified
-Explorer. A background scanner indexes
+images, folders of Akai MPC programs and projects — and it lazily walks
+the tree, showing banks, discs, folders, presets, and programs in one
+unified Explorer. A background scanner indexes
 everything into a local search database, so typing in the search box
 finds a preset by name anywhere in the whole library, instantly, without
 waiting for the tree to be expanded down to it.
@@ -165,12 +166,17 @@ EMU-fs or FAT hard disk for the E4XT; FAT16 CD/hard-disk or FAT12 Gotek
 floppy for the K2000), or opens an existing one, and lets you append,
 rename, delete, and export individual bank entries in place.
 
-### Import an Akai MPC `.xpm` program
+### Import an Akai MPC program, or browse a whole project
 
 When mpc2emu is available: double-click or right-click any `.xpm` file
 in the library, choose a target format and optional vintage conversion,
 and it lands in New Bank as a single preset, ready to combine with
 anything else.
+
+An MPC **project** (`.xpj`) holds one program per keygroup track, so it
+is browsed like a bank: expand it in the Explorer and each program shows
+up as its own row, with the same zone summary a real preset gets. Import
+one program, or the whole project at once.
 
 ### Run an existing preset through mpc2emu's vintage pipeline
 
@@ -279,12 +285,73 @@ library, not real commercial content.)*
 ### Import an Akai MPC program (needs mpc2emu)
 
 1. Add a library folder containing `.xpm` files, or use
-   **File → Import XPM…** to pick one directly.
+   **File → Import MPC Program…** to pick one directly (it accepts
+   `.xpm` programs, `.xty` tracks and `.xpj` projects).
 2. Double-click the `.xpm` (or right-click it → **Import…**). A dialog
    asks for the target format (E4B, KRZ or EIII) and, optionally,
    vintage resample/reduce options.
-3. The imported preset lands directly in **New Bank** — an XPM always
-   holds exactly one program, so there's nothing to choose between.
+3. The imported preset lands directly in **New Bank** — a `.xpm` or
+   `.xty` always holds exactly one program, so there's nothing to
+   choose between.
+
+### Browse and import an MPC project (needs mpc2emu)
+
+An MPC project (`.xpj`) carries one program per track, which makes it
+the MPC's own equivalent of an E4B bank — so it is browsed like one
+rather than being a single all-or-nothing import.
+
+1. Add a library folder containing `.xpj` files. Each shows up as an
+   expandable 🗂 row.
+2. Expand it. Every **keygroup** program in the project gets its own
+   row, named after its track; selecting one shows the same key-zone /
+   velocity-layer / sample-rate summary a real preset gets. Drum, MIDI,
+   plugin, audio and CV tracks hold nothing convertible and are not
+   listed.
+3. Double-click a program (or right-click it → **Import…**) to bring
+   just that one into **New Bank**, or right-click the project itself →
+   **Import all programs of "…"…** to bring in every program at once,
+   each named after its own track.
+4. Expanding a project reads every sample it references, so the first
+   expansion of a large one takes a moment; after that, clicking through
+   its programs is instant. Projects are indexed by filename only — a
+   background scan never parses them.
+
+![Explorer showing an expanded .xpj project with one row per keygroup program, alongside a .xpm program and a .xty track, and the Detail pane summarising the selected program](docs/screenshots/10_mpc_project.png)
+
+A project with no keygroup program at all can't produce anything: the
+row reports that instead of expanding, and says which track kinds it
+found. Both MPC 2.x projects (whose programs live in a
+`<name>_[ProjectData]` folder next to the `.xpj`) and MPC 3 ones are
+read the same way.
+
+**A project's data folder is mostly not sample content.** It holds one
+`.xpm` per track, and only a **keygroup** program carries the pitched,
+multisampled zones a sampler bank is made of. The others don't *fail* to
+convert, which is the problem: each yields a preset with no zones and no
+samples, so offering them would mean importing silent emptiness. The three
+cases get three different treatments — measured on a real 571-file MPC One
+backup:
+
+| kind | there | shown as |
+|---|---|---|
+| Keygroup | 82 | a normal, importable row |
+| Drum | 90 | greyed out — visible, not importable |
+| MIDI / Plugin / Audio / CV / Clip | 399 | not listed, like a loose WAV |
+
+**Drum programs are greyed rather than hidden** because they are not
+empty: those 90 files hold 940 sample references, a median of 12 each —
+in that backup, *more* sampled material than the keygroup programs carry.
+mpc2emu converts none of it yet (a pad is a one-shot hit, not a pitched
+zone), so the row says what it is and offers no import that would quietly
+produce nothing. The kit's samples are usually sitting as WAVs in the same
+folder, which **File → Import Sample Folder…** can take in the meantime.
+
+A file whose kind can't be determined from its header (an MPC 3 program,
+or anything unusual) is always listed as importable — the rule only acts
+on what explicitly declares itself as something else.
+
+If you indexed such a folder with an earlier version, **File → Rescan
+Library** drops the stale entries from search.
 
 ### Run an existing preset through mpc2emu (needs mpc2emu)
 
@@ -333,8 +400,9 @@ you type. Search is **word-prefix matching**: each space-separated word
 you type must *start* a word somewhere in the item's name, and multiple
 words are AND-ed together (so `bass str` matches "Bassoon Strings" but
 not "Bassoon Trumpet"). The format dropdown next to the search box
-(`All`/`E4B`/`KRZ`/`XPM`) filters both the live tree and search results
-to just that format.
+(`All`/`E4B`/`KRZ`/`EIII`/`MPC`) filters both the live tree and search
+results to just that format. `MPC` covers all three Akai containers at
+once — `.xpm` programs, `.xty` tracks and `.xpj` projects.
 
 ### Explorer
 
@@ -348,7 +416,9 @@ Right-click (or double-click) behavior depends on what you've selected:
 | Item | Double-click | Right-click menu |
 |---|---|---|
 | Preset/program (one or many selected) | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B, KRZ or EIII) — both work on a multi-selection |
-| `.xpm` file | Import (opens the conversion dialog) | "Import …" |
+| `.xpm` program or `.xty` track | Import (opens the conversion dialog) | "Import …" |
+| `.xpj` project | Expand into its programs | "Import all programs of …" |
+| One program inside a project | Import (opens the conversion dialog) | "Import …" |
 | Library root (top-level folder) | — | "Remove … from Library…" |
 
 Real **EIII / ESI-32** bank data — which commonly shares an EMU3-
@@ -364,7 +434,8 @@ empty folder.
 
 ### Detail Pane
 
-Selecting a preset, program, or `.xpm` shows a condensed summary rather
+Selecting a preset, program, MPC program or MPC project shows a
+condensed summary rather
 than a row-per-zone table (an earlier version showed the full table;
 real presets can carry dozens of zones, and that much detail wasn't
 actually useful at a glance): voice/keymap count, total unique sample
@@ -473,7 +544,7 @@ import.
 
 #### Import as: (target format)
 
-The target-format picker at the very top. Only XPM import and "Import
+The target-format picker at the very top. Only MPC import and "Import
 via mpc2emu" show it (Pending's per-bank dialog doesn't — its
 conversion button is still E4B-only, see Pending for Image above).
 "Import via mpc2emu" defaults this picker to the preset's own source
@@ -640,7 +711,8 @@ actual fraction removed won't always be exact.
 #### Behavior shared by every section
 
 The dialog grows as you check more sections, and the title/wording adapts
-to which feature opened it (e.g. "Import via mpc2emu" vs. "Import XPM")
+to which feature opened it (e.g. "Import via mpc2emu" vs. "Import MPC
+Program")
 so it never says the wrong thing. Expanding everything wants more height
 than a window is allowed to occupy, so the sections scroll once they run
 out of room; the OK/Cancel buttons sit outside that and stay reachable.
@@ -721,19 +793,39 @@ operations on the real image file (via a temp-copy-then-replace, never a
 from-scratch rebuild), confirmed with a dialog before anything
 destructive happens.
 
-### XPM Import
+### MPC Import (XPM / XTY / XPJ)
 
-An `.xpm` (Akai MPC Keygroup program) always holds **exactly one**
-program — mpc2emu's own parser guarantees this — so importing one always
-produces exactly one preset in New Bank, never a whole separate bank of
-its own. The display name uses the **original filename**, not the
-preset's internal name: E4B truncates preset names to 16 hardware
-characters, so several distinctly-named XPMs sharing a long common
-prefix would otherwise all show up under the same collapsed name.
+The MPC saves the same keygroup program inside three containers, and
+mpc2emu reads all three: a bare program (`.xpm`), a track (`.xty`) and a
+project (`.xpj`). The first two hold **exactly one** program, so
+importing one always produces exactly one preset in New Bank, never a
+whole separate bank of its own. Their display name uses the **original
+filename**, not the preset's internal name: E4B truncates preset names to
+16 hardware characters, so several distinctly-named XPMs sharing a long
+common prefix would otherwise all show up under the same collapsed name.
+
+A **project** is different, because it holds one program per keygroup
+track — the MPC's own equivalent of a bank. It is expandable in the
+Explorer rather than importable in one gulp, and its programs can be
+imported one at a time or all at once. Here the filename is the *shared*
+part and the program names are what distinguish them, so those are what
+New Bank shows.
+
+Two consequences worth knowing:
+
+- **Expanding a project parses it**, which means reading every WAV it
+  references (a real one can pull tens of MB). That happens once per
+  project, on expansion, and never during a background library scan —
+  the index records projects by filename only, so search finds the
+  project but not its programs by name.
+- Programs are **imported, not dragged**. A real preset can be dragged
+  into New Bank because it already is E4B/KRZ/EIII content; an MPC
+  program only becomes one by going through a conversion, so its row
+  offers the same Convert Options dialog a `.xpm` does.
 
 ### "Import via mpc2emu"
 
-Generalizes XPM import's exact same pipeline to a preset or program you
+Generalizes MPC import's exact same pipeline to a preset or program you
 already have natively in your library — E4B, KRZ or EIII, any of the
 three can be the source and any can be the target: right-click it,
 choose options, and get a converted copy in New Bank — without exporting
@@ -772,8 +864,8 @@ where no filename names a pitch and everything lands on the default root
 — are spread onto consecutive keys instead, one per key, each root moving
 with its sample so nothing plays transposed. The result is one
 multisampled preset, landing straight in New Bank under the folder's
-name — exactly the way XPM import lands one preset, never a whole bank of
-its own.
+name — exactly the way a `.xpm` import lands one preset, never a whole
+bank of its own.
 
 **Targeting KRZ:** multisampled KRZ output was broken on real hardware
 until mpc2emu's 2026-08-02 keymap fix — every zone landed 12 semitones
@@ -943,7 +1035,7 @@ vinsamlib/
 │   └── summary.py              # Zone/velocity/bit-depth/sample-rate summaries for the UI
 ├── build/
 │   ├── convert.py              # mpc2emu resample/reduce wrapper (ConversionOptions)
-│   ├── xpm_import.py           # XPM -> E4B/KRZ/EIII import, sharing convert.py's pipeline
+│   ├── xpm_import.py           # MPC .xpm/.xty/.xpj -> E4B/KRZ/EIII, sharing convert.py's pipeline
 │   └── images.py               # create_image()/append_banks() over mpc2emu's writers
 ├── vfs/                        # Read-side filesystem support mpc2emu itself never needed
 │   ├── emu3.py                 # EMU3 filesystem (E4XT CD/HD images)

@@ -18,14 +18,19 @@ from ..vfs.detect import open_volume, sniff
 
 
 def resolve_result(result: SearchResult) -> Optional[TreeNode]:
-    if result.kind == "xpm":
-        # An XPM hit's container *is* the .xpm file itself (see
+    if result.kind in ("xpm", "mpc_project"):
+        # An MPC hit's container *is* the .xpm/.xty/.xpj file itself (see
         # index/scanner.py's _scan_xpm_container -- one lightweight
         # container per file, not parsed at scan time) -- no bytes to
-        # re-read or re-parse, just enough to reconstruct the same leaf
+        # re-read or re-parse, just enough to reconstruct the same
         # TreeNode the tree itself builds for it.
-        return TreeNode("xpm", result.name, None, Path(result.container_path),
-                         format_label="XPM")
+        #
+        # A project comes back unparsed (handle None), so the Detail pane
+        # shows its size and says to expand it in the tree: parsing here
+        # would load every WAV just to render one search result, and the
+        # results list has no rows to expand into anyway.
+        return TreeNode(result.kind, result.name, None, Path(result.container_path),
+                         format_label=result.format or "XPM")
     container_path = result.container_path
     if sniff(container_path) is None:
         return _resolve_loose_bank(container_path, result)

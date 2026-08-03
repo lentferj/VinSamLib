@@ -21,11 +21,12 @@ from PySide6.QtGui import QColor
 
 from . import dnd, workers
 from ..banks import e4b, eiii, krz
+from ..build import xpm_import
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
 
-EXPANDABLE_KINDS = {"directory", "volume_root", "folder", "bank"}
+EXPANDABLE_KINDS = {"directory", "volume_root", "folder", "bank", "mpc_project"}
 
 _KIND_ICON = {
     "directory": "\U0001F4C1",     # 📁
@@ -34,12 +35,38 @@ _KIND_ICON = {
     "bank": "\U0001F4E6",          # 📦
     "preset": "\U0001F3B9",        # 🎹
     "xpm": "\U0001F39B",           # 🎛
+    "mpc_project": "\U0001F5C2",   # 🗂
+    "mpc_program": "\U0001F39B",   # 🎛
     "unsupported": "\U00002753",   # ❓
 }
 
 _BANK_EXT_FORMAT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ",
                      ".e3x": "EIII", ".esi": "EIII", ".e3b": "EIII"}
-_XPM_EXT = ".xpm"
+# The MPC's three containers for one and the same keygroup program (see
+# build/xpm_import.py, which owns the mapping): the leaf ones hold exactly
+# one, a project holds one per track and is browsed like a bank.
+MPC_FORMATS = frozenset(xpm_import.MPC_EXT_FORMAT.values())
+# One "MPC" entry in the format dropdown covers all three -- three chips for
+# what a user thinks of as one kind of file would be noise, and .xty/.xpj are
+# far rarer than .xpm.
+MPC_FILTER = "MPC"
+
+_DRUM_PROGRAM_NOTE = (
+    "An MPC drum program: its pads hold real one-shot samples, but mpc2emu "
+    "converts keygroup programs only (a pad is a hit, not a pitched zone), "
+    "so there is nothing to import from it yet. Its samples are usually "
+    "sitting as WAVs in the same folder — File ▸ Import Sample Folder… can "
+    "take those.")
+
+
+def format_matches_filter(format_label: str, wanted: Optional[str]) -> bool:
+    """Shared by the tree's filter proxy and the search-results filter, so
+    both read one definition of what the dropdown's entries mean."""
+    if wanted is None:
+        return True
+    if wanted == MPC_FILTER:
+        return format_label in MPC_FORMATS
+    return format_label == wanted
 
 
 def _guess_format(name: str, meta_format: str = "") -> str:
@@ -67,16 +94,21 @@ def human_size(n: int) -> str:
 
 @dataclass
 class TreeNode:
-    kind: str                                  # 'directory' | 'volume_root' | 'folder' | 'bank' | 'preset' | 'xpm'
+    kind: str                                  # 'directory' | 'volume_root' | 'folder' | 'bank' | 'preset'
+                                                # | 'xpm' | 'mpc_project' | 'mpc_program'
     label: str
     parent: Optional["TreeNode"]
     payload: Any                                # Path | (Volume, Entry) | (BankFile, preset_obj)
+                                                # | (Path, preset index) for 'mpc_program'
     children: Optional[list["TreeNode"]] = None  # None == not yet fetched
     handle: Any = None                          # opened Volume (volume_root/folder) or parsed BankFile (bank)
     size: int = 0
     format_label: str = ""
     fetching: bool = False
     error: Optional[str] = None
+    note: str = ""                              # tooltip/Detail-pane reason for an
+                                                # 'unsupported' row, when the generic
+                                                # "no reader for this format" is wrong
 
     def display_text(self) -> str:
         icon = _KIND_ICON.get(self.kind, "")
@@ -102,6 +134,8 @@ def _fetch_children(node: TreeNode) -> list[TreeNode]:
         return _fetch_folder(node)
     if node.kind == "bank":
         return _fetch_bank(node)
+    if node.kind == "mpc_project":
+        return _fetch_mpc_project(node)
     return []
 
 
@@ -118,11 +152,28 @@ def _fetch_directory(node: TreeNode) -> list[TreeNode]:
         elif e.kind == EntryKind.OTHER_FILE and e.meta.get("is_image"):
             if sniff(e.ref) is not None:
                 out.append(TreeNode("volume_root", e.name, node, Path(e.ref), size=e.size))
-        elif e.kind == EntryKind.OTHER_FILE and Path(e.name).suffix.lower() == _XPM_EXT:
-            # Importable (see build/xpm_import.py), not browsable further --
-            # a leaf row, not "bank" (which would send it through
-            # _fetch_bank's E4B/KRZ magic-byte parsing and fail).
-            out.append(TreeNode("xpm", e.name, node, Path(e.ref), size=e.size, format_label="XPM"))
+        elif e.kind == EntryKind.OTHER_FILE and Path(e.name).suffix.lower() == xpm_import.PROJECT_EXT:
+            # An MPC project holds one keygroup program per track, so it
+            # browses like a bank -- expandable into its programs. Its own
+            # kind, not "bank": _fetch_bank parses E4B/KRZ/EIII magic bytes
+            # and would only fail on it.
+            out.append(TreeNode("mpc_project", e.name, node, Path(e.ref), size=e.size,
+                                 format_label=xpm_import.MPC_EXT_FORMAT[xpm_import.PROJECT_EXT]))
+        elif e.kind == EntryKind.OTHER_FILE and Path(e.name).suffix.lower() in xpm_import.PROGRAM_EXTS:
+            # One program per file: importable (see build/xpm_import.py),
+            # with nothing to browse into -- a leaf row. But a project's data
+            # folder holds one .xpm per track, and only a keygroup program
+            # converts; see that module for what the other kinds are and why
+            # each is treated the way it is here.
+            kind = xpm_import.program_kind(e.ref)
+            label = xpm_import.MPC_EXT_FORMAT[Path(e.name).suffix.lower()]
+            if kind is None or kind == xpm_import.KEYGROUP:
+                out.append(TreeNode("xpm", e.name, node, Path(e.ref), size=e.size,
+                                     format_label=label))
+            elif kind == xpm_import.DRUM:
+                out.append(TreeNode("unsupported", e.name, node, None, size=e.size,
+                                     format_label=f"{label} drum kit",
+                                     note=_DRUM_PROGRAM_NOTE))
         # plain OTHER_FILE (WAVs, docs, ...): out of scope for this browser
     out.sort(key=lambda n: (n.kind not in ("directory", "volume_root"), n.label.lower()))
     return out
@@ -166,6 +217,28 @@ def _fetch_vfs_listing(vol, folder_entry, parent_node: TreeNode) -> list[TreeNod
         # ...): still genuinely out of scope, not listed.
     out.sort(key=lambda n: (n.kind != "folder", n.label.lower()))
     return out
+
+
+def _fetch_mpc_project(node: TreeNode) -> list[TreeNode]:
+    """One row per keygroup program in an MPC project, the way a bank node
+    lists its presets.
+
+    The parsed mpc2emu Bank is cached on the node exactly as _fetch_bank
+    caches a parsed E4B: parsing pulls every referenced WAV into memory
+    (tens of MB for a real project), and re-doing that per Detail-pane click
+    would make browsing crawl. A project with no keygroup program at all --
+    only drum, MIDI or plugin tracks -- raises out of parse_mpc(), and the
+    model's own fetch-error path shows that message on the row.
+
+    Programs are NOT draggable into New Bank the way real presets are: an
+    MPC program only becomes an E4B/KRZ preset once it has been through a
+    conversion, so its row offers Import (the same Convert Options dialog a
+    .xpm row opens), not drag-and-drop."""
+    path: Path = node.payload
+    if node.handle is None:
+        node.handle = xpm_import.parse_mpc(str(path))
+    return [TreeNode("mpc_program", preset.name.strip() or "(untitled)", node, (path, i))
+            for i, preset in enumerate(node.handle.presets)]
 
 
 def _fetch_bank(node: TreeNode) -> list[TreeNode]:
@@ -309,7 +382,7 @@ class LibraryTreeModel(QAbstractItemModel):
 
     def _on_fetch_error(self, node: TreeNode, message: str) -> None:
         node.fetching = False
-        node.error = message.strip().splitlines()[-1] if message else "error"
+        node.error = workers.last_error_line(message)
         node.children = []
         idx = self.node_index(node)
         if idx.isValid():
@@ -327,8 +400,8 @@ class LibraryTreeModel(QAbstractItemModel):
             if node.error:
                 return node.error
             if node.kind == "unsupported":
-                return ("Real content, but VinSamLib has no reader for this "
-                        f"format ({node.format_label}) yet.")
+                return node.note or ("Real content, but VinSamLib has no reader "
+                                      f"for this format ({node.format_label}) yet.")
         if role == Qt.ItemDataRole.ForegroundRole and node.kind == "unsupported":
             return QColor(Qt.GlobalColor.gray)
         return None
@@ -382,12 +455,14 @@ class BankFormatFilterProxy(QSortFilterProxyModel):
     here, since the tree only grows on demand and presets still need to
     stay draggable through the proxy.
 
-    Only "bank" and "xpm" nodes are ever actually filtered out. A
-    directory/image/folder that turns out to contain zero matching rows
-    is still shown (just ends up empty once expanded) rather than hidden
-    pre-emptively -- knowing in advance which containers have matching
-    content would mean scanning everything up front, which is exactly
-    what this tree's lazy design exists to avoid."""
+    Only "bank", "xpm" and "mpc_project" nodes are ever actually filtered
+    out. A directory/image/folder that turns out to contain zero matching
+    rows is still shown (just ends up empty once expanded) rather than
+    hidden pre-emptively -- knowing in advance which containers have
+    matching content would mean scanning everything up front, which is
+    exactly what this tree's lazy design exists to avoid. A project's own
+    program rows are likewise never filtered: reaching one means its
+    project already passed."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -403,6 +478,6 @@ class BankFormatFilterProxy(QSortFilterProxyModel):
         source_model = self.sourceModel()
         index = source_model.index(source_row, 0, source_parent)
         node = index.data(Qt.ItemDataRole.UserRole)
-        if node is None or node.kind not in ("bank", "xpm"):
+        if node is None or node.kind not in ("bank", "xpm", "mpc_project"):
             return True
-        return node.format_label == self._format_filter
+        return format_matches_filter(node.format_label, self._format_filter)

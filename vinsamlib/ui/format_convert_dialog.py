@@ -54,14 +54,14 @@ _KRZ_SANE_MAX_RATE_HZ = 24000
 
 _DEFAULT_WARNING = (
     "Importing goes through mpc2emu's own model, same as any other "
-    "conversion here; a few advanced parameters the original XPM "
+    "conversion here; a few advanced parameters the original program "
     "used may not carry over. Resample/reduce below are optional "
     "and off by default for either target format.")
 
 
 class FormatConvertDialog(ConvertOptionsDialog):
     def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
-                 title: str = "Import XPM", warning_text: Optional[str] = None,
+                 title: str = "Import MPC Program", warning_text: Optional[str] = None,
                  locked_format: Optional[str] = None,
                  bank_loader: Optional[Callable[[], list]] = None):
         super().__init__(parent, initial=initial, bank_loader=bank_loader)
@@ -130,7 +130,7 @@ class FormatConvertDialog(ConvertOptionsDialog):
 
     @staticmethod
     def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
-                            title: str = "Import XPM", warning_text: Optional[str] = None,
+                            title: str = "Import MPC Program", warning_text: Optional[str] = None,
                             locked_format: Optional[str] = None,
                             bank_loader: Optional[Callable[[], list]] = None
                             ) -> Optional[ConversionOptions]:

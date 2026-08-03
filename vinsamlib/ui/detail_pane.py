@@ -55,10 +55,34 @@ class DetailPane(QWidget):
         elif node.kind == "xpm":
             self._browser.setHtml("<i>Loading…</i>")
             self._run(xpm_import.summarize_xpm, (str(node.payload),), gen, self._apply_xpm)
+        elif node.kind == "mpc_project":
+            if node.handle is None:
+                self._render_kv(f"MPC project ({node.format_label})",
+                                 [("Size", human_size(node.size))],
+                                 note="Expand this project in the tree to see its programs.")
+            else:
+                self._browser.setHtml("<i>Loading…</i>")
+                self._run(xpm_import.summarize_project, (node.handle,), gen, self._apply_project)
+        elif node.kind == "mpc_program":
+            self._browser.setHtml("<i>Loading…</i>")
+            path, preset_index = node.payload
+            # The project node parsed the whole file to list its programs, so
+            # summarise straight off that Bank -- re-reading every WAV per
+            # click would cost seconds on a real project. Only a program with
+            # no live project above it (there is no such row today, but a
+            # search hit could grow one) falls back to its own parse.
+            project = node.parent.handle if node.parent is not None else None
+            if project is not None:
+                self._run(xpm_import.summarize_program, (project, preset_index),
+                          gen, self._apply_xpm)
+            else:
+                self._run(xpm_import.summarize_xpm, (str(path), None, preset_index),
+                          gen, self._apply_xpm)
         elif node.kind == "unsupported":
             self._render_kv(node.format_label or "Unsupported format",
                              [("Name", node.label), ("Size", human_size(node.size))],
-                             note="Real content, but VinSamLib has no reader for this format yet.")
+                             note=node.note or "Real content, but VinSamLib has no "
+                                                "reader for this format yet.")
         else:
             self._browser.setHtml("")
 
@@ -96,11 +120,28 @@ class DetailPane(QWidget):
     def _apply_xpm(self, gen: int, xs: xpm_import.XpmSummary) -> None:
         if gen != self._gen:
             return
-        html = (f"<b>XPM Program</b><br>"
+        html = (f"<b>MPC Program</b><br>"
                 f"Preset: {_escape(xs.preset_name) or '(untitled)'}<br>"
                 f"Samples: {xs.sample_count}<br>"
                 f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
                 f"{zone_stats_lines(xs.zones)}")
+        self._browser.setHtml(html)
+
+    def _apply_project(self, gen: int, ps: xpm_import.ProjectSummary) -> None:
+        # Deliberately the same shape _apply_bank() renders for a real E4B or
+        # KRZ bank: a project IS the MPC's bank, and the programs listed here
+        # are the rows the tree shows under it.
+        if gen != self._gen:
+            return
+        names = ps.program_names[:30]
+        more = len(ps.program_names) - len(names)
+        html = (f"<b>MPC Project</b><br>"
+                f"Programs: {len(ps.program_names)}<br>"
+                f"Samples: {ps.sample_count}<br>"
+                f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>" +
+                "<br>".join(_escape(n) or "(untitled)" for n in names))
+        if more > 0:
+            html += f"<br><i>… {more} more</i>"
         self._browser.setHtml(html)
 
     def _apply_error(self, gen: int, message: str) -> None:

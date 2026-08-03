@@ -18,21 +18,32 @@ from typing import Callable, Optional
 
 from .db import IndexDB
 from ..banks import e4b, eiii, krz
+from ..build import xpm_import
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
 
 ProgressCB = Optional[Callable[[str], None]]
-_XPM_EXT = ".xpm"
+# The MPC's three containers (see build/xpm_import.py, which owns the
+# mapping): ".xpj" is a project, which the Explorer browses like a bank; the
+# other two are single programs.
+_MPC_EXT_FORMAT = xpm_import.MPC_EXT_FORMAT
 
 
 def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
     seen_paths: set[str] = set()
     for root in roots:
         _scan_directory(root, db, progress, seen_paths)
-    # containers whose backing file is gone (moved/deleted since last scan)
     for path in db.all_container_paths():
-        if path not in seen_paths and not Path(path).exists():
+        if path in seen_paths:
+            continue
+        # containers whose backing file is gone (moved/deleted since last
+        # scan), and MPC programs an older scan indexed before the
+        # keygroup-only rule below existed -- a rescan is the only way those
+        # ever leave the search results, since the file itself is still there.
+        p = Path(path)
+        if not p.exists() or (p.suffix.lower() in xpm_import.PROGRAM_EXTS
+                              and not xpm_import.holds_keygroup_program(path)):
             db.forget_container(path)
 
 
@@ -51,8 +62,14 @@ def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: s
             cls = sniff(e.ref)
             if cls is not None:
                 _scan_image_container(e.ref, cls, e.size, db, progress, seen_paths)
-        elif e.kind == EntryKind.OTHER_FILE and Path(e.ref).suffix.lower() == _XPM_EXT:
-            _scan_xpm_container(e.ref, e.size, db, progress, seen_paths)
+        elif e.kind == EntryKind.OTHER_FILE and Path(e.ref).suffix.lower() in _MPC_EXT_FORMAT:
+            # Same keygroup-only rule the tree applies (ui/models.py): a
+            # MIDI/Drum/Plugin/Audio/CV program has nothing to convert, so
+            # indexing it would only pad search results. Projects are always
+            # indexed -- what they hold is decided on expansion, not here.
+            if (Path(e.ref).suffix.lower() == xpm_import.PROJECT_EXT
+                    or xpm_import.holds_keygroup_program(e.ref)):
+                _scan_xpm_container(e.ref, e.size, db, progress, seen_paths)
 
 
 def _scan_bank_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
@@ -85,13 +102,19 @@ def _scan_bank_container(path: str, size: int, db: IndexDB, progress: ProgressCB
 
 def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
                          seen_paths: set) -> None:
-    # Indexed by filename only, not parsed -- unlike a bank, an XPM's
+    # Indexed by filename only, not parsed -- unlike a bank, an MPC file's
     # "content" (presets) needs mpc2emu's own xpm_parser plus its
     # referenced WAV/AIFF files to enumerate at all, and doing that for
     # every XPM in a library during a routine background scan would be
     # far too slow. One container == one searchable item == the file
     # itself; the real content only gets parsed on actual import
     # (build/xpm_import.py), triggered explicitly by the user.
+    #
+    # That applies with more force to a project (.xpj), not less: it holds
+    # one program per keygroup track, so indexing its programs by name would
+    # mean loading every WAV of every project in the library. Its programs
+    # are listed the moment it is expanded in the Explorer, which is where
+    # the parse belongs -- the index just makes the project itself findable.
     seen_paths.add(path)
     try:
         mtime = Path(path).stat().st_mtime
@@ -101,9 +124,11 @@ def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
         return
     if progress:
         progress(f"Scanning {Path(path).name}…")
-    cid = db.begin_container(path, "xpm", "XPM", size, mtime)
+    fmt = _MPC_EXT_FORMAT[Path(path).suffix.lower()]
+    kind = "mpc_project" if fmt == "XPJ" else "xpm"
+    cid = db.begin_container(path, "xpm", fmt, size, mtime)
     name = Path(path).name
-    db.add_item(cid, None, "xpm", name, native_id=name, format="XPM", size=size, ordinal=0)
+    db.add_item(cid, None, kind, name, native_id=name, format=fmt, size=size, ordinal=0)
     db.finish_container(cid)
 
 

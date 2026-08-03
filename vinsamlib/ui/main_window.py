@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        import_xpm_action = QAction("Import XPM…", self)
+        import_xpm_action = QAction("Import MPC Program…", self)
         import_xpm_action.triggered.connect(lambda: self._import_xpm())
         xpm_ok, xpm_reason = self._config.check_xpm_import_support()
         import_xpm_action.setEnabled(xpm_ok)
@@ -257,29 +257,37 @@ class MainWindow(QMainWindow):
 
     # -- XPM import ---------------------------------------------------------------
 
-    def _import_xpm(self, path: Optional[str] = None) -> None:
-        """path: pre-chosen (e.g. Explorer's "Import…" on a .xpm row/hit --
+    def _import_xpm(self, path: Optional[str] = None,
+                     preset_index: Optional[int] = None) -> None:
+        """path: pre-chosen (e.g. Explorer's "Import…" on an MPC row/hit --
         see importXpmRequested) or None to prompt with a file picker
-        (File > Import XPM…)."""
+        (File > Import MPC Program…).
+
+        preset_index: one program out of a project (.xpj), or None for
+        everything the file holds -- which for a .xpm or .xty is its single
+        program anyway, and for a project is all of them at once."""
         if self._xpm_import_worker is not None:
-            self.statusBar().showMessage("An XPM import is already running")
+            self.statusBar().showMessage("An MPC import is already running")
             return
         if not path:
             path, _filter = QFileDialog.getOpenFileName(
-                self, "Import XPM", "", "Akai XPM programs (*.xpm)",
+                self, "Import MPC Program", "",
+                "Akai MPC programs (*.xpm *.xty *.xpj)",
                 options=QFileDialog.Option.DontUseNativeDialog)
             if not path:
                 return
         opts = FormatConvertDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
-            bank_loader=lambda: xpm_import.load_samples_for_test(path))
+            bank_loader=lambda: xpm_import.load_samples_for_test(
+                path, None, preset_index))
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
         risks: list = []
-        w = workers.Worker(xpm_import.import_xpm, path, opts, None, risks)
+        w = workers.Worker(xpm_import.import_xpm, path, opts, None, risks, preset_index)
         w.signals.finished.connect(
-            lambda tmp_path, p=path, r=risks: self._on_xpm_imported(tmp_path, p, opts, r))
+            lambda tmp_path, p=path, r=risks, i=preset_index:
+                self._on_xpm_imported(tmp_path, p, opts, r, i))
         w.signals.error.connect(self._on_xpm_import_error)
         w.signals.finished.connect(lambda *_: setattr(self, "_xpm_import_worker", None))
         w.signals.error.connect(lambda *_: setattr(self, "_xpm_import_worker", None))
@@ -288,13 +296,14 @@ class MainWindow(QMainWindow):
 
     def _on_xpm_imported(self, tmp_path: str, xpm_path: str,
                           opts: convert.ConversionOptions,
-                          risks: Optional[list] = None) -> None:
-        # No save dialog, no library folder at all -- an XPM always holds
-        # exactly one preset (mpc2emu's own parse_xpm() appends exactly
-        # one Preset, never more; see its docstring), so it belongs in New
-        # Bank as a single program/preset, the same as dragging one preset
-        # in from Explorer -- not a whole one-preset "bank" of its own in
-        # Pending for Image.
+                          risks: Optional[list] = None,
+                          preset_index: Optional[int] = None) -> None:
+        # No save dialog, no library folder at all -- what came out is one
+        # or more programs, and they belong in New Bank the same way
+        # dragging presets in from Explorer does, not as a "bank" of their
+        # own in Pending for Image. A .xpm or .xty always yields exactly
+        # one; only a whole-project import yields several (one per keygroup
+        # track -- mpc2emu 8e20612).
         #
         # Read the just-converted temp file's bytes but label the result
         # with the ORIGINAL xpm_path, not the (freshly, uniquely,
@@ -303,12 +312,17 @@ class MainWindow(QMainWindow):
         # _preset_key()), and every import of the *same* source XPM
         # should be recognized as the same preset, not a new one each time
         # just because its throwaway temp file happened to land somewhere
-        # else. index/id are already stable for a fresh single-preset
-        # bank, so this is the only piece that needed fixing.
-        result = self._read_back_converted(tmp_path, opts, label_path=xpm_path)
-        if result is None:
+        # else. index/id are already stable within a freshly written bank.
+        #
+        # A single program out of a project needs the program in that label
+        # too: each such import writes a ONE-preset bank, so every program
+        # of the same project would otherwise come back as index 0 of the
+        # same path and the second one would be silently swallowed as a
+        # duplicate of the first.
+        label_path = xpm_path if preset_index is None else f"{xpm_path}#{preset_index}"
+        pairs = self._read_back_converted_presets(tmp_path, opts, label_path=label_path)
+        if not pairs:
             return
-        bank, preset = result
         # preset.name is mpc2emu's own E4B-format preset name -- truncated
         # to 16 chars (a real hardware limit; see xpm_parser.py's
         # _safe_name()), so several distinctly-named XPMs sharing a long
@@ -326,9 +340,21 @@ class MainWindow(QMainWindow):
         # so pre-uniquifying the name here would show a misleading "(2)"
         # on that skip message for what's actually a plain duplicate, not
         # a second distinct item.
-        name = Path(xpm_path).stem or preset.name.strip() or "Imported XPM"
-        self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
-        self._warn_polyphony(risks or [], "Import XPM")
+        stem = Path(xpm_path).stem
+        if preset_index is None and len(pairs) == 1:
+            names = [stem or pairs[0][1].name.strip() or "Imported XPM"]
+        else:
+            # Anything out of a project: the filename is shared by every
+            # program in it and so can't tell them apart, while the program
+            # names genuinely do (they come from the tracks, not the file).
+            # This is the one case where the preset's own name is the better
+            # label -- the file's is only the fallback.
+            names = [p.name.strip() or f"{stem} {_program_number(preset_index, i)}"
+                     for i, (_bank, p) in enumerate(pairs)]
+        self._bank_pane.add_presets(
+            [(bank, preset, opts.target_format, name)
+             for (bank, preset), name in zip(pairs, names)])
+        self._warn_polyphony(risks or [], "Import MPC Program")
 
     def _warn_polyphony(self, risks: list, title: str) -> None:
         """Per-note voice budget, reported after a conversion rather than
@@ -354,9 +380,9 @@ class MainWindow(QMainWindow):
               "Stereo to halve every stereo zone's cost.")
 
     def _on_xpm_import_error(self, message: str) -> None:
-        last_line = message.strip().splitlines()[-1] if message else "error"
-        self.statusBar().showMessage(f"XPM import failed: {last_line}", 8000)
-        QMessageBox.warning(self, "Import XPM", f"Import failed:\n\n{last_line}")
+        last_line = workers.last_error_line(message)
+        self.statusBar().showMessage(f"MPC import failed: {last_line}", 8000)
+        QMessageBox.warning(self, "Import MPC Program", f"Import failed:\n\n{last_line}")
 
     # -- sample-folder import -------------------------------------------------------
 
@@ -412,8 +438,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Sample folder import failed: {last_line}", 8000)
         QMessageBox.warning(self, "Import Sample Folder", f"Import failed:\n\n{last_line}")
 
-    def _read_back_converted(self, tmp_path: str, opts: convert.ConversionOptions,
-                              label_path: str) -> Optional[tuple]:
+    def _read_back_converted_presets(self, tmp_path: str, opts: convert.ConversionOptions,
+                                      label_path: str) -> list[tuple]:
         """Shared by _on_xpm_imported() and _on_preset_converted(): both
         hand mpc2emu's freshly-written temp file back to VinSamLib's OWN
         parser (never mpc2emu's) so what lands in New Bank is a normal,
@@ -421,25 +447,37 @@ class MainWindow(QMainWindow):
         both label the re-parse with a caller-chosen stable path rather
         than the throwaway temp path, so BankPane's duplicate check
         (bank.path + preset index/id, see bank_pane.py's _preset_key())
-        keeps working. Returns (bank, preset) or None after showing a
-        warning on failure."""
+        keeps working.
+
+        Returns every (bank, preset) the written file holds, in the bank's
+        own order -- more than one only for a whole-project import; [] after
+        showing a warning on failure."""
         try:
             data = Path(tmp_path).read_bytes()
             if opts.target_format == "KRZ":
                 bank = krz.parse_bytes(data, label_path)
-                preset = next(iter(bank.programs.values()))
+                presets = list(bank.programs.values())
             elif opts.target_format == "EIII":
                 bank = eiii.parse_bytes(data, label_path)
-                preset = bank.presets[0]
+                presets = list(bank.presets)
             else:
                 bank = e4b.parse_bytes(data, label_path)
-                preset = bank.presets[0]
-            return bank, preset
+                presets = list(bank.presets)
+            return [(bank, preset) for preset in presets]
         except Exception as ex:
             QMessageBox.warning(
                 self, "Import via mpc2emu",
                 f"Couldn't read back the converted bank:\n\n{ex}")
-            return None
+            return []
+
+    def _read_back_converted(self, tmp_path: str, opts: convert.ConversionOptions,
+                              label_path: str) -> Optional[tuple]:
+        """The single-preset callers' view of _read_back_converted_presets()
+        -- a sample-folder import and a preset conversion each write exactly
+        one preset, so anything past the first would be a bug, not a case to
+        handle."""
+        pairs = self._read_back_converted_presets(tmp_path, opts, label_path)
+        return pairs[0] if pairs else None
 
     # -- convert an existing E4B preset via mpc2emu --------------------------------
 
@@ -610,3 +648,10 @@ class MainWindow(QMainWindow):
         self._scan_worker = None
         last_line = message.strip().splitlines()[-1] if message else "error"
         self.statusBar().showMessage(f"Scan failed: {last_line}", 8000)
+
+
+def _program_number(preset_index: Optional[int], position: int) -> int:
+    """1-based label for a program whose own name is empty: its number in
+    the project when one program was picked out, its position in the batch
+    when the whole project came in at once."""
+    return (position if preset_index is None else preset_index) + 1

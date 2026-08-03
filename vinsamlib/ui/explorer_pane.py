@@ -19,10 +19,11 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QLabel
 
 from . import dnd, search_resolve
 from .detail_pane import DetailPane
-from .models import BankFormatFilterProxy, LibraryTreeModel, TreeNode
+from .models import (MPC_FILTER, BankFormatFilterProxy, LibraryTreeModel, TreeNode,
+                     format_matches_filter)
 from ..index.db import IndexDB, SearchResult
 
-_FORMAT_FILTERS = ["All", "E4B", "KRZ", "EIII", "XPM"]
+_FORMAT_FILTERS = ["All", "E4B", "KRZ", "EIII", MPC_FILTER]
 
 
 class _ResultsListWidget(QListWidget):
@@ -49,14 +50,18 @@ class _ResultsListWidget(QListWidget):
         return dnd.build_mime_data(payload_items)
 
 _KIND_ICON = {"folder": "\U0001F4C1", "bank": "\U0001F4E6", "preset": "\U0001F3B9",
-              "xpm": "\U0001F39B"}
+              "xpm": "\U0001F39B", "mpc_project": "\U0001F5C2",
+              "mpc_program": "\U0001F39B"}
 _SEARCH_DEBOUNCE_MS = 200
 
 
 class ExplorerPane(QWidget):
     selectionChanged = Signal(object)   # TreeNode | None
     addToBankRequested = Signal(list)   # list[TreeNode] (always kind == "preset")
-    importXpmRequested = Signal(str)    # absolute path to a .xpm file
+    # (absolute path to an MPC .xpm/.xty/.xpj file, program index or None).
+    # None means "everything the file holds" -- one program for a .xpm or
+    # .xty, every keygroup track for a project.
+    importXpmRequested = Signal(str, object)
     convertPresetRequested = Signal(list)   # list[TreeNode], one or more "preset" nodes
     removeLibraryRootRequested = Signal(object)   # Path of a root "directory" node
 
@@ -79,7 +84,9 @@ class ExplorerPane(QWidget):
 
         self._filter_box = QComboBox()
         self._filter_box.addItems(_FORMAT_FILTERS)
-        self._filter_box.setToolTip("Only show banks (or importable XPM programs) of this format")
+        self._filter_box.setToolTip(
+            "Only show banks of this format (MPC covers .xpm programs, "
+            ".xty tracks and .xpj projects)")
         self._filter_box.currentTextChanged.connect(self._on_filter_changed)
         search_row.addWidget(self._filter_box)
         layout.addLayout(search_row)
@@ -172,7 +179,7 @@ class ExplorerPane(QWidget):
             # the bank they belong to (see index/scanner.py), so filtering
             # by it here also correctly restricts preset/program results to
             # the selected bank format, not just bare bank hits themselves.
-            hits = [h for h in hits if h.format == format_filter]
+            hits = [h for h in hits if format_matches_filter(h.format, format_filter)]
         if not hits:
             placeholder = QListWidgetItem("No matches.")
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -203,11 +210,12 @@ class ExplorerPane(QWidget):
         self._select(node)
 
     def _on_tree_double_clicked(self, index) -> None:
-        # Presets and xpm rows are both leaves, so Qt's default expand/
-        # collapse-on-double-click is a no-op for them anyway -- safe to
-        # also treat the double-click as each one's primary action (add /
-        # import, matching the right-click menu) without fighting the
-        # tree's own toggle behavior on folder/bank rows.
+        # Presets, xpm rows and a project's program rows are all leaves, so
+        # Qt's default expand/collapse-on-double-click is a no-op for them
+        # anyway -- safe to also treat the double-click as each one's
+        # primary action (add / import, matching the right-click menu)
+        # without fighting the tree's own toggle behavior on folder/bank/
+        # project rows, which keep expanding as they should.
         node = index.data(Qt.ItemDataRole.UserRole) if index.isValid() else None
         self._trigger_primary_action(node)
 
@@ -216,15 +224,27 @@ class ExplorerPane(QWidget):
         if hit is None:
             return
         node = search_resolve.resolve_result(hit)
-        self._trigger_primary_action(node)
+        # allow_container: in the tree a double-click on a project expands it
+        # (Qt's own behaviour, which importing on top of would hijack), but a
+        # search result has nothing to expand -- there, importing the whole
+        # project is the only sensible primary action.
+        self._trigger_primary_action(node, allow_container=True)
 
-    def _trigger_primary_action(self, node: Optional[TreeNode]) -> None:
+    def _trigger_primary_action(self, node: Optional[TreeNode],
+                                 allow_container: bool = False) -> None:
         if node is None:
+            return
+        if node.kind == "mpc_project":
+            if allow_container:
+                self.importXpmRequested.emit(str(node.payload), None)
             return
         if node.kind == "preset":
             self.addToBankRequested.emit([node])
         elif node.kind == "xpm":
-            self.importXpmRequested.emit(str(node.payload))
+            self.importXpmRequested.emit(str(node.payload), None)
+        elif node.kind == "mpc_program":
+            path, preset_index = node.payload
+            self.importXpmRequested.emit(str(path), preset_index)
 
     def _select(self, node: Optional[TreeNode]) -> None:
         self._current_node = node
@@ -260,11 +280,13 @@ class ExplorerPane(QWidget):
     def _show_context_menu(self, nodes: list[Optional[TreeNode]], global_pos) -> None:
         presets = [n for n in nodes if n is not None and n.kind == "preset"]
         xpms = [n for n in nodes if n is not None and n.kind == "xpm"]
+        programs = [n for n in nodes if n is not None and n.kind == "mpc_program"]
+        projects = [n for n in nodes if n is not None and n.kind == "mpc_project"]
         # A library root is a top-level "directory" node (no parent) --
         # only those are individually tracked in Config.library_roots and
         # thus removable; a plain subdirectory isn't its own library entry.
         roots = [n for n in nodes if n is not None and n.kind == "directory" and n.parent is None]
-        if not presets and not xpms and not roots:
+        if not presets and not xpms and not programs and not projects and not roots:
             return
         menu = QMenu(self)
         add_action = None
@@ -294,6 +316,17 @@ class ExplorerPane(QWidget):
             # Multi-XPM import isn't supported yet -- only offered for a
             # single selected .xpm row.
             import_action = menu.addAction(f'Import "{xpms[0].label}"…')
+        elif len(programs) == 1:
+            # One keygroup program out of a project: same dialog, same
+            # landing in New Bank as importing a standalone .xpm.
+            import_action = menu.addAction(f'Import "{programs[0].label}"…')
+        elif len(projects) == 1:
+            # The whole project at once -- every keygroup program it holds
+            # lands in New Bank together, the way adding a bank's presets
+            # does. The program count is only known once the project has
+            # been expanded (that is what parses it), so don't promise one.
+            import_action = menu.addAction(
+                f'Import all programs of "{projects[0].label}"…')
         if len(roots) == 1:
             # Multi-root removal isn't offered either -- same reasoning,
             # keep the one-item-at-a-time pattern consistent.
@@ -304,7 +337,13 @@ class ExplorerPane(QWidget):
         elif convert_action is not None and chosen == convert_action:
             self.convertPresetRequested.emit(convertible)
         elif import_action is not None and chosen == import_action:
-            self.importXpmRequested.emit(str(xpms[0].payload))
+            if xpms:
+                self.importXpmRequested.emit(str(xpms[0].payload), None)
+            elif programs:
+                path, preset_index = programs[0].payload
+                self.importXpmRequested.emit(str(path), preset_index)
+            else:
+                self.importXpmRequested.emit(str(projects[0].payload), None)
         elif remove_action is not None and chosen == remove_action:
             self.removeLibraryRootRequested.emit(roots[0].payload)
 
