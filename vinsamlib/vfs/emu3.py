@@ -262,32 +262,41 @@ class Emu3Volume(WritableVolume):
         with open(self.path, "rb") as f:
             fat = self._read_fat(f)
 
-            clusters = []
+            # Follow the chain and read it in one pass. Runs of consecutive
+            # clusters become a single seek + read: an EMU3 volume is written
+            # once and in order, so a chain is nearly always contiguous, and
+            # one seek+read per cluster was costing a syscall apiece for
+            # nothing (1.06 M of them across this project's own library index
+            # run). The run is accumulated while walking rather than in a
+            # second pass over the cluster list, because on a 100 MB bank
+            # that list is tens of thousands of entries and each extra Python
+            # pass over it is measurable on its own.
+            buf = bytearray()
+            n_clusters = 0
+            run_start = run_len = 0
             c = r["start_cluster"]
             seen = set()
+            cluster_size = self.cluster_size
+
+            def flush(start: int, length: int) -> None:
+                if length:
+                    f.seek(data_off + (start - 1) * bpc * BSIZE)
+                    buf.extend(f.read(length * cluster_size))
+
             while c and c != EMU3_LAST_CLUSTER:
                 if c in seen or c >= len(fat):
                     raise Emu3FormatError(f"corrupt FAT chain reading '{entry.name}'")
                 seen.add(c)
-                clusters.append(c)
+                n_clusters += 1
+                if run_len and c == run_start + run_len:
+                    run_len += 1
+                else:
+                    flush(run_start, run_len)
+                    run_start, run_len = c, 1
                 c = fat[c]
+            flush(run_start, run_len)
 
-            # Runs of consecutive clusters are read in one go: an EMU3 volume
-            # is written once and in order, so a chain is nearly always
-            # contiguous, and one seek+read per cluster was costing a syscall
-            # apiece for nothing (1.06 M of them across this project's own
-            # library index run).
-            buf = bytearray()
-            i, n = 0, len(clusters)
-            while i < n:
-                j = i + 1
-                while j < n and clusters[j] == clusters[j - 1] + 1:
-                    j += 1
-                f.seek(data_off + (clusters[i] - 1) * bpc * BSIZE)
-                buf += f.read((j - i) * self.cluster_size)
-                i = j
-
-        true_size = self._true_size(len(clusters), r["blks"], r["brem"], self.cluster_size)
+        true_size = self._true_size(n_clusters, r["blks"], r["brem"], self.cluster_size)
         return bytes(buf[:true_size])
 
     # ── WritableVolume interface ────────────────────────────────────────────
