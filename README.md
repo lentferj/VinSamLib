@@ -1042,18 +1042,23 @@ vinsamlib/
 ├── build/
 │   ├── convert.py              # mpc2emu resample/reduce wrapper (ConversionOptions)
 │   ├── xpm_import.py           # MPC .xpm/.xty/.xpj -> E4B/KRZ/EIII, sharing convert.py's pipeline
+│   ├── sampledir_import.py     # A folder of WAVs -> one multisampled preset
 │   └── images.py               # create_image()/append_banks() over mpc2emu's writers
 ├── vfs/                        # Read-side filesystem support mpc2emu itself never needed
+│   ├── base.py                 # Volume/Entry protocol every reader implements
 │   ├── emu3.py                 # EMU3 filesystem (E4XT CD/HD images)
 │   ├── fatvol.py               # FAT12/16/32 (K2000 floppy/HD images)
 │   ├── iso9660.py               # Standard ISO 9660 (K2000 CD images)
+│   ├── localdir.py              # A plain directory, behind the same protocol
 │   └── detect.py               # Format sniffing/dispatch
 ├── index/
 │   ├── db.py                   # SQLite + FTS5 search index
 │   └── scanner.py               # Background library scanner
 └── ui/
     ├── main_window.py           # Menu bar, pane wiring
+    ├── models.py                # The lazy library tree (QAbstractItemModel) + format filter
     ├── explorer_pane.py          # Library tree + search
+    ├── search_resolve.py         # Turns a bare index hit back into a live tree node
     ├── detail_pane.py            # Condensed preset/program info
     ├── samples_pane.py           # Per-preset sample list
     ├── bank_pane.py              # New Bank column
@@ -1061,7 +1066,17 @@ vinsamlib/
     ├── image_pane.py             # Image column
     ├── convert_options_dialog.py # Shared resample/reduce dialog
     ├── format_convert_dialog.py  # + target-format picker, subclasses the above
+    ├── sampledir_import_dialog.py # + octave convention and sample placement
+    ├── sample_placement_dialog.py # Per-sample key ranges over a piano keyboard
+    ├── piano_keyboard.py         # The keyboard widget that dialog draws on
+    ├── note_naming.py            # MIDI number <-> note name, per octave convention
+    ├── dnd.py                    # The preset drag payload shared by tree and results
+    ├── workers.py                # One thread pool, one signal bridge, for all background work
     └── settings_dialog.py        # mpc2emu path configuration
+
+tools/
+└── check_krz_banks.py          # Scans built KRZ banks for the two silent defects
+                                 # described under "If you built KRZ banks before…"
 ```
 
 ---

@@ -390,6 +390,28 @@ class KrzFile:
 
 # ── parsing ──────────────────────────────────────────────────────────────────
 
+_FIRST_OBJECT = 32
+
+
+def _split_bank_hint(pos: int) -> str:
+    """Explain the overwhelmingly likely cause when a PRAM file has a valid
+    header but nothing that parses as an object at all.
+
+    A K2000 bank too big for one floppy is saved across several, and only
+    the first disk carries the object table -- the rest are continuation
+    data the K2000 joins on load, and they are not readable on their own.
+    Measured across this project's library: 31 of 2268 KRZ blobs (1.4%)
+    fail here, 21 of them sitting in a DISK2/DISK3/... folder and 22 having
+    a same-named blob elsewhere that parses cleanly. Hedged wording,
+    because a genuinely damaged file fails identically and nothing in the
+    header distinguishes the two."""
+    if pos != _FIRST_OBJECT:
+        return ""
+    return (" — nothing parses as an object here, so this is most likely one "
+            "of several disks a single bank was split across; open the first "
+            "disk of the set instead")
+
+
 def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
     if data[:4] != FILE_MAGIC:
         raise KrzFormatError(f"{path}: not a KRZ file (missing PRAM header)")
@@ -411,10 +433,12 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
         if blocksize == 0:
             break
         if blocksize >= 0:
-            raise KrzFormatError(f"{path}: expected a negative blocksize at {pos}, got {blocksize}")
+            raise KrzFormatError(f"{path}: expected a negative blocksize at {pos}, "
+                                  f"got {blocksize}{_split_bank_hint(pos)}")
         next_pos = pos - blocksize
         if next_pos <= pos or next_pos > len(data):
-            raise KrzFormatError(f"{path}: bad blocksize at offset {pos} (-> {next_pos})")
+            raise KrzFormatError(f"{path}: bad blocksize at offset {pos} "
+                                  f"(-> {next_pos}){_split_bank_hint(pos)}")
         if pos + 10 > next_pos:
             raise KrzFormatError(f"{path}: object at {pos} shorter than its fixed header")
 
