@@ -325,30 +325,36 @@ found. Both MPC 2.x projects (whose programs live in a
 read the same way.
 
 **A project's data folder is mostly not sample content.** It holds one
-`.xpm` per track, and only a **keygroup** program carries the pitched,
-multisampled zones a sampler bank is made of. The others don't *fail* to
-convert, which is the problem: each yields a preset with no zones and no
-samples, so offering them would mean importing silent emptiness. The three
-cases get three different treatments — measured on a real 571-file MPC One
-backup:
+`.xpm` per track, and only two kinds of program carry samples at all.
+Measured on a real 571-file MPC One backup:
 
-| kind | there | shown as |
-|---|---|---|
-| Keygroup | 82 | a normal, importable row |
-| Drum | 90 | greyed out — visible, not importable |
-| MIDI / Plugin / Audio / CV / Clip | 399 | not listed, like a loose WAV |
+| kind | there | zones | samples | listed |
+|---|---|---|---|---|
+| Keygroup | 82 | 970 | 957 | yes — pitched, multisampled |
+| Drum | 90 | 956 | 907 | yes — one-shot hits, one per key |
+| MIDI / Plugin / Audio / CV / Clip | 399 | 0 | 0 | no, like a loose WAV |
 
-**Drum programs are greyed rather than hidden** because they are not
-empty: those 90 files hold 940 sample references, a median of 12 each —
-in that backup, *more* sampled material than the keygroup programs carry.
-mpc2emu converts none of it yet (a pad is a one-shot hit, not a pitched
-zone), so the row says what it is and offers no import that would quietly
-produce nothing. The kit's samples are usually sitting as WAVs in the same
-folder, which **File → Import Sample Folder…** can take in the meantime.
+**Drum kits convert** (mpc2emu `27ff6a4`): each pad becomes a one-key zone
+whose root *is* its key, so every hit sounds at its native pitch instead of
+key-tracking. Note the numbers above — in that backup the drum programs
+carry roughly as much sampled material as the keygroup ones, and more per
+file (a median of 12 samples against 5).
 
-A file whose kind can't be determined from its header (an MPC 3 program,
-or anything unusual) is always listed as importable — the rule only acts
-on what explicitly declares itself as something else.
+The remaining 399 reference no sample data whatsoever; mpc2emu refuses them
+with a written-out reason, and VinSamLib doesn't list them. A file whose
+kind can't be read from its header (an MPC 3 program, or anything unusual)
+is always listed — the rule only acts on what declares itself otherwise.
+
+⚠️ **An MPC 2.x drum kit can land on different keys than it had on the
+MPC.** 2.x files don't record which key each pad plays (every `<PadNote>`
+in mpc2emu's corpus is empty), so its pads are laid out on consecutive keys
+from 36 (C1). Kits that used a General MIDI or hand-built layout come
+through complete and at the right pitch, just re-ordered. MPC 3 files carry
+a real pad map and are unaffected; the Detail pane says which case you're
+looking at. Also note that a drum kit converted to **KRZ** fills the keys
+between pads with a copy of the neighbouring hit — a K2000 locks up on
+Master→Delete if a keymap has holes, so `krz_writer` fills them
+deliberately.
 
 If you indexed such a folder with an earlier version, **File → Rescan
 Library** drops the stale entries from search.

@@ -51,13 +51,6 @@ MPC_FORMATS = frozenset(xpm_import.MPC_EXT_FORMAT.values())
 # far rarer than .xpm.
 MPC_FILTER = "MPC"
 
-_DRUM_PROGRAM_NOTE = (
-    "An MPC drum program: its pads hold real one-shot samples, but mpc2emu "
-    "converts keygroup programs only (a pad is a hit, not a pitched zone), "
-    "so there is nothing to import from it yet. Its samples are usually "
-    "sitting as WAVs in the same folder — File ▸ Import Sample Folder… can "
-    "take those.")
-
 
 def format_matches_filter(format_label: str, wanted: Optional[str]) -> bool:
     """Shared by the tree's filter proxy and the search-results filter, so
@@ -166,14 +159,15 @@ def _fetch_directory(node: TreeNode) -> list[TreeNode]:
             # converts; see that module for what the other kinds are and why
             # each is treated the way it is here.
             kind = xpm_import.program_kind(e.ref)
-            label = xpm_import.MPC_EXT_FORMAT[Path(e.name).suffix.lower()]
-            if kind is None or kind == xpm_import.KEYGROUP:
-                out.append(TreeNode("xpm", e.name, node, Path(e.ref), size=e.size,
-                                     format_label=label))
-            elif kind == xpm_import.DRUM:
-                out.append(TreeNode("unsupported", e.name, node, None, size=e.size,
-                                     format_label=f"{label} drum kit",
-                                     note=_DRUM_PROGRAM_NOTE))
+            if kind is None or kind in xpm_import.CONVERTIBLE_KINDS:
+                label = xpm_import.MPC_EXT_FORMAT[Path(e.name).suffix.lower()]
+                # A drum program reaching here is always MPC 2.x XML -- an
+                # MPC 3 one is gzipped and reports kind None -- and 2.x is
+                # exactly the case whose pad->key map is missing.
+                out.append(TreeNode(
+                    "xpm", e.name, node, Path(e.ref), size=e.size,
+                    format_label=f"{label} drum kit" if kind == xpm_import.DRUM else label,
+                    note=xpm_import.DRUM_2X_PAD_MAP_NOTE if kind == xpm_import.DRUM else ""))
         # plain OTHER_FILE (WAVs, docs, ...): out of scope for this browser
     out.sort(key=lambda n: (n.kind not in ("directory", "volume_root"), n.label.lower()))
     return out

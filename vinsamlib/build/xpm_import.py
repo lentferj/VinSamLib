@@ -59,28 +59,36 @@ PROJECT_EXT = ".xpj"
 # results all have to agree on it.
 MPC_EXT_FORMAT = {".xpm": "XPM", ".xty": "XTY", PROJECT_EXT: "XPJ"}
 
-# A `.xpm` is a program of *some* kind, and only a Keygroup one converts:
-# mpc2emu's parse_xpm skips a Drum program explicitly (its pads are one-shot
-# hits, not pitched zones), and a MIDI, Plugin, Audio, CV or Clip track
-# references no sample data at all. None of them *fails* to parse -- each
-# yields a preset with zero voices and zero samples -- so offering them as
-# importable is worse than not: importing one silently adds an empty preset.
-#
-# The three get three different treatments in the Explorer (ui/models.py),
-# because they are three different situations, measured on a real 571-file
-# MPC One backup:
-#   KEYGROUP (82 files)  -- listed and importable.
-#   DRUM (90 files)      -- listed but greyed out. NOT nothing: those 90 hold
-#                           940 sample references, a median of 12 each, and in
-#                           this backup they carry more of the sampled
-#                           material than the keygroup programs do. Hiding
-#                           them hides the good stuff; offering them promises
-#                           an import that yields an empty preset. So: visible,
-#                           honest, waiting on an upstream converter.
-#   EVERYTHING ELSE (399) -- not listed at all, no more sample content than a
-#                           MIDI file has.
+# A `.xpm` is a program of *some* kind, and only two of them carry samples.
+# Measured on a real 571-file MPC One backup:
+#   KEYGROUP (82 files, 970 zones, 957 samples) -- pitched, multisampled.
+#   DRUM     (90 files, 956 zones, 907 samples) -- one-shot hits, roughly as
+#            much material as the keygroup programs and denser per file
+#            (median 12 samples against 5). Convertible since mpc2emu
+#            `27ff6a4`: each pad becomes a one-key zone whose root equals its
+#            key, so it sounds at native pitch and does not keytrack.
+#   EVERYTHING ELSE (399 files, 0 zones, 0 samples) -- MIDI, Plugin, Audio,
+#            CV and Clip programs reference no sample data at all. mpc2emu
+#            now refuses them outright, and the Explorer does not list them:
+#            no more sample content than a MIDI file has.
 KEYGROUP = "Keygroup"
 DRUM = "Drum"
+CONVERTIBLE_KINDS = (KEYGROUP, DRUM)
+
+# MPC 2.x XML does not record the pad -> MIDI note map at all (every one of
+# the 11520 <PadNote> elements in mpc2emu's corpus is empty; the neighbouring
+# ProgramPads blob holds pad colours), so mpc2emu falls back to consecutive
+# keys from 36 and warns. MPC 3 files carry a real map, and 31 of 56 corpus
+# drum programs use a custom -- often General MIDI -- layout, so this is a
+# real difference in outcome and not a formality: a 2.x kit whose author used
+# such a layout lands on the wrong keys. Everything converts and nothing is
+# lost; the pads are simply re-ordered. Surfaced rather than buried, since a
+# whole-file check (is it XML?) is exactly what tells the two apart.
+DRUM_2X_PAD_MAP_NOTE = (
+    "MPC 2.x drum kit: the file does not store which key each pad plays, so "
+    "its pads land on consecutive keys from 36 (C1). If this kit used a "
+    "General MIDI or hand-built layout on the MPC, the hits will be in a "
+    "different order here — all of them present, none at the wrong pitch.")
 _XML_PROGRAM_TYPE = re.compile(rb'<Program\s+type="([^"]*)"')
 _SNIFF_BYTES = 8192
 
@@ -111,13 +119,12 @@ def program_kind(path: str) -> Optional[str]:
     return m.group(1).decode("ascii", "replace") if m else None
 
 
-def holds_keygroup_program(path: str) -> bool:
-    """Whether a program file is worth indexing -- the search index carries
-    only what a user can act on, so the greyed-out drum rows the Explorer
-    shows are deliberately left out of it (same as the unsupported content
-    inside an image, which is displayed but never indexed)."""
+def holds_convertible_program(path: str) -> bool:
+    """Whether a program file has anything to import -- the test the Explorer
+    and the index both list by. Unknown kinds count as convertible: see
+    program_kind() for why nothing is hidden on a guess."""
     kind = program_kind(path)
-    return kind is None or kind == KEYGROUP
+    return kind is None or kind in CONVERTIBLE_KINDS
 
 
 @dataclass(frozen=True)

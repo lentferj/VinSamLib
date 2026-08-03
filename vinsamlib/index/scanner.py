@@ -43,7 +43,7 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
         # ever leave the search results, since the file itself is still there.
         p = Path(path)
         if not p.exists() or (p.suffix.lower() in xpm_import.PROGRAM_EXTS
-                              and not xpm_import.holds_keygroup_program(path)):
+                              and not xpm_import.holds_convertible_program(path)):
             db.forget_container(path)
 
 
@@ -63,12 +63,12 @@ def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: s
             if cls is not None:
                 _scan_image_container(e.ref, cls, e.size, db, progress, seen_paths)
         elif e.kind == EntryKind.OTHER_FILE and Path(e.ref).suffix.lower() in _MPC_EXT_FORMAT:
-            # Same keygroup-only rule the tree applies (ui/models.py): a
-            # MIDI/Drum/Plugin/Audio/CV program has nothing to convert, so
-            # indexing it would only pad search results. Projects are always
-            # indexed -- what they hold is decided on expansion, not here.
+            # Same rule the tree lists by (ui/models.py): a MIDI/Plugin/
+            # Audio/CV/Clip program references no sample data, so indexing it
+            # would only pad search results. Projects are always indexed --
+            # what they hold is decided on expansion, not here.
             if (Path(e.ref).suffix.lower() == xpm_import.PROJECT_EXT
-                    or xpm_import.holds_keygroup_program(e.ref)):
+                    or xpm_import.holds_convertible_program(e.ref)):
                 _scan_xpm_container(e.ref, e.size, db, progress, seen_paths)
 
 

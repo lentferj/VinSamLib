@@ -25,11 +25,17 @@ class DetailPane(QWidget):
         layout.addWidget(self._browser)
         self._gen = 0
         self._live_workers: list[workers.Worker] = []
+        # A caveat the *node* knows and the summary can't (see models.py's
+        # listing of a 2.x drum kit). Captured per selection rather than
+        # threaded through the worker, since the generation counter already
+        # discards anything that arrives for a selection the user left.
+        self._node_note = ""
         self.show_node(None)
 
     def show_node(self, node: TreeNode | None) -> None:
         self._gen += 1
         gen = self._gen
+        self._node_note = node.note if node is not None else ""
 
         if node is None:
             self._browser.setHtml("<i>Nothing selected.</i>")
@@ -125,6 +131,8 @@ class DetailPane(QWidget):
                 f"Samples: {xs.sample_count}<br>"
                 f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
                 f"{zone_stats_lines(xs.zones)}")
+        if self._node_note:
+            html += f"<br><br><i>{_escape(self._node_note)}</i>"
         self._browser.setHtml(html)
 
     def _apply_project(self, gen: int, ps: xpm_import.ProjectSummary) -> None:

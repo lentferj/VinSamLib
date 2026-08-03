@@ -69,7 +69,7 @@ def _run_captured(fn: Callable, *args, **kwargs) -> tuple[Any, str]:
         with contextlib.redirect_stdout(buf):
             result = fn(*args, **kwargs)
     except Exception as ex:
-        raise ImageOpError(f"{ex}\n\n{buf.getvalue()}".strip()) from ex
+        raise ImageOpError(f"{buf.getvalue()}\n\n{ex}".strip()) from ex
     return result, buf.getvalue()
 
 
@@ -141,7 +141,7 @@ def _build_floppy(output_path: str, bank_paths: list[str], label: str, floppy_ki
             finally:
                 fs.close()
     except Exception as ex:
-        raise ImageOpError(f"{ex}\n\n{buf.getvalue()}".strip()) from ex
+        raise ImageOpError(f"{buf.getvalue()}\n\n{ex}".strip()) from ex
     return buf.getvalue()
 
 

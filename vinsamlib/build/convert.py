@@ -108,12 +108,19 @@ def _run_captured(fn: Callable, *args, **kwargs) -> Any:
     # processors print progress to stdout, which would otherwise leak
     # into VinSamLib's own console; captured text rides along on any
     # raised ConvertOpError so a failure is still diagnosable.
+    #
+    # The reason goes LAST, after the captured log, because every consumer of
+    # this message shows the final line and nothing else (a status bar, a
+    # tooltip, a message box -- see ui/workers.last_error_line). With the
+    # order reversed, mpc2emu refusing a MIDI program with a written-out
+    # sentence surfaced as "Parsing XPM: /some/path" -- its last progress
+    # line -- and the actual reason was never shown to anyone.
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
             return fn(*args, **kwargs)
     except Exception as ex:
-        raise ConvertOpError(f"{ex}\n\n{buf.getvalue()}".strip()) from ex
+        raise ConvertOpError(f"{buf.getvalue()}\n\n{ex}".strip()) from ex
 
 
 def _apply_max_sample_rate(bank: Any, hz: int) -> None:
