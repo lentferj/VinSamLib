@@ -175,18 +175,37 @@ def _read_bpb_fat12(f) -> dict:
                 root_start=root_start, data_start=data_start)
 
 
-def _read_cluster(f, size: int) -> bytes:
-    """One cluster, always exactly `size` bytes -- zero-padded if the image
-    is truncated mid-chain. _read_fat() already tolerates a truncated image
-    the same way (its own ljust), so truncation is an anticipated input, and
-    a short read here is worse than a zero-filled one: for a directory it
-    shifts every subsequent entry's offset, and for file data it silently
-    shortens the result instead of leaving the tail zeroed."""
-    return f.read(size).ljust(size, b"\x00")
-
-
 def _cluster_offset(part_off: int, data_start: int, bps: int, spc: int, cluster: int) -> int:
     return part_off + (data_start + (cluster - 2) * spc) * bps
+
+
+def _read_chain(f, chain: list[int], offset_of: Callable[[int], int],
+                 cluster_bytes: int) -> bytearray:
+    """Read a whole cluster chain, coalescing runs of consecutive clusters
+    into one seek + one read.
+
+    A chain is nearly always contiguous on real media -- these images are
+    written once, in order -- so reading it cluster by cluster costs one
+    syscall per cluster for no reason. Indexing this project's own library
+    issued 1.53 million reads and spent 8.6 s inside them; the same data in
+    coalesced runs is a few thousand.
+
+    Zero-padding is per run rather than per cluster, which is the same
+    bytes: a truncated image yields a short read at the end of whichever
+    run runs off the end, and the tail is zero-filled either way. That
+    padding matters -- see the callers reading directory data, where a
+    short read would shift every later entry's offset."""
+    buf = bytearray()
+    i, n = 0, len(chain)
+    while i < n:
+        j = i + 1
+        while j < n and chain[j] == chain[j - 1] + 1:
+            j += 1
+        want = (j - i) * cluster_bytes
+        f.seek(offset_of(chain[i]))
+        buf += f.read(want).ljust(want, b"\x00")
+        i = j
+    return buf
 
 
 # ── FAT12 12-bit entry packing ───────────────────────────────────────────
@@ -449,15 +468,14 @@ class Fat16Volume(WritableVolume):
             return bytearray(f.read(g["root_sectors"] * g["bps"]))
         fat = self._read_fat(f)
         chain = _walk_chain(lambda n: fat[n], folder_ref, _FAT16_EOC_MIN, _FAT16_BAD, len(fat))
-        data = bytearray()
-        for c in chain:
-            f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-            # Padded to the FULL cluster size: a short read on a truncated
-            # image would otherwise shift every later cluster's entries in
-            # this concatenated buffer, so the "offset" handed out by list()
-            # would address the wrong entry on a later delete()/rename().
-            data += _read_cluster(f, g["bps"] * g["spc"])
-        return data
+        # Padded to the FULL cluster size (see _read_chain): a short read on
+        # a truncated image would otherwise shift every later cluster's
+        # entries in this concatenated buffer, so the "offset" handed out by
+        # list() would address the wrong entry on a later delete()/rename().
+        return _read_chain(
+            f, chain,
+            lambda c: _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c),
+            g["bps"] * g["spc"])
 
     def _write_dir(self, f, folder_ref: Optional[int], data: bytearray) -> None:
         g = self._geo
@@ -494,10 +512,10 @@ class Fat16Volume(WritableVolume):
         with open(self.path, "rb") as f:
             fat = self._read_fat(f)
             chain = _walk_chain(lambda n: fat[n], r["cluster"], _FAT16_EOC_MIN, _FAT16_BAD, len(fat))
-            buf = bytearray()
-            for c in chain:
-                f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-                buf += _read_cluster(f, g["bps"] * g["spc"])
+            buf = _read_chain(
+                f, chain,
+                lambda c: _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c),
+                g["bps"] * g["spc"])
         return bytes(buf[:r["size"]])
 
     def delete(self, entry: Entry) -> None:
@@ -591,15 +609,14 @@ class Fat32Volume(WritableVolume):
         fat = self._read_fat(f)
         chain = _walk_chain(lambda n: fat[n] & _FAT32_MASK, start,
                              _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
-        data = bytearray()
-        for c in chain:
-            f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-            # Padded to the FULL cluster size: a short read on a truncated
-            # image would otherwise shift every later cluster's entries in
-            # this concatenated buffer, so the "offset" handed out by list()
-            # would address the wrong entry on a later delete()/rename().
-            data += _read_cluster(f, g["bps"] * g["spc"])
-        return data
+        # Padded to the FULL cluster size (see _read_chain): a short read on
+        # a truncated image would otherwise shift every later cluster's
+        # entries in this concatenated buffer, so the "offset" handed out by
+        # list() would address the wrong entry on a later delete()/rename().
+        return _read_chain(
+            f, chain,
+            lambda c: _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c),
+            g["bps"] * g["spc"])
 
     def _write_dir(self, f, folder_ref: Optional[int], data: bytearray) -> None:
         g = self._geo
@@ -637,10 +654,10 @@ class Fat32Volume(WritableVolume):
             fat = self._read_fat(f)
             chain = _walk_chain(lambda n: fat[n] & _FAT32_MASK, r["cluster"],
                                  _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
-            buf = bytearray()
-            for c in chain:
-                f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-                buf += _read_cluster(f, g["bps"] * g["spc"])
+            buf = _read_chain(
+                f, chain,
+                lambda c: _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c),
+                g["bps"] * g["spc"])
         return bytes(buf[:r["size"]])
 
     def delete(self, entry: Entry) -> None:
@@ -742,10 +759,10 @@ class Fat12Volume(WritableVolume):
             fat = self._read_fat(f)
             chain = _walk_chain(lambda n: _fat12_get(fat, n), r["cluster"],
                                  _FAT12_EOC_MIN, _FAT12_BAD, len(fat) * 2 // 3)
-            buf = bytearray()
-            for c in chain:
-                f.seek(_cluster_offset(0, g["data_start"], g["bps"], g["spc"], c))
-                buf += _read_cluster(f, g["bps"] * g["spc"])
+            buf = _read_chain(
+                f, chain,
+                lambda c: _cluster_offset(0, g["data_start"], g["bps"], g["spc"], c),
+                g["bps"] * g["spc"])
         return bytes(buf[:r["size"]])
 
     def delete(self, entry: Entry) -> None:

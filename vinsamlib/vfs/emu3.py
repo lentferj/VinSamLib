@@ -92,7 +92,20 @@ class Emu3Volume(WritableVolume):
 
     def __init__(self, path: str):
         self.path = path
+        # The FAT, unpacked once. read() used to re-read and re-unpack the
+        # whole table on every single file -- 5.7 s of a library index run,
+        # for a table that cannot change between two reads of an unmodified
+        # image. Cached on the same terms the geometry above already is, and
+        # dropped by every mutation this class performs.
+        self._fat: Optional[tuple] = None
         self._parse_geometry()
+
+    def _read_fat(self, f) -> tuple:
+        if self._fat is None:
+            n_fat = self.fat_blocks * (BSIZE // 2)
+            f.seek(self.fat_start * BSIZE)
+            self._fat = struct.unpack("<%dH" % n_fat, f.read(n_fat * 2))
+        return self._fat
 
     # ── geometry / metadata parsing ─────────────────────────────────────────
 
@@ -247,10 +260,7 @@ class Emu3Volume(WritableVolume):
         bpc = self.blocks_per_cluster
 
         with open(self.path, "rb") as f:
-            fat_off = self.fat_start * BSIZE
-            n_fat = self.fat_blocks * (BSIZE // 2)
-            f.seek(fat_off)
-            fat = struct.unpack("<%dH" % n_fat, f.read(n_fat * 2))
+            fat = self._read_fat(f)
 
             clusters = []
             c = r["start_cluster"]
@@ -262,10 +272,20 @@ class Emu3Volume(WritableVolume):
                 clusters.append(c)
                 c = fat[c]
 
+            # Runs of consecutive clusters are read in one go: an EMU3 volume
+            # is written once and in order, so a chain is nearly always
+            # contiguous, and one seek+read per cluster was costing a syscall
+            # apiece for nothing (1.06 M of them across this project's own
+            # library index run).
             buf = bytearray()
-            for cl in clusters:
-                f.seek(data_off + (cl - 1) * bpc * BSIZE)
-                buf += f.read(self.cluster_size)
+            i, n = 0, len(clusters)
+            while i < n:
+                j = i + 1
+                while j < n and clusters[j] == clusters[j - 1] + 1:
+                    j += 1
+                f.seek(data_off + (clusters[i] - 1) * bpc * BSIZE)
+                buf += f.read((j - i) * self.cluster_size)
+                i = j
 
         true_size = self._true_size(len(clusters), r["blks"], r["brem"], self.cluster_size)
         return bytes(buf[:true_size])
@@ -276,6 +296,7 @@ class Emu3Volume(WritableVolume):
         """Free the entry's FAT chain and zero its 32-byte dircon slot —
         mirrors the proven 'overwrite' branch of
         writers.iso_builder.emu_hdd_append (iso_builder.py:915-920)."""
+        self._fat = None            # this rewrites the FAT
         r = entry.ref
         with open(self.path, "r+b") as f:
             f.seek(0)
@@ -318,6 +339,7 @@ class Emu3Volume(WritableVolume):
         """Delegates to mpc2emu's proven allocator rather than
         reimplementing cluster/slot allocation here."""
         from ..mpc2emu_bridge import iso_builder
+        self._fat = None            # the allocator rewrites the FAT
         folder_name = folder.ref["name"].strip() if folder is not None else None
         return iso_builder.emu_hdd_append(self.path, files, folder=folder_name,
                                             on_duplicate="add-new")
