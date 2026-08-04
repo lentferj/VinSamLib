@@ -1019,53 +1019,8 @@ affected — that is the whole reason this section exists. None of them
 can be repaired in place; the fix is always to rebuild from the source
 material with a current mpc2emu and VinSamLib.
 
-### If you built KRZ banks before 2026-08-03, check them
-
-Two defects here, and the damage shows only on a K2000 — or not at all.
-
-- **Multisample banks built before 2026-08-02** carry mpc2emu's keymap
-  off-by-12 (its `791364a`). The K2000 sounds keymap entry `i` at MIDI
-  key `i + 12`, and each zone was written 12 semitones from the key it
-  was asked for, so the program plays **one sample key-tracked across
-  the whole keyboard** instead of the right sample per key.
-  Single-sample programs are unaffected.
-- **Banks assembled before 2026-08-03** from a *compacted* source keymap
-  were corrupted by VinSamLib itself: assembly walked keymap entries at
-  a fixed stride that most real K2000 content doesn't use, overwriting
-  tuning and subSample bytes. Compacted keymaps are the common case —
-  1145 of 1584 in this project's own 201-file library.
-
-To find affected files:
-
-```
-python3 tools/check_krz_banks.py ~/path/to/banks-or-images
-```
-
-It takes `.krz` files, directories, and disk/floppy images, reports what
-it finds, and changes nothing. **The fix in both cases is to rebuild the
-bank from its source material** with a current mpc2emu and VinSamLib.
-
-If you still have the bank a KRZ was built *from*, add `--against`:
-
-```
-python3 tools/check_krz_banks.py --against SOURCE.krz ~/path/to/built
-python3 tools/check_krz_banks.py --against SOURCE.e4b ~/path/to/built
-```
-
-That compares where each keymap splits the keyboard against what the
-source calls for. A conversion may renumber samples, rename objects and
-re-encode audio, but it must not move those split points — so this is an
-exact check rather than the inference the plain scan has to make, and it
-catches damage that isn't a clean 12-semitone shift. It is how this
-project's own hardware-confirmation batch was verified after the fix, and
-it caught the pre-fix version of the same banks, which had silently lost
-a zone.
-
-Either source format works: the `.krz` of a KRZ→KRZ conversion, or the
-`.e4b` an E4B→KRZ one started from (that form needs mpc2emu configured).
-A bank the given source can't account for is reported as *not compared*
-rather than as a defect, and doesn't affect the exit code — give each
-source its own run when a batch mixes them.
+**Newest first.** If you have kept up with releases, the entries below
+your last update are the ones that can still be sitting in your files.
 
 ### If you imported MPC programs before 2026-08-04, re-import the big ones
 
@@ -1099,6 +1054,54 @@ the rule of thumb: **re-import any large multisample you imported before
 with distinct names are almost certainly untouched, and a re-import is
 cheap. The Samples pane now shows renamed samples in amber, so a fresh
 import shows its own work.
+
+### If you built KRZ banks before 2026-08-03, check them
+
+Two defects here, and the damage shows only on a K2000 — or not at all.
+
+- **Banks assembled before 2026-08-03** from a *compacted* source keymap
+  were corrupted by VinSamLib itself: assembly walked keymap entries at
+  a fixed stride that most real K2000 content doesn't use, overwriting
+  tuning and subSample bytes. Compacted keymaps are the common case —
+  1145 of 1584 in this project's own 201-file library.
+- **Multisample banks built before 2026-08-02** carry mpc2emu's keymap
+  off-by-12 (its `791364a`). The K2000 sounds keymap entry `i` at MIDI
+  key `i + 12`, and each zone was written 12 semitones from the key it
+  was asked for, so the program plays **one sample key-tracked across
+  the whole keyboard** instead of the right sample per key.
+  Single-sample programs are unaffected.
+
+To find affected files:
+
+```
+python3 tools/check_krz_banks.py ~/path/to/banks-or-images
+```
+
+It takes `.krz` files, directories, and disk/floppy images, reports what
+it finds, and changes nothing. **The fix in both cases is to rebuild the
+bank from its source material** with a current mpc2emu and VinSamLib.
+
+If you still have the bank a KRZ was built *from*, add `--against`:
+
+```
+python3 tools/check_krz_banks.py --against SOURCE.krz ~/path/to/built
+python3 tools/check_krz_banks.py --against SOURCE.e4b ~/path/to/built
+```
+
+That compares where each keymap splits the keyboard against what the
+source calls for. A conversion may renumber samples, rename objects and
+re-encode audio, but it must not move those split points — so this is an
+exact check rather than the inference the plain scan has to make, and it
+catches damage that isn't a clean 12-semitone shift. It is how this
+project's own hardware-confirmation batch was verified after the fix, and
+it caught the pre-fix version of the same banks, which had silently lost
+a zone.
+
+Either source format works: the `.krz` of a KRZ→KRZ conversion, or the
+`.e4b` an E4B→KRZ one started from (that form needs mpc2emu configured).
+A bank the given source can't account for is reported as *not compared*
+rather than as a defect, and doesn't affect the exit code — give each
+source its own run when a batch mixes them.
 
 ---
 
