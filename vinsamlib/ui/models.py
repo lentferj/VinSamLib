@@ -13,6 +13,7 @@ queued Qt signal connection.
 from __future__ import annotations
 
 import os
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -301,6 +302,16 @@ def _fetch_mpc_project(node: TreeNode) -> list[TreeNode]:
     if node.handle is None:
         node.handle = xpm_import.parse_mpc(str(path))
     presets = node.handle.presets
+    if not presets:
+        # mpc2emu skips a program that carries no sampled content (9a2c78b)
+        # rather than emitting an empty preset, so a project whose programs
+        # are ALL empty kits parses fine and returns nothing -- 5 projects in
+        # the reference backup. Say so on the row: an expandable row that
+        # opens into nothing tells the user only that something is broken.
+        raise ValueError(
+            f"{path.name} holds no program with sampled content: every "
+            f"program in it is an empty kit or track, so there is nothing "
+            f"to import.")
     labels = _project_program_labels(path, presets)
     return [TreeNode("mpc_program",
                      (labels[i] if labels else preset.name).strip() or "(untitled)",
@@ -319,26 +330,57 @@ def _project_program_labels(path: Path, presets: list) -> list[str]:
     project row would call it 'XD- Jexus 193-Au' while the folder above calls
     it 'XD- Jexus 193-Auto sampled.Keygroup.xpm'.
 
-    So rows are labelled from the files the project gathers -- but only while
-    every one of them still maps onto the preset it is meant to be. Anything
-    that breaks the pairing (upstream gathering drum programs too, ordering
-    them differently, renaming that helper) drops the whole listing back to
-    the preset names, which are never wrong, only short. A mislabelled row is
-    much worse than a truncated one: it would name the program you did not
-    import."""
+    So rows are labelled from the files the project gathers, in the order
+    mpc2emu gathers them (keygroups then drums, each sorted -- 9a2c78b), and
+    each preset must land on a file whose _safe_name is exactly its name --
+    checked through mpc2emu's own helper, so the two cannot drift apart.
+    Files may be passed over on the way: a program carrying no sampled
+    content is skipped rather than emitted as an empty preset, and 55 of the
+    224 drum kits in the reference backup are empty ones.
+
+    What is never allowed is a guess. If two of the project's programs share
+    a truncated name, nothing here can say which one a preset came from, so
+    the whole listing falls back to the preset names -- as it does if that
+    helper is ever renamed, or the gathering changes again. Those names are
+    never wrong, only short; a mislabelled row would name the program you did
+    not import."""
     safe_name = getattr(xpm_import.xpm_parser, "_safe_name", None)
     if safe_name is None:
+        return []
+    try:
+        with open(path, "rb") as f:
+            if f.read(2) == b"\x1f\x8b":
+                # MPC 3: gzipped payload, programs inside the .xpj. A data
+                # folder can still sit beside it from an older save of the
+                # same name -- one such project is in the reference backup --
+                # and those files are not what was parsed.
+                return []
+    except OSError:
         return []
     data_dir = path.parent / f"{path.stem}_[ProjectData]"
     if not data_dir.is_dir():
         return []      # an MPC 3 project keeps its programs inside the .xpj
     stems = [p.name.rsplit(".Keygroup", 1)[0]
              for p in sorted(data_dir.glob("*.Keygroup.xpm"))]
-    if len(stems) != len(presets):
+    stems += [p.name.rsplit(".Drum", 1)[0]
+              for p in sorted(data_dir.glob("*.Drum.xpm"))]
+    short = [safe_name(s) for s in stems]
+    have, want = Counter(short), Counter(p.name for p in presets)
+    # Several programs can truncate to one name. That is still resolvable
+    # while every one of them reached the bank -- order settles which is
+    # which -- and unresolvable the moment one was skipped, because nothing
+    # here can say which of them is missing.
+    if any(have.get(name, 0) != n for name, n in want.items()):
         return []
-    if any(safe_name(s) != p.name for s, p in zip(stems, presets)):
-        return []
-    return stems
+    labels, at = [], 0
+    for preset in presets:
+        while at < len(stems) and short[at] != preset.name:
+            at += 1    # a program that carried no samples -- skipped upstream
+        if at == len(stems):
+            return []
+        labels.append(stems[at])
+        at += 1
+    return labels
 
 
 def _fetch_bank(node: TreeNode) -> list[TreeNode]:

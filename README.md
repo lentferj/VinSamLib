@@ -302,11 +302,12 @@ rather than being a single all-or-nothing import.
 
 1. Add a library folder containing `.xpj` files. Each shows up as an
    expandable 🗂 row.
-2. Expand it. Every **keygroup** program in the project gets its own
-   row, named after its track; selecting one shows the same key-zone /
-   velocity-layer / sample-rate summary a real preset gets. Drum, MIDI,
-   plugin, audio and CV tracks hold nothing convertible and are not
-   listed.
+2. Expand it. Every program that carries sampled material — **keygroup
+   and drum** — gets its own row, named after its track; selecting one
+   shows the same key-zone / velocity-layer / sample-rate summary a real
+   preset gets. MIDI, plugin, audio, CV and clip tracks reference no
+   sample data at all and are not listed, and neither is a kit that was
+   created but never filled.
 3. Double-click a program (or right-click it → **Import…**) to bring
    just that one into **New Bank**, or right-click the project itself →
    **Import all programs of "…"…** to bring in every program at once,
@@ -318,20 +319,25 @@ rather than being a single all-or-nothing import.
 
 ![Explorer showing an expanded .xpj project with one row per keygroup program, alongside a .xpm program and a .xty track, and the Detail pane summarising the selected program](docs/screenshots/10_mpc_project.png)
 
-A project with no keygroup program at all can't produce anything: the
-row reports that instead of expanding, and says which track kinds it
-found. Both MPC 2.x projects (whose programs live in a
-`<name>_[ProjectData]` folder next to the `.xpj`) and MPC 3 ones are
-read the same way.
+A project that can't produce anything says so on its row instead of
+expanding into nothing, in either of the two ways that happens: it holds
+no keygroup or drum program at all (the message names the track kinds it
+does hold), or every program it holds is an empty kit — 5 projects in
+the reference backup are that second case. Both MPC 2.x projects (whose
+programs live in a `<name>_[ProjectData]` folder next to the `.xpj`) and
+MPC 3 ones are read the same way, and since mpc2emu `9a2c78b` both
+generations gather drum programs as well as keygroup ones.
 
 Program rows show the **whole** program name, which is often longer than
 the name the import can keep: an E4B preset field holds 16 ASCII
 characters, so `XD- Jexus 193-Auto sampled` browses under that name and
 arrives in New Bank as `XD- Jexus 193-Au`. For an MPC 2.x project the
 full names come from the program files themselves, and only while each
-one still matches the preset it belongs to — if that pairing ever stops
-holding, every row falls back to the (short) preset name rather than
-risk labelling a row with the wrong program.
+preset can be matched to exactly one of them. Two programs whose names
+truncate to the same 16 characters are unresolvable if either was
+skipped, and then every row in that project falls back to the (short)
+preset name — never a guess at which program a row shows. That costs
+1 of the 90 projects here its full names.
 
 **A project's data folder is mostly not sample content.** It holds one
 `.xpm` per track, and only two kinds of program carry samples at all.
