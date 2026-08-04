@@ -300,8 +300,45 @@ def _fetch_mpc_project(node: TreeNode) -> list[TreeNode]:
     path: Path = node.payload
     if node.handle is None:
         node.handle = xpm_import.parse_mpc(str(path))
-    return [TreeNode("mpc_program", preset.name.strip() or "(untitled)", node, (path, i))
-            for i, preset in enumerate(node.handle.presets)]
+    presets = node.handle.presets
+    labels = _project_program_labels(path, presets)
+    return [TreeNode("mpc_program",
+                     (labels[i] if labels else preset.name).strip() or "(untitled)",
+                     node, (path, i))
+            for i, preset in enumerate(presets)]
+
+
+def _project_program_labels(path: Path, presets: list) -> list[str]:
+    """Full program names for an MPC 2.x project's rows, or [] to use the
+    presets' own names.
+
+    mpc2emu names a preset through its _safe_name(): ASCII, 16 characters,
+    because that is what an E4B preset field holds. That is the right name for
+    the preset an import produces and the wrong one for a browse row -- the
+    same program listed from its data folder shows its whole filename, so a
+    project row would call it 'XD- Jexus 193-Au' while the folder above calls
+    it 'XD- Jexus 193-Auto sampled.Keygroup.xpm'.
+
+    So rows are labelled from the files the project gathers -- but only while
+    every one of them still maps onto the preset it is meant to be. Anything
+    that breaks the pairing (upstream gathering drum programs too, ordering
+    them differently, renaming that helper) drops the whole listing back to
+    the preset names, which are never wrong, only short. A mislabelled row is
+    much worse than a truncated one: it would name the program you did not
+    import."""
+    safe_name = getattr(xpm_import.xpm_parser, "_safe_name", None)
+    if safe_name is None:
+        return []
+    data_dir = path.parent / f"{path.stem}_[ProjectData]"
+    if not data_dir.is_dir():
+        return []      # an MPC 3 project keeps its programs inside the .xpj
+    stems = [p.name.rsplit(".Keygroup", 1)[0]
+             for p in sorted(data_dir.glob("*.Keygroup.xpm"))]
+    if len(stems) != len(presets):
+        return []
+    if any(safe_name(s) != p.name for s, p in zip(stems, presets)):
+        return []
+    return stems
 
 
 def _fetch_bank(node: TreeNode) -> list[TreeNode]:

@@ -324,6 +324,15 @@ found. Both MPC 2.x projects (whose programs live in a
 `<name>_[ProjectData]` folder next to the `.xpj`) and MPC 3 ones are
 read the same way.
 
+Program rows show the **whole** program name, which is often longer than
+the name the import can keep: an E4B preset field holds 16 ASCII
+characters, so `XD- Jexus 193-Auto sampled` browses under that name and
+arrives in New Bank as `XD- Jexus 193-Au`. For an MPC 2.x project the
+full names come from the program files themselves, and only while each
+one still matches the preset it belongs to — if that pairing ever stops
+holding, every row falls back to the (short) preset name rather than
+risk labelling a row with the wrong program.
+
 **A project's data folder is mostly not sample content.** It holds one
 `.xpm` per track, and only two kinds of program carry samples at all.
 Measured on a real 571-file MPC One backup:
