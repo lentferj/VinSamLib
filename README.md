@@ -516,6 +516,14 @@ with the sample name, key range, velocity range, root key, and loop
 type. Useful when you need the exact per-zone breakdown the Detail
 pane's summary intentionally leaves out.
 
+It fills for **MPC programs** too — a `.xpm`/`.xty` file, or one program
+inside a project — not only for presets in a bank. That is where it
+earns its keep on a drum kit: one row per pad, so you can see exactly
+which key each hit landed on before importing anything. Selecting a
+program inside an already-expanded project reads its zones from the
+project's parsed copy, so stepping through the programs of one project
+is instant; a loose `.xpm` is parsed on selection like any other.
+
 ### New Bank
 
 ![New Bank column with three presets added and the selection info panel showing a condensed summary](docs/screenshots/02_new_bank.png)
