@@ -37,24 +37,32 @@ class ZoneTableModel(QAbstractTableModel):
         self._full_names = full_names or {}
         self.endResetModel()
 
-    def _name_parts(self, row: int) -> tuple[str, str, bool] | None:
-        """(what an import will drop, what it will keep, was it renamed), or
-        None when the name survives whole.
+    def _name_parts(self, row: int) -> list[tuple[str, str]] | None:
+        """The sample name split into runs to draw: [(text, "keep"|"drop"|
+        "renamed"), ...], or None when the name survives whole.
 
-        The split is by length: mpc2emu's _safe_name replaces characters one
-        for one before it cuts, so the tail it keeps is as long as the end of
-        the original. The third field is the case where even that tail is not
-        what gets stored -- when two samples would end up with one name,
-        mpc2emu renames the second (`cbe6f10`), so its zone carries something
-        like `…_C-2` for a file ending `…_C-1`. Kept, but not verbatim, and a
-        row that showed the file's own tail there would be claiming a name
-        that will not exist."""
+        Which END survives is not fixed. mpc2emu keeps the tail of a
+        multisample's names (they differ at the end) and the head of a drum
+        kit's (they differ at the front), decided per program since its
+        `12f74ee` -- so the part an import throws away can be at either end,
+        and a renderer that always reddened the front would be wrong for
+        every kit. The stored name says which: it is a prefix of the file's
+        name, or a suffix of it.
+
+        Neither, and the sample was renamed to keep names unique (`cbe6f10`),
+        so no run of the file's own name is what gets stored. Then the whole
+        surviving part is marked "renamed" rather than claiming a name that
+        will not exist."""
         stored = self._zones[row].sample_name
         full = self._full_names.get(stored)
         if not full or len(full) <= len(stored):
             return None
-        head, tail = full[:len(full) - len(stored)], full[len(full) - len(stored):]
-        return head, tail, tail != stored
+        if full.endswith(stored):                  # the tail survived
+            return [(full[:len(full) - len(stored)], "drop"), (stored, "keep")]
+        if full.startswith(stored):                # the head survived
+            return [(stored, "keep"), (full[len(stored):], "drop")]
+        cut = len(full) - len(stored)              # renamed: split by length
+        return [(full[:cut], "drop"), (full[cut:], "renamed")]
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._zones)
@@ -76,10 +84,13 @@ class ZoneTableModel(QAbstractTableModel):
                 return parts
             if parts is not None and role == Qt.ItemDataRole.ToolTipRole:
                 stored = self._zones[index.row()].sample_name
-                tip = (f"{parts[0]}{parts[1]}\n\nImports as '{stored}' — an E4B or "
-                       f"KRZ sample name holds 16 characters, and the END is kept "
-                       f"because that is what tells a multisample's notes apart.")
-                if parts[2]:
+                whole = "".join(text for text, _ in parts)
+                kept_end = "END" if parts[0][1] == "drop" else "START"
+                tip = (f"{whole}\n\nImports as '{stored}' — an E4B or KRZ sample "
+                       f"name holds 16 characters, and this program keeps the "
+                       f"{kept_end} of each name, which is where its samples "
+                       f"differ from one another.")
+                if any(kind == "renamed" for _, kind in parts):
                     tip += ("\n\nRenamed: another sample already had that name, and "
                             "a zone finds its audio by name alone — two samples "
                             "sharing one would silence the second.")
@@ -89,7 +100,7 @@ class ZoneTableModel(QAbstractTableModel):
         z = self._zones[index.row()]
         if index.column() == 0:
             parts = self._name_parts(index.row())
-            return parts[0] + parts[1] if parts else z.sample_name
+            return "".join(text for text, _ in parts) if parts else z.sample_name
         return (
             z.sample_name,
             f"{z.lo_key}–{z.hi_key}",
@@ -121,8 +132,6 @@ class TruncatedNameDelegate(QStyledItemDelegate):
         if not parts:
             super().paint(painter, option, index)
             return
-        dropped, kept, renamed = parts
-
         self.initStyleOption(option, index)
         option.text = ""                      # the style draws everything but the text
         style = option.widget.style() if option.widget else QApplication.style()
@@ -134,17 +143,19 @@ class TruncatedNameDelegate(QStyledItemDelegate):
         baseline = rect.top() + (rect.height() + metrics.ascent() - metrics.descent()) // 2
         x = rect.left()
 
+        kept_pen = option.palette.color(
+            QPalette.ColorGroup.Normal,
+            QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
+        pens = {
+            "drop": _DROP_RED_SELECTED if selected else _DROP_RED,
+            "renamed": _RENAMED_AMBER_SELECTED if selected else _RENAMED_AMBER,
+            "keep": kept_pen,
+        }
         painter.save()
-        painter.setPen(_DROP_RED_SELECTED if selected else _DROP_RED)
-        painter.drawText(x, baseline, dropped)
-        x += metrics.horizontalAdvance(dropped)
-        if renamed:
-            painter.setPen(_RENAMED_AMBER_SELECTED if selected else _RENAMED_AMBER)
-        else:
-            painter.setPen(option.palette.color(
-                QPalette.ColorGroup.Normal,
-                QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text))
-        painter.drawText(x, baseline, kept)
+        for text, kind in parts:
+            painter.setPen(pens[kind])
+            painter.drawText(x, baseline, text)
+            x += metrics.horizontalAdvance(text)
         painter.restore()
 
 
