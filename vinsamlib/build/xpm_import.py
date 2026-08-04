@@ -316,17 +316,24 @@ def full_sample_names(stored: list[str], path: str) -> dict[str, str]:
     # helper, reproduces the names it actually assigned. Without this only 17
     # of 97 rows in a semitone-sampled program could be paired up.
     unique_name = getattr(xpm_parser, "_unique_sample_name", None)
+    # Which end of a name survives is decided per program (mpc2emu `12f74ee`):
+    # a multisample is identified by its tail, a drum kit by its head. Asking
+    # mpc2emu itself keeps that one decision in one place -- and an older
+    # checkout without it still pairs, on the tail it always used.
+    prefers_tail = getattr(xpm_parser, "_prefers_tail", None)
+    candidates = list(dict.fromkeys(source_sample_names(path)))
+    keep_tail = True if prefers_tail is None else bool(prefers_tail(candidates))
     taken: set[str] = set()
     found: dict[str, str] = {}
     ambiguous: set[str] = set()
-    for candidate in dict.fromkeys(source_sample_names(path)):   # first sight, in order
+    for candidate in candidates:                       # first sight, in order
         # _safe_name() drops the extension before it shortens, and an MPC 2.x
         # <SampleName> often carries one ("…_C-1.wav"). Dropping it here too
         # keeps the two halves aligned -- otherwise the kept part comes out
         # as "…_2600_E-1.wav" while the name that reaches the bank is
         # "IsOnPCP_2600_E-1", and the split is drawn in the wrong place.
         candidate = os.path.splitext(candidate)[0]
-        short = safe_name(candidate, tail=True)
+        short = safe_name(candidate, tail=keep_tail)
         if unique_name is not None:
             short = unique_name(short, taken)
             taken.add(short)
