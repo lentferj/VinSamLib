@@ -214,6 +214,114 @@ def project_program_names(path: str) -> list[str]:
     return names
 
 
+_XML_SAMPLE_NAME = re.compile(rb"<SampleName>([^<]*)</SampleName>")
+
+
+def source_sample_names(path: str) -> list[str]:
+    """Every sample name an MPC file references, at full length.
+
+    A parse cannot answer this: mpc2emu shortens each name to the 16
+    characters an E4B/KRZ name field holds and keeps nothing else, so the
+    only place the whole name still exists is the file. Read straight out of
+    it -- `<SampleName>` in MPC 2.x XML, the `samples` array in MPC 3 -- with
+    no parse and no samples loaded.
+
+    For a 2.x project the programs are separate files in the data folder, so
+    all of them contribute; names are matched up afterwards, never by
+    position, and an unreadable file simply contributes nothing."""
+    p = Path(path)
+    try:
+        with open(p, "rb") as f:
+            gzipped = f.read(2) == b"\x1f\x8b"
+    except OSError:
+        return []
+    if gzipped:
+        return _mpc3_sample_names(p)
+    if p.suffix.lower() == PROJECT_EXT:
+        data_dir = p.parent / f"{p.stem}_[ProjectData]"
+        if not data_dir.is_dir():
+            return []
+        names: list[str] = []
+        for program in sorted(data_dir.glob("*.xpm")):
+            names += _xml_sample_names(program)
+        return names
+    return _xml_sample_names(p)
+
+
+def _xml_sample_names(path: Path) -> list[str]:
+    try:
+        blob = path.read_bytes()
+    except OSError:
+        return []
+    return [name for name in
+            (m.group(1).decode("utf-8", "replace").strip()
+             for m in _XML_SAMPLE_NAME.finditer(blob))
+            if name]
+
+
+def _mpc3_sample_names(path: Path) -> list[str]:
+    """The `samples` arrays of an MPC 3 payload, decoded where they sit --
+    same reason as project_program_names(): the document around them runs to
+    tens of MB and none of it is needed."""
+    try:
+        with gzip.open(path, "rb") as g:
+            if g.readline().rstrip(b"\n") != b"ACVS":
+                return []
+            for _ in range(4):
+                g.readline()
+            text = g.read()
+    except Exception:
+        return []
+    decoder = json.JSONDecoder()
+    names, pos = [], 0
+    while True:
+        key = text.find(b'"samples"', pos)
+        if key < 0:
+            break
+        start = text.find(b"[", key)
+        if start < 0:
+            break
+        pos = start + 1
+        try:
+            samples, _ = decoder.raw_decode(text[start:].decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        if not isinstance(samples, list):
+            continue
+        for sample in samples:
+            if isinstance(sample, dict) and str(sample.get("name", "")).strip():
+                names.append(str(sample["name"]).strip())
+    return names
+
+
+def full_sample_names(stored: list[str], path: str) -> dict[str, str]:
+    """Map each shortened sample name back to the whole name it came from.
+
+    Only pairings that can be proved are returned: a candidate qualifies when
+    mpc2emu's own _safe_name() turns it into exactly that stored name, and a
+    stored name claimed by two different candidates is dropped rather than
+    guessed at -- the same rule the project rows use for program names. What
+    is missing simply shows as the shortened name, which is never wrong."""
+    safe_name = getattr(xpm_parser, "_safe_name", None)
+    if safe_name is None:
+        return {}
+    wanted = set(stored)
+    if not wanted:
+        return {}
+    found: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for candidate in source_sample_names(path):
+        short = safe_name(candidate, tail=True)
+        if short not in wanted or short in ambiguous:
+            continue
+        if short in found and found[short] != candidate:
+            del found[short]
+            ambiguous.add(short)
+            continue
+        found[short] = candidate
+    return {short: full for short, full in found.items() if full != short}
+
+
 @dataclass(frozen=True)
 class XpmSummary:
     preset_name: str

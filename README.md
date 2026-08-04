@@ -524,6 +524,18 @@ program inside an already-expanded project reads its zones from the
 project's parsed copy, so stepping through the programs of one project
 is instant; a loose `.xpm` is parsed on selection like any other.
 
+For a program, sample names are shown **whole, with the part an import
+will drop in red**. An E4B or KRZ sample-name field holds 16 characters
+and mpc2emu keeps the **end** of the name, since a multisample's samples
+share a long prefix and differ only at the end — head truncation would
+turn five samples into five identical names. So
+`XD- Jexus 193-Auto sampled-081 A1` shows with everything up to
+`…193-Aut` in red and `o sampled-081 A1` in normal text: that leading
+`o` is not a bullet, it is the last letter of "Auto". The whole names
+are read from the program file itself and matched back through
+mpc2emu's own shortening, so a name that cannot be paired up
+unambiguously simply stays short rather than being guessed at.
+
 ### New Bank
 
 ![New Bank column with three presets added and the selection info panel showing a condensed summary](docs/screenshots/02_new_bank.png)
