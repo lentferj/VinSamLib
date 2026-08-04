@@ -38,89 +38,11 @@ for the honest account. Always keep an untouched copy of anything
 irreplaceable, and test unfamiliar images on a spare SD card / floppy
 before touching real hardware.
 
-### If you built KRZ banks before 2026-08-03, check them
-
-Two defects produced `.KRZ` files that parse cleanly, re-read correctly,
-and look completely normal — the damage shows only on a K2000, or not at
-all. Both are fixed; neither can be repaired in place, and nothing warns
-you about a file you already have.
-
-- **Multisample banks built before 2026-08-02** carry mpc2emu's keymap
-  off-by-12 (its `791364a`). The K2000 sounds keymap entry `i` at MIDI
-  key `i + 12`, and each zone was written 12 semitones from the key it
-  was asked for, so the program plays **one sample key-tracked across
-  the whole keyboard** instead of the right sample per key.
-  Single-sample programs are unaffected.
-- **Banks assembled before 2026-08-03** from a *compacted* source keymap
-  were corrupted by VinSamLib itself: assembly walked keymap entries at
-  a fixed stride that most real K2000 content doesn't use, overwriting
-  tuning and subSample bytes. Compacted keymaps are the common case —
-  1145 of 1584 in this project's own 201-file library.
-
-To find affected files:
-
-```
-python3 tools/check_krz_banks.py ~/path/to/banks-or-images
-```
-
-It takes `.krz` files, directories, and disk/floppy images, reports what
-it finds, and changes nothing. **The fix in both cases is to rebuild the
-bank from its source material** with a current mpc2emu and VinSamLib.
-
-If you still have the bank a KRZ was built *from*, add `--against`:
-
-```
-python3 tools/check_krz_banks.py --against SOURCE.krz ~/path/to/built
-python3 tools/check_krz_banks.py --against SOURCE.e4b ~/path/to/built
-```
-
-That compares where each keymap splits the keyboard against what the
-source calls for. A conversion may renumber samples, rename objects and
-re-encode audio, but it must not move those split points — so this is an
-exact check rather than the inference the plain scan has to make, and it
-catches damage that isn't a clean 12-semitone shift. It is how this
-project's own hardware-confirmation batch was verified after the fix, and
-it caught the pre-fix version of the same banks, which had silently lost
-a zone.
-
-Either source format works: the `.krz` of a KRZ→KRZ conversion, or the
-`.e4b` an E4B→KRZ one started from (that form needs mpc2emu configured).
-A bank the given source can't account for is reported as *not compared*
-rather than as a defect, and doesn't affect the exit code — give each
-source its own run when a batch mixes them.
-
-### If you imported MPC programs before 2026-08-04, re-import the big ones
-
-A third defect of the same shape, in the MPC path rather than the KRZ
-one: the bank opens, plays, and looks right, and **samples are simply
-missing from it**.
-
-A sample name in an E4B or KRZ holds 16 characters, and a zone finds its
-audio by that name alone. mpc2emu shortens names and renames a clash —
-but until its `cbe6f10` the rename was not checked against the names
-already taken, so it could hand back the *same* name (`…_2600_C-1` plus
-a `"1"` is unchanged, and names ending `-1`, `A1`, `C1` are ordinary in
-auto-sampled sets) or land on a different real sample (`…_C0` + `"1"` →
-`…_C1`). The second sample was then loaded, logged as `Loaded sample:`,
-and never referenced again: its zones sound the survivor instead, at the
-wrong pitch. On a semitone-sampled instrument that means every second
-semitone plays its neighbour.
-
-Measured across a 5890-program MPC backup: **140 programs affected,
-5766 samples orphaned**, worst case 140 of 336 in one program. One of
-them converted end to end produced a bank with **97 zones and 57
-samples**.
-
-**There is no scanner for this one.** The only trace an affected bank
-carries — one sample used at several root notes — is perfectly ordinary
-in hardware-authored content: 4515 presets across 3427 banks in this
-project's own library show it legitimately, against 10 in a bank known
-to be damaged. Rather than a check that cries wolf on the whole library,
-the rule of thumb: **re-import any large multisample you imported before
-2026-08-04.** Small programs, drum kits and anything under ~16 samples
-with distinct names are almost certainly untouched, and a re-import is
-cheap. The Samples pane now shows renamed samples in amber, so a fresh
-import shows its own work.
+**Three fixed defects produced files that are wrong and do not look it**
+— two kinds of `.KRZ` bank and any large MPC multisample imported before
+2026-08-04. All three are fixed, none can be repaired in place, and
+nothing warns you about a file you already have: see [Fixed defects —
+check what you built earlier](#fixed-defects--check-what-you-built-earlier).
 
 ---
 
@@ -580,8 +502,8 @@ most rows — it is not a defect, and nothing is lost.
 > ⚠️ Until mpc2emu `cbe6f10` (2026-08-04) that rename could hand back
 > the *same* name, and the second sample then became unreachable — so a
 > bank you built before that date can be missing samples and cannot be
-> repaired in place. See [**Use at your own
-> risk**](#if-you-imported-mpc-programs-before-2026-08-04-re-import-the-big-ones)
+> repaired in place. See [**Fixed defects — check what you built
+> earlier**](#if-you-imported-mpc-programs-before-2026-08-04-re-import-the-big-ones)
 > for the measured scale and what to re-import.
 
 ### New Bank
@@ -1088,6 +1010,98 @@ main queue and the per-bank contents list in Pending for Image.
 
 ---
 
+## Fixed defects — check what you built earlier
+
+Defects that are **fixed** but whose output is still on your disk. Each
+one produced files that parse cleanly, re-read correctly and look
+entirely normal, so nothing will tell you which of your own files are
+affected — that is the whole reason this section exists. None of them
+can be repaired in place; the fix is always to rebuild from the source
+material with a current mpc2emu and VinSamLib.
+
+### If you built KRZ banks before 2026-08-03, check them
+
+Two defects here, and the damage shows only on a K2000 — or not at all.
+
+- **Multisample banks built before 2026-08-02** carry mpc2emu's keymap
+  off-by-12 (its `791364a`). The K2000 sounds keymap entry `i` at MIDI
+  key `i + 12`, and each zone was written 12 semitones from the key it
+  was asked for, so the program plays **one sample key-tracked across
+  the whole keyboard** instead of the right sample per key.
+  Single-sample programs are unaffected.
+- **Banks assembled before 2026-08-03** from a *compacted* source keymap
+  were corrupted by VinSamLib itself: assembly walked keymap entries at
+  a fixed stride that most real K2000 content doesn't use, overwriting
+  tuning and subSample bytes. Compacted keymaps are the common case —
+  1145 of 1584 in this project's own 201-file library.
+
+To find affected files:
+
+```
+python3 tools/check_krz_banks.py ~/path/to/banks-or-images
+```
+
+It takes `.krz` files, directories, and disk/floppy images, reports what
+it finds, and changes nothing. **The fix in both cases is to rebuild the
+bank from its source material** with a current mpc2emu and VinSamLib.
+
+If you still have the bank a KRZ was built *from*, add `--against`:
+
+```
+python3 tools/check_krz_banks.py --against SOURCE.krz ~/path/to/built
+python3 tools/check_krz_banks.py --against SOURCE.e4b ~/path/to/built
+```
+
+That compares where each keymap splits the keyboard against what the
+source calls for. A conversion may renumber samples, rename objects and
+re-encode audio, but it must not move those split points — so this is an
+exact check rather than the inference the plain scan has to make, and it
+catches damage that isn't a clean 12-semitone shift. It is how this
+project's own hardware-confirmation batch was verified after the fix, and
+it caught the pre-fix version of the same banks, which had silently lost
+a zone.
+
+Either source format works: the `.krz` of a KRZ→KRZ conversion, or the
+`.e4b` an E4B→KRZ one started from (that form needs mpc2emu configured).
+A bank the given source can't account for is reported as *not compared*
+rather than as a defect, and doesn't affect the exit code — give each
+source its own run when a batch mixes them.
+
+### If you imported MPC programs before 2026-08-04, re-import the big ones
+
+In the MPC import path rather than the KRZ writer, and the symptom is
+different: the bank opens, plays, and looks right, and **samples are
+simply missing from it**.
+
+A sample name in an E4B or KRZ holds 16 characters, and a zone finds its
+audio by that name alone. mpc2emu shortens names and renames a clash —
+but until its `cbe6f10` the rename was not checked against the names
+already taken, so it could hand back the *same* name (`…_2600_C-1` plus
+a `"1"` is unchanged, and names ending `-1`, `A1`, `C1` are ordinary in
+auto-sampled sets) or land on a different real sample (`…_C0` + `"1"` →
+`…_C1`). The second sample was then loaded, logged as `Loaded sample:`,
+and never referenced again: its zones sound the survivor instead, at the
+wrong pitch. On a semitone-sampled instrument that means every second
+semitone plays its neighbour.
+
+Measured across a 5890-program MPC backup: **140 programs affected,
+5766 samples orphaned**, worst case 140 of 336 in one program. One of
+them converted end to end produced a bank with **97 zones and 57
+samples**.
+
+**There is no scanner for this one.** The only trace an affected bank
+carries — one sample used at several root notes — is perfectly ordinary
+in hardware-authored content: 4515 presets across 3427 banks in this
+project's own library show it legitimately, against 10 in a bank known
+to be damaged. Rather than a check that cries wolf on the whole library,
+the rule of thumb: **re-import any large multisample you imported before
+2026-08-04.** Small programs, drum kits and anything under ~16 samples
+with distinct names are almost certainly untouched, and a re-import is
+cheap. The Samples pane now shows renamed samples in amber, so a fresh
+import shows its own work.
+
+---
+
 ## Known Limitations
 
 ### EIII / ESI-32
@@ -1105,7 +1119,7 @@ main queue and the per-bank contents list in Pending for Image.
 |---|---|
 | KRZ as a conversion *source* | ✅ mpc2emu's own KRZ reader (added 2026-07-27, corpus-verified against 593 real files) made this possible — KRZ presets/programs can now be converted the same way E4B ones can, via Explorer's "Import via mpc2emu…" |
 | Multisample KRZ banks built before 2026-08-02 are wrong | ⚠️ **fixed upstream, but existing files must be rebuilt.** The K2000 sounds keymap entry `i` at MIDI key `i + 12`, and mpc2emu wrote each zone into `entry[key]` instead of `entry[key - 12]`, so a multisampled program played **one sample key-tracked across the whole keyboard** instead of the right sample per key. A four-tone test bank measured 440/466/494/524 where it should have given 440/550/660/880 — indistinguishable from a single stretched sample, which is what it was. Fixed in mpc2emu `791364a` (hardware-confirmed against a commercial bank whose entries begin at 48 and which sounds from key 60 up). **Any multisampled KRZ bank you built before that is affected and cannot be repaired — rebuild it.** Nothing warns about old files: the `.KRZ` looks correct and re-reads correctly, because the reader carried the matching error. Single-sample programs are unaffected, as are E4B and EIII |
-| MPC programs converted before 2026-08-04 can be missing samples | ⚠️ **fixed upstream (mpc2emu `cbe6f10`), but existing files must be re-imported** — a shortened sample name could be handed out twice, and since a zone finds its audio by name alone, the second sample became unreachable and its zones sound the first one. 140 of 5890 programs in a real MPC backup were affected, 5766 samples orphaned. Nothing warns, and no scanner can tell an affected bank from an ordinary one. See [**Use at your own risk**](#if-you-imported-mpc-programs-before-2026-08-04-re-import-the-big-ones) for the mechanism, the measurements, and what to re-import |
+| MPC programs converted before 2026-08-04 can be missing samples | ⚠️ **fixed upstream (mpc2emu `cbe6f10`), but existing files must be re-imported** — a shortened sample name could be handed out twice, and since a zone finds its audio by name alone, the second sample became unreachable and its zones sound the first one. 140 of 5890 programs in a real MPC backup were affected, 5766 samples orphaned. Nothing warns, and no scanner can tell an affected bank from an ordinary one. See [**Fixed defects**](#if-you-imported-mpc-programs-before-2026-08-04-re-import-the-big-ones) for the mechanism, the measurements, and what to re-import |
 | KRZ zones cannot reach keys 0–11 | ⚠️ a consequence of the same `i + 12` rule: with `basePitch` 0 a keymap's 128 entries cover keys 12–139, so the bottom octave of the keyboard cannot be addressed at all and a zone asked for from key 0 starts at 12. Relevant when using **Sample Placement** to set an explicit low key for a KRZ target |
 | Per-bank KRZ/EIII conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for both now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ/EIII queues yet |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
