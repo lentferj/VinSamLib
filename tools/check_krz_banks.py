@@ -128,9 +128,23 @@ def check_keymap_shift(bank: krz.KrzFile) -> list[str]:
     keymaps carrying mpc2emu's own write form, a zone that cannot
     distinguish the two abstains silently, and a majority of the keymap
     has to agree. What that leaves, measured over 2289 hardware-sourced
-    banks: **2 flagged**, both from converted commercial sets rather than
-    K2000-authored floppies. So treat a KEYMAP-SHIFT flag as "play this
-    one and listen", not as a verdict — unlike ENTRY-SCRIBBLE, which
+    banks: **2 flagged**.
+
+    **Both were examined zone by zone on 2026-08-04, and neither is this
+    defect.** They sit in read-only third-party media — a commercial
+    CD image and a floppy image — that this toolchain has never written
+    to, so the bug could not have reached them. What they are instead:
+    one maps 13 zones with each entry index equal to its sample's root
+    note (an authoring convention, or another converter making the same
+    assumption mpc2emu once did); the other spells its transposition out
+    in the keymap's own name, which ends in "-1". A keymap deliberately
+    transposed by an octave is indistinguishable from one written an
+    octave high — the difference is intent, which is not in the file.
+
+    So a KEYMAP-SHIFT flag means "play this one and listen", never a
+    verdict, and on a bank you did not build yourself the prior should be
+    that it is authored. It earns its place only on your own output, and
+    even then `--against` is the real check. Unlike ENTRY-SCRIBBLE, which
     matches a byte pattern only the old assembler produces and flagged
     none of those 2289.
 
@@ -550,8 +564,12 @@ def main(argv: list[str]) -> int:
               "bank from its source material with a current mpc2emu and "
               "VinSamLib.\nENTRY-SCRIBBLE is a byte pattern only the old "
               "assembler produced, and SOURCE-DRIFT is an exact comparison. "
-              "KEYMAP-SHIFT is inference — on a bank you did not build "
-              "yourself, confirm by ear before rebuilding.")
+              "KEYMAP-SHIFT is inference: a keymap transposed an octave on "
+              "purpose looks exactly like one written an octave high, and "
+              "the file does not record which was meant. On a bank you did "
+              "not build yourself, expect the former — both flags this "
+              "check has ever raised on a hardware-sourced library turned "
+              "out to be authored that way. Play it before rebuilding.")
     if bad_path:
         return 2
     return 1 if flagged else 0
