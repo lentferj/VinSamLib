@@ -160,6 +160,17 @@ class MainWindow(QMainWindow):
             sd_reason if sd_ok else f"Unavailable: {sd_reason}")
         file_menu.addAction(import_sample_dir_action)
 
+        # Its own action rather than one dialog doing both: a file dialog can
+        # select directories or files, never both, and one folder holding
+        # several instruments is exactly when the folder action is no use.
+        import_samples_action = QAction("Import Samples…", self)
+        import_samples_action.triggered.connect(self._import_sample_files)
+        import_samples_action.setEnabled(sd_ok)
+        import_samples_action.setToolTip(
+            "Pick individual sample files — for a folder that holds more than "
+            "one instrument" if sd_ok else f"Unavailable: {sd_reason}")
+        file_menu.addAction(import_samples_action)
+
         file_menu.addSeparator()
 
         settings_action = QAction("Settings…", self)
@@ -198,6 +209,30 @@ class MainWindow(QMainWindow):
         about_action = QAction("About VinSamLib", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
+
+    def _start_dir(self, setting: str) -> str:
+        """Where a file dialog should open. Each kind of import remembers its
+        own directory: samples live with your samples, MPC programs with your
+        MPC backup, and neither is where you last added a library folder --
+        which is what all of them used to fall back to."""
+        remembered = getattr(self._config, setting, None)
+        if remembered is not None and Path(remembered).is_dir():
+            return str(remembered)
+        if self._config.last_library_dir is not None:
+            return str(self._config.last_library_dir)
+        return ""
+
+    def _remember_dir(self, setting: str, chosen: str) -> None:
+        """Remember what the choice sat *in*, so the next dialog opens beside
+        it: the sibling instrument folder, the next program of the same
+        backup. The parent either way -- for a picked file that is the folder
+        holding it, for a picked folder it is where its siblings are, which is
+        what File > Add Library Folder… has always stored. Same shape as
+        ImagePane._remember_dir."""
+        directory = Path(chosen).parent
+        if getattr(self._config, setting, None) != directory:
+            setattr(self._config, setting, directory)
+            self._config.save()
 
     def _add_library_folder(self) -> None:
         start_dir = str(self._config.last_library_dir) if self._config.last_library_dir else ""
@@ -242,7 +277,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         self._config.library_roots.remove(path)
-        self._config.save()
+        # The only place an empty library is a decision rather than an
+        # accident -- the user just answered a confirmation to make it so.
+        self._config.save(allow_empty_library=True)
         self._model.remove_root(path)
         self._index_db.forget_containers_under(str(path))
         self.statusBar().showMessage(f"Removed {path} from your library", 6000)
@@ -271,11 +308,12 @@ class MainWindow(QMainWindow):
             return
         if not path:
             path, _filter = QFileDialog.getOpenFileName(
-                self, "Import MPC Program", "",
+                self, "Import MPC Program", self._start_dir("last_program_dir"),
                 "Akai MPC programs (*.xpm *.xty *.xpj)",
                 options=QFileDialog.Option.DontUseNativeDialog)
             if not path:
                 return
+            self._remember_dir("last_program_dir", path)
         opts = FormatConvertDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
             bank_loader=lambda: xpm_import.load_samples_for_test(
@@ -395,33 +433,76 @@ class MainWindow(QMainWindow):
         if self._sample_dir_import_worker is not None:
             self.statusBar().showMessage("A sample folder import is already running")
             return
-        start_dir = str(self._config.last_library_dir) if self._config.last_library_dir else ""
         path = QFileDialog.getExistingDirectory(
-            self, "Import Sample Folder", start_dir,
+            self, "Import Sample Folder", self._start_dir("last_sample_dir"),
             options=QFileDialog.Option.DontUseNativeDialog)
         if not path:
             return
+        self._remember_dir("last_sample_dir", path)
+        self._start_sample_import(path, Path(path).name)
+
+    def _import_sample_files(self) -> None:
+        """File > Import Samples... -- the same import, for a folder that
+        holds more than one instrument (or more files than belong together).
+        The picked files are staged into one directory, since that is the
+        shape mpc2emu's parse_sample_dir() reads; see
+        build/sampledir_import.stage_files()."""
+        if self._sample_dir_import_worker is not None:
+            self.statusBar().showMessage("A sample folder import is already running")
+            return
+        paths, _filter = QFileDialog.getOpenFileNames(
+            self, "Import Samples", self._start_dir("last_sample_dir"),
+            "Audio files (*.wav *.WAV *.aif *.aiff);;All files (*)",
+            options=QFileDialog.Option.DontUseNativeDialog)
+        if not paths:
+            return
+        self._remember_dir("last_sample_dir", paths[0])
+        staged = sampledir_import.stage_files(paths)
+        self.statusBar().showMessage(
+            f"{len(paths)} sample(s) selected from {Path(paths[0]).parent.name}")
+        self._start_sample_import(staged.name, sampledir_import.selection_label(paths),
+                                   staged)
+
+    def _start_sample_import(self, path: str, label: str, staged=None) -> None:
+        """Shared tail of both sample imports: same options dialog, same
+        worker, same landing in New Bank. `label` names the preset -- the
+        folder for a folder import, what the filenames have in common for a
+        hand-picked one -- and `staged`, when there is one, is the temporary
+        directory holding the selection, kept alive until the import is over
+        (the dialog re-reads it for its preview) and dropped either way."""
         opts, octave_offset, zone_overrides = SampleDirImportDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
             sample_loader=lambda octave: sampledir_import.load_samples_for_test(path, octave),
             placement_loader=lambda octave: sampledir_import.parse_preview(path, octave))
+        def drop_staging(*_):
+            if staged is not None:
+                try:
+                    staged.cleanup()
+                except OSError:
+                    pass          # already gone, or the OS took it first
+
         if opts is None:
+            drop_staging()
             return
-        self.statusBar().showMessage(f"Importing {Path(path).name}…")
+        self.statusBar().showMessage(f"Importing {label}…")
         risks: list = []
         w = workers.Worker(sampledir_import.import_sample_dir, path, opts,
-                           octave_offset, zone_overrides, risks)
+                           octave_offset, zone_overrides, risks, label)
         w.signals.finished.connect(
-            lambda tmp_path, p=path, r=risks: self._on_sample_dir_imported(tmp_path, p, opts, r))
+            lambda tmp_path, p=path, n=label, r=risks:
+                self._on_sample_dir_imported(tmp_path, p, opts, r, n))
         w.signals.error.connect(self._on_sample_dir_import_error)
         w.signals.finished.connect(lambda *_: setattr(self, "_sample_dir_import_worker", None))
         w.signals.error.connect(lambda *_: setattr(self, "_sample_dir_import_worker", None))
+        w.signals.finished.connect(drop_staging)
+        w.signals.error.connect(drop_staging)
         self._sample_dir_import_worker = w
         workers.run(w)
 
     def _on_sample_dir_imported(self, tmp_path: str, dir_path: str,
                                  opts: convert.ConversionOptions,
-                                 risks: Optional[list] = None) -> None:
+                                 risks: Optional[list] = None,
+                                 label: str = "") -> None:
         # Same "single preset, straight into New Bank" landing as XPM
         # import -- parse_sample_dir() always produces exactly one
         # multisampled preset per folder, never a whole bank of its own.
@@ -429,7 +510,7 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         bank, preset = result
-        name = Path(dir_path).name or preset.name.strip() or "Imported Samples"
+        name = label or Path(dir_path).name or preset.name.strip() or "Imported Samples"
         self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
         self._warn_polyphony(risks or [], "Import Sample Folder")
 

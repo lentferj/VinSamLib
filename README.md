@@ -366,6 +366,12 @@ Library** drops the stale entries from search.
 4. Confirm; the whole folder lands in **New Bank** as one multisampled
    preset named after the folder.
 
+**One folder, several instruments?** Use **File → Import Samples…**
+instead and select just the files that belong together — everything
+above works the same, and the preset is named after whatever the chosen
+filenames have in common (`Rhodes C2.wav`, `Rhodes F3.wav` → `Rhodes`).
+Both dialogs reopen where you last imported from.
+
 ---
 
 ## The Manual
@@ -908,6 +914,22 @@ with its sample so nothing plays transposed. The result is one
 multisampled preset, landing straight in New Bank under the folder's
 name — exactly the way a `.xpm` import lands one preset, never a whole
 bank of its own.
+
+**File > Import Samples…** is the same import for a **selection of
+files** rather than a whole folder — for the very common case of one
+folder holding several instruments, or holding a few files that don't
+belong with the rest. Pick the files; everything after that is
+identical, including the placement review. The preset is named after
+what the chosen filenames have in common (`Rhodes C2.wav`,
+`Rhodes F3.wav` → `Rhodes`), falling back to the folder's name when they
+share nothing. Behind the scenes the selection is linked into a private
+temporary directory, since mpc2emu's reader takes a folder — nothing is
+copied, nothing is moved, and the directory is removed as soon as the
+import finishes or is cancelled.
+
+Both dialogs **reopen where you last imported from**, remembered
+separately from the library-folder and disk-image dialogs, because
+samples, MPC backups and disk images rarely live near each other.
 
 **Targeting KRZ:** multisampled KRZ output was broken on real hardware
 until mpc2emu's 2026-08-02 keymap fix — every zone landed 12 semitones

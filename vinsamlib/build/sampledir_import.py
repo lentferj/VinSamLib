@@ -25,11 +25,78 @@ don't, so where "middle C" falls has to come from somewhere).
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
 from .convert import ConversionOptions, _apply_and_write, _run_captured
 from ..mpc2emu_bridge import sampledir_parser
+
+
+_AUDIO_EXTS = (".wav", ".aif", ".aiff")
+
+
+def stage_files(paths: list[str]) -> tempfile.TemporaryDirectory:
+    """Gather hand-picked audio files into one directory, so everything below
+    can go on taking a directory.
+
+    mpc2emu's parse_sample_dir() reads a *folder* and rglobs it, which is the
+    right shape when a folder holds one instrument -- and the wrong one when
+    it holds three, or when only half its files belong together. Rather than
+    grow a second parser entry point, the selection becomes a directory.
+
+    Linked, never copied where the filesystem allows it: a multisample runs to
+    tens of megabytes and this is read exactly once. Filenames are kept
+    EXACTLY as they are -- they carry the root note, and `Piano C3 (2).wav`
+    would no longer parse as C3 -- so a name that appears twice goes into a
+    numbered subdirectory instead of being renamed. parse_sample_dir() walks
+    the tree, so it finds them either way.
+
+    The caller owns the returned TemporaryDirectory and must keep it alive
+    until the import (and the options dialog's preview, which re-reads it)
+    is done."""
+    staged = tempfile.TemporaryDirectory(prefix="vinsamlib_samples_")
+    root = Path(staged.name)
+    seen: dict[str, int] = {}
+    for src in paths:
+        source = Path(src)
+        n = seen.get(source.name, 0)
+        seen[source.name] = n + 1
+        target_dir = root if n == 0 else root / f"same-name-{n}"
+        target_dir.mkdir(exist_ok=True)
+        target = target_dir / source.name
+        try:
+            os.symlink(source, target)
+        except (OSError, NotImplementedError, AttributeError):
+            try:
+                os.link(source, target)
+            except OSError:
+                shutil.copy2(source, target)
+    return staged
+
+
+def selection_label(paths: list[str]) -> str:
+    """A name for a preset built from hand-picked files. The part their names
+    share reads best (`Rhodes C2.wav`, `Rhodes F3.wav` -> "Rhodes"); with
+    nothing in common, the folder they came from is a better answer than the
+    first file's name."""
+    stems = [Path(p).stem for p in paths]
+    common = os.path.commonprefix(stems) if stems else ""
+    # Back off to a separator: the shared part of "channel1-note36" and
+    # "channel1-note37" is "channel1-note3", which is a cut through the middle
+    # of a number, not a name.
+    cut = max((common.rfind(c) for c in " _-."), default=-1)
+    if cut > 0 and len(common) < max(len(s) for s in stems):
+        common = common[:cut]
+    common = common.strip(" _-.")
+    if len(common) >= 3:
+        return common
+    parents = {Path(p).parent for p in paths}
+    if len(parents) == 1:
+        return parents.pop().name
+    return "Imported Samples"
 
 
 def load_samples_for_test(dir_path: str, octave_offset: Optional[int] = None) -> list:
@@ -55,7 +122,8 @@ def parse_preview(dir_path: str, octave_offset: Optional[int] = None) -> Any:
 def import_sample_dir(dir_path: str, opts: ConversionOptions,
                        octave_offset: Optional[int] = None,
                        zone_overrides: Optional[dict] = None,
-                       risks_out: Optional[list] = None) -> str:
+                       risks_out: Optional[list] = None,
+                       bank_name: Optional[str] = None) -> str:
     """Parses a folder of WAV files (via mpc2emu's own parse_sample_dir)
     into a single multisampled preset and writes it out as a real E4B/
     KRZ/EIII bank file in a fresh temp dir, applying whatever resample/
@@ -88,4 +156,7 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
                 override = zone_overrides.get(zone.sample_name)
                 if override is not None:
                     zone.lo_key, zone.root_key, zone.hi_key = override
-    return _apply_and_write(bank, opts, Path(dir_path).name, risks_out)
+    # bank_name: what the preset is called. The folder's name is right for a
+    # folder import and meaningless for a staged selection, whose directory is
+    # a temp path -- see stage_files().
+    return _apply_and_write(bank, opts, bank_name or Path(dir_path).name, risks_out)

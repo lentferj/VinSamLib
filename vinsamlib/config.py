@@ -59,6 +59,11 @@ class Config:
     # folder added, so picking a sibling library folder next time doesn't
     # start back at the dialog's platform default every time.
     last_library_dir: Optional[Path] = None
+    # And for the two import dialogs, which start somewhere else entirely:
+    # sample folders live with your samples, MPC programs with your MPC
+    # backup, and neither is where you last added a library folder.
+    last_sample_dir: Optional[Path] = None
+    last_program_dir: Optional[Path] = None
     # New Bank's size-meter warning threshold, in MB, per format. This is
     # a soft, user-adjustable "will this fit MY hardware's RAM" warning,
     # separate from the hard format-technical ceiling banks/e4b.py always
@@ -84,23 +89,53 @@ class Config:
         last_image_dir = Path(last_image_dir_str) if last_image_dir_str else None
         last_library_dir_str = data.get("last_library_dir")
         last_library_dir = Path(last_library_dir_str) if last_library_dir_str else None
+        last_sample_dir_str = data.get("last_sample_dir")
+        last_sample_dir = Path(last_sample_dir_str) if last_sample_dir_str else None
+        last_program_dir_str = data.get("last_program_dir")
+        last_program_dir = Path(last_program_dir_str) if last_program_dir_str else None
         defaults = cls()
         e4b_bank_limit_mb = data.get("e4b_bank_limit_mb", defaults.e4b_bank_limit_mb)
         krz_bank_limit_mb = data.get("krz_bank_limit_mb", defaults.krz_bank_limit_mb)
         return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
                     last_image_dir=last_image_dir, last_library_dir=last_library_dir,
+                    last_sample_dir=last_sample_dir, last_program_dir=last_program_dir,
                     e4b_bank_limit_mb=e4b_bank_limit_mb, krz_bank_limit_mb=krz_bank_limit_mb)
 
-    def save(self, path: Path | None = None) -> None:
+    def save(self, path: Path | None = None, allow_empty_library: bool = False) -> None:
+        """Writes the config file. Refuses to blank a non-empty library.
+
+        `library_roots` is the only setting here that is real, irreplaceable
+        user work -- a list of folders someone assembled by hand -- and every
+        other setting rides in the same file, so any save is a chance to lose
+        it. That is not hypothetical: a script that had set `library_roots =
+        []` to keep itself from scanning wrote the file for an unrelated
+        reason (remembering a dialog's directory) and took the library with
+        it, twice in this project's history. The second time, the write was
+        three call levels away from anything about libraries.
+
+        So an empty list only reaches the file when the caller says it means
+        it -- File > Remove Library Folder… removing the last one, which is
+        the one place where empty is a decision rather than an accident."""
         path = path or (user_config_dir() / self.CONFIG_FILE)
+        roots = self.library_roots
+        if not roots and not allow_empty_library:
+            # Kept out of the FILE without putting them back in memory: a
+            # caller that emptied the list did so for its own reasons (a test
+            # keeping itself from scanning), and handing them back would
+            # start a scan it deliberately avoided.
+            roots = Config.load(path).library_roots
         path.parent.mkdir(parents=True, exist_ok=True)
         lines = [f'mpc2emu_path = "{self.mpc2emu_path.as_posix()}"']
-        roots_str = ", ".join(f'"{p.as_posix()}"' for p in self.library_roots)
+        roots_str = ", ".join(f'"{p.as_posix()}"' for p in roots)
         lines.append(f"library_roots = [{roots_str}]")
         if self.last_image_dir is not None:
             lines.append(f'last_image_dir = "{self.last_image_dir.as_posix()}"')
         if self.last_library_dir is not None:
             lines.append(f'last_library_dir = "{self.last_library_dir.as_posix()}"')
+        if self.last_sample_dir is not None:
+            lines.append(f'last_sample_dir = "{self.last_sample_dir.as_posix()}"')
+        if self.last_program_dir is not None:
+            lines.append(f'last_program_dir = "{self.last_program_dir.as_posix()}"')
         lines.append(f"e4b_bank_limit_mb = {self.e4b_bank_limit_mb}")
         lines.append(f"krz_bank_limit_mb = {self.krz_bank_limit_mb}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
