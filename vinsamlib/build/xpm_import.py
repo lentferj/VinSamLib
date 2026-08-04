@@ -309,9 +309,17 @@ def full_sample_names(stored: list[str], path: str) -> dict[str, str]:
     wanted = set(stored)
     if not wanted:
         return {}
+    # mpc2emu renames a sample whose shortened name is already taken
+    # (`cbe6f10`), so the name on a zone is not always the plain tail of its
+    # file: the second `…_2600_C-1` becomes something else entirely. Walking
+    # the candidates in the order the parser meets them, through its own
+    # helper, reproduces the names it actually assigned. Without this only 17
+    # of 97 rows in a semitone-sampled program could be paired up.
+    unique_name = getattr(xpm_parser, "_unique_sample_name", None)
+    taken: set[str] = set()
     found: dict[str, str] = {}
     ambiguous: set[str] = set()
-    for candidate in source_sample_names(path):
+    for candidate in dict.fromkeys(source_sample_names(path)):   # first sight, in order
         # _safe_name() drops the extension before it shortens, and an MPC 2.x
         # <SampleName> often carries one ("…_C-1.wav"). Dropping it here too
         # keeps the two halves aligned -- otherwise the kept part comes out
@@ -319,6 +327,9 @@ def full_sample_names(stored: list[str], path: str) -> dict[str, str]:
         # "IsOnPCP_2600_E-1", and the split is drawn in the wrong place.
         candidate = os.path.splitext(candidate)[0]
         short = safe_name(candidate, tail=True)
+        if unique_name is not None:
+            short = unique_name(short, taken)
+            taken.add(short)
         if short not in wanted or short in ambiguous:
             continue
         if short in found and found[short] != candidate:

@@ -536,6 +536,23 @@ are read from the program file itself and matched back through
 mpc2emu's own shortening, so a name that cannot be paired up
 unambiguously simply stays short rather than being guessed at.
 
+A surviving tail shown in **amber** means the sample was **renamed**:
+two samples would otherwise have ended up with the same 16-character
+name, and since a zone finds its audio by name alone, the second one
+would have been silenced. mpc2emu renames it instead (`cbe6f10`), so
+`…_2600_C-1` may import as `…_2600_C-2`; the row's tooltip gives the
+final name. In a semitone-sampled instrument this is normal and affects
+most rows — it is not a defect, and nothing is lost.
+
+> ⚠️ **Banks converted before 2026-08-04 can be missing samples.** Until
+> mpc2emu `cbe6f10`, that rename could silently produce the *same* name
+> again, and the second sample became unreachable — its zones sounded
+> the first one instead. Measured over a 5890-program MPC backup: 140
+> programs affected, 5766 samples orphaned, worst case 140 of 336 in a
+> single program. One program converted end to end came out with 97
+> zones and only 57 samples. If you imported a large multisample before
+> that fix, re-import it.
+
 ### New Bank
 
 ![New Bank column with three presets added and the selection info panel showing a condensed summary](docs/screenshots/02_new_bank.png)

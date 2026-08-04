@@ -37,16 +37,24 @@ class ZoneTableModel(QAbstractTableModel):
         self._full_names = full_names or {}
         self.endResetModel()
 
-    def _name_parts(self, row: int) -> tuple[str, str] | None:
-        """(what an import will drop, what it will keep), or None when the
-        name survives whole. The split is by length: mpc2emu's _safe_name
-        replaces characters one for one before it cuts, so the tail it keeps
-        is the same length as the end of the original."""
+    def _name_parts(self, row: int) -> tuple[str, str, bool] | None:
+        """(what an import will drop, what it will keep, was it renamed), or
+        None when the name survives whole.
+
+        The split is by length: mpc2emu's _safe_name replaces characters one
+        for one before it cuts, so the tail it keeps is as long as the end of
+        the original. The third field is the case where even that tail is not
+        what gets stored -- when two samples would end up with one name,
+        mpc2emu renames the second (`cbe6f10`), so its zone carries something
+        like `…_C-2` for a file ending `…_C-1`. Kept, but not verbatim, and a
+        row that showed the file's own tail there would be claiming a name
+        that will not exist."""
         stored = self._zones[row].sample_name
         full = self._full_names.get(stored)
         if not full or len(full) <= len(stored):
             return None
-        return full[:len(full) - len(stored)], full[len(full) - len(stored):]
+        head, tail = full[:len(full) - len(stored)], full[len(full) - len(stored):]
+        return head, tail, tail != stored
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._zones)
@@ -67,10 +75,15 @@ class ZoneTableModel(QAbstractTableModel):
             if role == Qt.ItemDataRole.UserRole:
                 return parts
             if parts is not None and role == Qt.ItemDataRole.ToolTipRole:
-                return (f"{parts[0]}{parts[1]}\n\nImports as "
-                        f"'{self._zones[index.row()].sample_name}' — an E4B or KRZ "
-                        f"sample name holds 16 characters, and the END is kept "
-                        f"because that is what tells a multisample's notes apart.")
+                stored = self._zones[index.row()].sample_name
+                tip = (f"{parts[0]}{parts[1]}\n\nImports as '{stored}' — an E4B or "
+                       f"KRZ sample name holds 16 characters, and the END is kept "
+                       f"because that is what tells a multisample's notes apart.")
+                if parts[2]:
+                    tip += ("\n\nRenamed: another sample already had that name, and "
+                            "a zone finds its audio by name alone — two samples "
+                            "sharing one would silence the second.")
+                return tip
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         z = self._zones[index.row()]
@@ -87,23 +100,28 @@ class ZoneTableModel(QAbstractTableModel):
 
 
 # Readable on this pane's normal background and on the selection highlight
-# respectively -- one red is never both.
+# respectively -- one colour is never both.
 _DROP_RED = QColor("#c0392b")
 _DROP_RED_SELECTED = QColor("#ffc9c2")
+# The tail survives but under a different name (see ZoneTableModel._name_parts).
+_RENAMED_AMBER = QColor("#a06000")
+_RENAMED_AMBER_SELECTED = QColor("#ffd68a")
 
 
 class TruncatedNameDelegate(QStyledItemDelegate):
-    """Draws a sample name that an import will shorten, with the part that
-    will not survive in red. Two colours in one cell, which no item role can
-    express, so the cell is painted here instead: the row's own background
-    and selection come from the style as usual, only the text is ours."""
+    """Draws a sample name that an import will shorten: the part that will not
+    survive in red, and the part that survives in normal text -- or in amber
+    where it survives under a changed name. Several colours in one cell, which
+    no item role can express, so the cell is painted here instead: the row's
+    own background and selection come from the style as usual, only the text
+    is ours."""
 
     def paint(self, painter, option, index) -> None:
         parts = index.data(Qt.ItemDataRole.UserRole)
         if not parts:
             super().paint(painter, option, index)
             return
-        dropped, kept = parts
+        dropped, kept, renamed = parts
 
         self.initStyleOption(option, index)
         option.text = ""                      # the style draws everything but the text
@@ -120,9 +138,12 @@ class TruncatedNameDelegate(QStyledItemDelegate):
         painter.setPen(_DROP_RED_SELECTED if selected else _DROP_RED)
         painter.drawText(x, baseline, dropped)
         x += metrics.horizontalAdvance(dropped)
-        painter.setPen(option.palette.color(
-            QPalette.ColorGroup.Normal,
-            QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text))
+        if renamed:
+            painter.setPen(_RENAMED_AMBER_SELECTED if selected else _RENAMED_AMBER)
+        else:
+            painter.setPen(option.palette.color(
+                QPalette.ColorGroup.Normal,
+                QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text))
         painter.drawText(x, baseline, kept)
         painter.restore()
 
