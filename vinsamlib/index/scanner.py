@@ -110,11 +110,13 @@ def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
     # itself; the real content only gets parsed on actual import
     # (build/xpm_import.py), triggered explicitly by the user.
     #
-    # That applies with more force to a project (.xpj), not less: it holds
-    # one program per keygroup track, so indexing its programs by name would
-    # mean loading every WAV of every project in the library. Its programs
-    # are listed the moment it is expanded in the Explorer, which is where
-    # the parse belongs -- the index just makes the project itself findable.
+    # A project (.xpj) is still never parsed here for the same reason -- that
+    # would load every WAV of every project in the library -- but an MPC 3 one
+    # does get its program NAMES indexed, which its own container hands over
+    # without touching a sample (xpm_import.project_program_names). Those
+    # programs live nowhere else, so without this a user who knows a program
+    # by name cannot find it at all. An MPC 2.x project keeps each program as
+    # its own .xpm file, already indexed above, and is left alone here.
     seen_paths.add(path)
     try:
         mtime = Path(path).stat().st_mtime
@@ -128,7 +130,15 @@ def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
     kind = "mpc_project" if fmt == "XPJ" else "xpm"
     cid = db.begin_container(path, "xpm", fmt, size, mtime)
     name = Path(path).name
-    db.add_item(cid, None, kind, name, native_id=name, format=fmt, size=size, ordinal=0)
+    item_id = db.add_item(cid, None, kind, name, native_id=name, format=fmt,
+                           size=size, ordinal=0)
+    if kind == "mpc_project":
+        for i, program in enumerate(xpm_import.project_program_names(path)):
+            # native_id is the name, not the position: a parse drops a program
+            # that turned out to hold no samples, so the row a hit resolves to
+            # is found by name (see ui/search_resolve.py), never by index.
+            db.add_item(cid, item_id, "mpc_program", program, native_id=program,
+                         format=fmt, ordinal=i)
     db.finish_container(cid)
 
 

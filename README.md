@@ -314,8 +314,14 @@ rather than being a single all-or-nothing import.
    each named after its own track.
 4. Expanding a project reads every sample it references, so the first
    expansion of a large one takes a moment; after that, clicking through
-   its programs is instant. Projects are indexed by filename only — a
-   background scan never parses them.
+   its programs is instant. A background scan still never parses one.
+5. **Search finds programs inside an MPC 3 project by name.** Those
+   programs exist nowhere else on disk, so nothing else could make them
+   findable; an MPC 2.x project keeps each program as its own `.xpm`,
+   already indexed as a file. Reading the names costs the scan about 5
+   seconds per full pass over this library (26s → 31s) and no samples:
+   only the program objects are decoded, not the ~22 MB of JSON around
+   them. A hit opens the program's own row.
 
 ![Explorer showing an expanded .xpj project with one row per keygroup program, alongside a .xpm program and a .xty track, and the Detail pane summarising the selected program](docs/screenshots/10_mpc_project.png)
 

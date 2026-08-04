@@ -33,6 +33,8 @@ E4B), not in what happens to it afterward.
 
 from __future__ import annotations
 
+import gzip
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -92,6 +94,14 @@ DRUM_2X_PAD_MAP_NOTE = (
 _XML_PROGRAM_TYPE = re.compile(rb'<Program\s+type="([^"]*)"')
 _SNIFF_BYTES = 8192
 
+# How far into an MPC 3 program object its name and type sit -- measured at
+# ~110 bytes across this corpus, with room to spare. Only a shortcut: see
+# project_program_names(), which decodes the whole object when they are not
+# both in here.
+_MPC3_PROGRAM_WINDOW = 1024
+_JSON_NAME = re.compile(rb'"name"\s*:\s*("(?:[^"\\]|\\.)*")')
+_JSON_TYPE = re.compile(rb'"type"\s*:\s*(-?\d+)')
+
 
 def program_kind(path: str) -> Optional[str]:
     """What kind of program an MPC file holds ("Keygroup", "Drum", "MIDI",
@@ -125,6 +135,83 @@ def holds_convertible_program(path: str) -> bool:
     program_kind() for why nothing is hidden on a guess."""
     kind = program_kind(path)
     return kind is None or kind in CONVERTIBLE_KINDS
+
+
+def project_program_names(path: str) -> list[str]:
+    """The names of the programs an MPC 3 project holds, read without parsing
+    a single sample -- for the index, which must stay cheap enough to run
+    over a whole library in the background.
+
+    MPC 3 keeps its programs inside the .xpj, so nothing else in a library
+    can make them findable. An MPC 2.x project keeps each one as its own
+    .xpm in the data folder, and those files are indexed in their own right,
+    so this returns nothing for them rather than indexing the same program
+    twice under two names.
+
+    Only the program objects are decoded, not the document around them. A
+    real project here is 22 MB of JSON, of which the programs are a few
+    hundred KB -- json.loads on the whole thing costs 16s across this
+    library against 4s for these, and a background scan cannot spend that.
+    Each `"program"` key is decoded where it sits, which is ordinary JSON
+    parsing (no pattern-matching of the text), and the type filter mirrors
+    mpc2emu's `_mpc3_program_nodes`: 0 is a drum program, 1 a keygroup, and
+    the rest carry no samples. That mirroring is the one thing here that can
+    drift, so it is checked against that function over the whole corpus in
+    tests/manual_ui_smoke_xpj_project.py.
+
+    The names are what a parse would offer, minus any program it later drops
+    for holding no samples -- not knowable without reading them. Anything
+    unexpected yields no names at all, leaving the project findable by
+    filename as before."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(2) != b"\x1f\x8b":
+                return []                    # MPC 2.x: separate files
+        # Bytes, not text: the search needs no character semantics, and
+        # decoding a whole library's worth of these (1.8 GB) costs a second
+        # by itself. Only a name that is actually kept gets decoded.
+        with gzip.open(path, "rb") as g:
+            if g.readline().rstrip(b"\n") != b"ACVS":
+                return []
+            for _ in range(4):               # the rest of the five-line header
+                g.readline()
+            text = g.read()
+    except Exception:
+        return []                            # unreadable: still findable by name
+    decoder = json.JSONDecoder()
+    names, pos = [], 0
+    while True:
+        key = text.find(b'"program"', pos)
+        if key < 0:
+            break
+        start = text.find(b"{", key)
+        if start < 0:
+            break
+        pos = start + 1
+        # A program writes its name and type ahead of `programPads`, which is
+        # the bulk of it, so both are inside the first few hundred bytes --
+        # reading only those skips megabytes of pad data per project. The
+        # values are still decoded as JSON, not lifted as raw text. Anything
+        # not in the window falls through to decoding the whole object, so
+        # the window is a shortcut and never the thing correctness rests on.
+        window = text[start:start + _MPC3_PROGRAM_WINDOW]
+        name_match = _JSON_NAME.search(window)
+        type_match = _JSON_TYPE.search(window)
+        if name_match is not None and type_match is not None:
+            program_type = int(type_match.group(1))
+            name = json.loads(name_match.group(1).decode("utf-8", "replace")).strip()
+        else:
+            try:
+                program, _ = decoder.raw_decode(text[start:].decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if not isinstance(program, dict):
+                continue
+            program_type = program.get("type")
+            name = str(program.get("name", "")).strip()
+        if program_type in (0, 1) and name:
+            names.append(name)
+    return names
 
 
 @dataclass(frozen=True)

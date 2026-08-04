@@ -31,10 +31,39 @@ def resolve_result(result: SearchResult) -> Optional[TreeNode]:
         # results list has no rows to expand into anyway.
         return TreeNode(result.kind, result.name, None, Path(result.container_path),
                          format_label=result.format or "XPM")
+    if result.kind == "mpc_program":
+        return _resolve_project_program(result)
     container_path = result.container_path
     if sniff(container_path) is None:
         return _resolve_loose_bank(container_path, result)
     return _resolve_in_image(container_path, result)
+
+
+def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:
+    """A program inside an MPC 3 project, indexed by name only.
+
+    Unlike every other hit here this one has to parse -- a program only
+    becomes importable once the project it lives in has been read, and the
+    index deliberately stored no position, because a parse drops any program
+    that holds no samples. So the project is expanded exactly as the tree
+    expands it (same code, same caching, same row labels) and the row is
+    found by name. If it is not there, the project row itself is the honest
+    answer: that is where the user can see what it does hold."""
+    from .models import TreeNode as _TreeNode, _fetch_mpc_project   # circular at import time
+    project = _TreeNode("mpc_project", Path(result.container_path).name, None,
+                         Path(result.container_path), format_label=result.format or "XPJ")
+    try:
+        rows = _fetch_mpc_project(project)
+    except Exception:
+        return project
+    wanted = result.name.strip()
+    for row in rows:
+        # A row is labelled with the program's own name; the preset inside it
+        # carries a 16-character version of the same, and for an MPC 3
+        # project that shortened form is what the row shows.
+        if row.label == wanted or wanted.startswith(row.label):
+            return row
+    return project
 
 
 def _resolve_loose_bank(container_path: str, result: SearchResult) -> Optional[TreeNode]:
