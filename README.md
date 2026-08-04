@@ -338,8 +338,8 @@ generations gather drum programs as well as keygroup ones.
 
 Program rows show the **whole** program name, which is often longer than
 the name the import can keep: an E4B preset field holds 16 ASCII
-characters, so `XD- Jexus 193-Auto sampled` browses under that name and
-arrives in New Bank as `XD- Jexus 193-Au`. For an MPC 2.x project the
+characters, so `Poly Brass 193-Auto sampled` browses under that name and
+arrives in New Bank as `Poly Brass 193-A`. For an MPC 2.x project the
 full names come from the program files themselves, and only while each
 preset can be matched to exactly one of them. Two programs whose names
 truncate to the same 16 characters are unresolvable if either was
