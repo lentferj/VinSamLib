@@ -404,7 +404,23 @@ def summarize_program(bank, preset_index: int = 0) -> XpmSummary:
     Detail pane shows the same sample/key/vel/root/loop table either way.
 
     Split from summarize_xpm() so browsing a project's programs re-uses the
-    Bank the tree already parsed instead of re-reading every WAV per click."""
+    Bank the tree already parsed instead of re-reading every WAV per click.
+
+    A program that holds no sampled content parses fine and yields NO preset
+    -- mpc2emu skips an empty one rather than emitting it (`9a2c78b`), and a
+    kit created but never filled is common: 55 of 224 in the reference backup.
+    The file still declares itself a drum program, so the Explorer lists it,
+    which makes this a row a user can select. Saying so is the whole job here;
+    indexing an empty list would reach them as "list index out of range"."""
+    if not bank.presets:
+        raise ValueError(
+            f"{getattr(bank, 'name', 'This program')} holds no sampled "
+            f"content: its pads or keygroups are all empty, so there is "
+            f"nothing to import.")
+    if preset_index >= len(bank.presets):
+        raise ValueError(
+            f"program {preset_index + 1} is not in this file any more — it "
+            f"holds {len(bank.presets)}. Collapse and re-expand it to re-read.")
     preset = bank.presets[preset_index]
     zones: list[ZoneSummary] = []
     for voice in preset.voices:
@@ -484,6 +500,13 @@ def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = 
     stacks up to four layers per pad by design, and every stereo one of them
     costs two E4B voices."""
     bank = parse_mpc(xpm_path, wav_dir)
+    if not bank.presets:
+        # Same empty-kit case summarize_program() explains: readable, listed,
+        # and holding nothing. Refuse in words rather than writing a bank with
+        # no preset in it, or indexing past the end below.
+        raise ValueError(
+            f"{Path(xpm_path).name} holds no sampled content: its pads or "
+            f"keygroups are all empty, so there is nothing to import.")
     if preset_index is not None:
         # Narrow the freshly-parsed Bank in place -- safe because parse_mpc()
         # just built it for this call alone (the Explorer's cached Bank is

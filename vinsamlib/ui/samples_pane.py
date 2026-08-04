@@ -272,5 +272,8 @@ class SamplesPane(QWidget):
     def _apply_error(self, gen: int, message: str) -> None:
         if gen != self._gen:
             return
-        self._title.setText("Failed to load samples.")
+        # The reason, not just that there was one: an empty kit and a corrupt
+        # file both land here, and "Failed to load samples." tells the user
+        # neither which it is nor that one of them is perfectly normal.
+        self._title.setText(workers.last_error_line(message))
         self._model.set_zones([])
