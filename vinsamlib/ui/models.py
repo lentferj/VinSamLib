@@ -12,7 +12,9 @@ queued Qt signal connection.
 
 from __future__ import annotations
 
+import gzip
 import os
+import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +26,7 @@ from PySide6.QtGui import QColor
 from . import dnd, workers
 from ..banks import e4b, eiii, krz
 from ..build import xpm_import
+from ..build.convert import ConvertOpError
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
@@ -104,6 +107,9 @@ class TreeNode:
     note: str = ""                              # tooltip/Detail-pane reason for an
                                                 # 'unsupported' row, when the generic
                                                 # "no reader for this format" is wrong
+    empty_reason: str = ""                      # read fine, holds nothing to import --
+                                                # a different thing from `error`, and
+                                                # the row must not claim it broke
 
     def display_text(self) -> str:
         icon = _KIND_ICON.get(self.kind, "")
@@ -115,6 +121,8 @@ class TreeNode:
             text += f"   {human_size(self.size)}"
         if self.error:
             text += "   (failed to open)"
+        elif self.empty_reason:
+            text += "   (nothing to import)"
         return text
 
 
@@ -300,23 +308,64 @@ def _fetch_mpc_project(node: TreeNode) -> list[TreeNode]:
     .xpm row opens), not drag-and-drop."""
     path: Path = node.payload
     if node.handle is None:
-        node.handle = xpm_import.parse_mpc(str(path))
+        try:
+            node.handle = xpm_import.parse_mpc(str(path))
+        except ConvertOpError as ex:
+            # Two very different things end up here: "this project holds
+            # nothing convertible" -- a verdict on readable content -- and
+            # "this file is broken". mpc2emu raises ValueError for both (for
+            # the verdicts, and for a bad WAV header or a file that is not an
+            # MPC document at all), so the exception cannot tell them apart.
+            # The container itself can: if it still reads as an MPC project,
+            # nothing failed and the row must not claim it did.
+            if not (isinstance(ex.__cause__, ValueError)
+                    and _reads_as_mpc_container(path)):
+                raise
+            node.empty_reason = workers.last_error_line(str(ex))
+            return []
     presets = node.handle.presets
     if not presets:
         # mpc2emu skips a program that carries no sampled content (9a2c78b)
         # rather than emitting an empty preset, so a project whose programs
         # are ALL empty kits parses fine and returns nothing -- 5 projects in
-        # the reference backup. Say so on the row: an expandable row that
-        # opens into nothing tells the user only that something is broken.
-        raise ValueError(
+        # the reference backup, where mpc2emu's own CLI prints "[SKIP] No
+        # presets" and exits 1. Nothing failed; there is just nothing here --
+        # as long as the file really is an MPC project. A document that is
+        # neither also parses to nothing, and that one IS a failure.
+        if not _reads_as_mpc_container(path):
+            raise ValueError(f"{path.name} does not read as an MPC project.")
+        node.empty_reason = (
             f"{path.name} holds no program with sampled content: every "
             f"program in it is an empty kit or track, so there is nothing "
             f"to import.")
+        return []
     labels = _project_program_labels(path, presets)
     return [TreeNode("mpc_program",
                      (labels[i] if labels else preset.name).strip() or "(untitled)",
                      node, (path, i))
             for i, preset in enumerate(presets)]
+
+
+_MPC_XML_ROOTS = {"Project", "MPCVObject"}
+
+
+def _reads_as_mpc_container(path: Path) -> bool:
+    """Whether *path* is still a readable MPC document, whatever mpc2emu made
+    of its contents. Only run when a parse has already failed, to tell a
+    verdict about real content from a file that is simply broken -- an .xpj
+    of random bytes, a truncated one, or an X11 pixmap that happens to end
+    .xpm. Structure only: nothing here judges what is inside."""
+    try:
+        with open(path, "rb") as f:
+            gzipped = f.read(2) == b"\x1f\x8b"
+        if gzipped:
+            # MPC 3: gzip, then five header lines before the JSON payload --
+            # 'ACVS' is the format's own magic (mpc2emu's _mpc3_read).
+            with gzip.open(path, "rt", encoding="utf-8", errors="replace") as g:
+                return g.readline().rstrip("\n") == "ACVS"
+        return ET.fromstring(path.read_bytes()).tag in _MPC_XML_ROOTS
+    except Exception:
+        return False
 
 
 def _project_program_labels(path: Path, presets: list) -> list[str]:
@@ -517,6 +566,11 @@ class LibraryTreeModel(QAbstractItemModel):
         node.fetching = False
         if not children:
             node.children = []
+            # No rows to insert, but the row itself changed: it lost its
+            # expander, and may now carry a reason it holds nothing.
+            idx = self.node_index(node)
+            if idx.isValid():
+                self.dataChanged.emit(idx, idx)
             return
         self.beginInsertRows(parent_index, 0, len(children) - 1)
         node.children = children
@@ -541,10 +595,15 @@ class LibraryTreeModel(QAbstractItemModel):
         if role == Qt.ItemDataRole.ToolTipRole:
             if node.error:
                 return node.error
+            if node.empty_reason:
+                return node.empty_reason
             if node.kind == "unsupported":
                 return node.note or ("Real content, but VinSamLib has no reader "
                                       f"for this format ({node.format_label}) yet.")
-        if role == Qt.ItemDataRole.ForegroundRole and node.kind == "unsupported":
+        if role == Qt.ItemDataRole.ForegroundRole and (node.kind == "unsupported"
+                                                        or node.empty_reason):
+            # Same grey as unsupported content, and for the same reason: real,
+            # readable, nothing here to act on.
             return QColor(Qt.GlobalColor.gray)
         return None
 

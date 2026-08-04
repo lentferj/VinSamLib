@@ -319,11 +319,19 @@ rather than being a single all-or-nothing import.
 
 ![Explorer showing an expanded .xpj project with one row per keygroup program, alongside a .xpm program and a .xty track, and the Detail pane summarising the selected program](docs/screenshots/10_mpc_project.png)
 
-A project that can't produce anything says so on its row instead of
-expanding into nothing, in either of the two ways that happens: it holds
-no keygroup or drum program at all (the message names the track kinds it
-does hold), or every program it holds is an empty kit — 5 projects in
-the reference backup are that second case. Both MPC 2.x projects (whose
+A project that can't produce anything is marked **(nothing to import)**
+and greyed, with the reason in its tooltip, rather than expanding into
+nothing. That covers both ways it happens: the project holds no keygroup
+or drum program at all (the reason names the track kinds it does hold),
+or every program it holds is an empty kit — 5 projects in the reference
+backup are that second case.
+
+That wording is deliberate, and distinct from **(failed to open)**,
+which means the file is damaged or is not an MPC document. mpc2emu
+raises the same exception type for both, so the two are told apart by
+whether the container still reads as an MPC project — of the 181
+projects in the reference backup, 168 list programs, 13 have nothing to
+import, and none is broken. Both MPC 2.x projects (whose
 programs live in a `<name>_[ProjectData]` folder next to the `.xpj`) and
 MPC 3 ones are read the same way, and since mpc2emu `9a2c78b` both
 generations gather drum programs as well as keygroup ones.
