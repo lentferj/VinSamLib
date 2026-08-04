@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -311,6 +312,12 @@ def full_sample_names(stored: list[str], path: str) -> dict[str, str]:
     found: dict[str, str] = {}
     ambiguous: set[str] = set()
     for candidate in source_sample_names(path):
+        # _safe_name() drops the extension before it shortens, and an MPC 2.x
+        # <SampleName> often carries one ("…_C-1.wav"). Dropping it here too
+        # keeps the two halves aligned -- otherwise the kept part comes out
+        # as "…_2600_E-1.wav" while the name that reaches the bank is
+        # "IsOnPCP_2600_E-1", and the split is drawn in the wrong place.
+        candidate = os.path.splitext(candidate)[0]
         short = safe_name(candidate, tail=True)
         if short not in wanted or short in ambiguous:
             continue
