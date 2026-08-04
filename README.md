@@ -544,14 +544,12 @@ would have been silenced. mpc2emu renames it instead (`cbe6f10`), so
 final name. In a semitone-sampled instrument this is normal and affects
 most rows — it is not a defect, and nothing is lost.
 
-> ⚠️ **Banks converted before 2026-08-04 can be missing samples.** Until
-> mpc2emu `cbe6f10`, that rename could silently produce the *same* name
-> again, and the second sample became unreachable — its zones sounded
-> the first one instead. Measured over a 5890-program MPC backup: 140
-> programs affected, 5766 samples orphaned, worst case 140 of 336 in a
-> single program. One program converted end to end came out with 97
-> zones and only 57 samples. If you imported a large multisample before
-> that fix, re-import it.
+> ⚠️ Until mpc2emu `cbe6f10` (2026-08-04) that rename could hand back
+> the *same* name, and the second sample then became unreachable — so a
+> bank you built before that date can be missing samples and cannot be
+> repaired in place. See **Known Limitations → "MPC programs converted
+> before 2026-08-04 can be missing samples"** for the measured scale and
+> what to do about it.
 
 ### New Bank
 
@@ -1074,6 +1072,7 @@ main queue and the per-bank contents list in Pending for Image.
 |---|---|
 | KRZ as a conversion *source* | ✅ mpc2emu's own KRZ reader (added 2026-07-27, corpus-verified against 593 real files) made this possible — KRZ presets/programs can now be converted the same way E4B ones can, via Explorer's "Import via mpc2emu…" |
 | Multisample KRZ banks built before 2026-08-02 are wrong | ⚠️ **fixed upstream, but existing files must be rebuilt.** The K2000 sounds keymap entry `i` at MIDI key `i + 12`, and mpc2emu wrote each zone into `entry[key]` instead of `entry[key - 12]`, so a multisampled program played **one sample key-tracked across the whole keyboard** instead of the right sample per key. A four-tone test bank measured 440/466/494/524 where it should have given 440/550/660/880 — indistinguishable from a single stretched sample, which is what it was. Fixed in mpc2emu `791364a` (hardware-confirmed against a commercial bank whose entries begin at 48 and which sounds from key 60 up). **Any multisampled KRZ bank you built before that is affected and cannot be repaired — rebuild it.** Nothing warns about old files: the `.KRZ` looks correct and re-reads correctly, because the reader carried the matching error. Single-sample programs are unaffected, as are E4B and EIII |
+| MPC programs converted before 2026-08-04 can be missing samples | ⚠️ **fixed upstream, but existing files must be re-imported.** An E4B/KRZ sample name holds 16 characters and a zone finds its audio by *name alone*, so mpc2emu shortens names and renames a clash. Until `cbe6f10` that rename was not checked against the names already taken, and could hand back the same string (`…_2600_C-1` + `"1"` → `…_2600_C-1`; names ending `-1`, `A1`, `C1` are ordinary in auto-sampled sets) or land on a *different* real sample (`…_C0` + `"1"` → `…_C1`). The loser was loaded, logged as `Loaded sample:` — and never referenced again, so its zones sounded the survivor instead, at the wrong pitch. Measured over a 5890-program MPC backup: **140 programs affected, 5766 samples orphaned**, worst case 140 of 336 in one program; that program converted end to end produced a bank with **97 zones and 57 samples**. Nothing warned, in the log or in the bank. **If you imported a large multisample before this fix, re-import it** — the audio is not in the file to recover. There is deliberately no scanner for affected banks: the only visible signature, one sample used at several root notes, is perfectly ordinary in hardware-authored content (4515 presets across 3427 banks in the author's own library show it legitimately), so it separates the two cases only when the source is at hand to compare against |
 | KRZ zones cannot reach keys 0–11 | ⚠️ a consequence of the same `i + 12` rule: with `basePitch` 0 a keymap's 128 entries cover keys 12–139, so the bottom octave of the keyboard cannot be addressed at all and a zone asked for from key 0 starts at 12. Relevant when using **Sample Placement** to set an explicit low key for a KRZ target |
 | Per-bank KRZ/EIII conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for both now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ/EIII queues yet |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
