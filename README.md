@@ -323,7 +323,7 @@ rather than being a single all-or-nothing import.
    only the program objects are decoded, not the ~22 MB of JSON around
    them. A hit opens the program's own row.
 
-![Explorer showing an expanded .xpj project with one row per keygroup program, alongside a .xpm program and a .xty track, and the Detail pane summarising the selected program](docs/screenshots/10_mpc_project.png)
+![Explorer showing an expanded .xpj project with one row per program — drum kits and keygroups alike — alongside a .xpm program and a .xty track, with the Detail pane summarising the selected drum kit: 13 samples across 16 key zones](docs/screenshots/10_mpc_project.png)
 
 A project that can't produce anything is marked **(nothing to import)**
 and greyed, with the reason in its tooltip, rather than expanding into
