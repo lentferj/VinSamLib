@@ -438,6 +438,23 @@ garbage. This is a deliberate choice: older discs commonly mix formats
 on one volume, and hiding real content would look like a broken or
 empty folder.
 
+Folders that lead nowhere, on the other hand, are **not listed at all**.
+A directory — or a folder inside a disc image — whose entire subtree
+holds nothing this app can open is dropped rather than shown as a row
+that expands into nothing: an MPC project's data folder holding only
+loose WAVs, a folder of archives or spreadsheets, an empty `New Folder`
+left behind on a disc. Both rules pull the same way: show everything
+real, including the real-but-unreadable, and show nothing that is only a
+dead end.
+
+Three things deliberately survive that rule: your library roots, which
+are always listed even when they turn out empty; a folder whose contents
+could not be *read* at all (permissions), which keeps its row instead of
+being called empty; and anything below a subtree too large to finish
+checking. Loose WAVs are still importable as a multisample — **File →
+Import Sample Folder…** picks a folder with a file dialog and never goes
+through this tree.
+
 ### Detail Pane
 
 Selecting a preset, program, MPC program or MPC project shows a

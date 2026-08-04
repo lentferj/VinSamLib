@@ -12,6 +12,7 @@ queued Qt signal connection.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -133,7 +134,52 @@ def _fetch_children(node: TreeNode) -> list[TreeNode]:
 
 
 def _fetch_directory(node: TreeNode) -> list[TreeNode]:
-    path: Path = node.payload
+    out = _list_directory(node.payload, node)
+    # A subdirectory that expands to nothing is pure noise: an MPC project's
+    # data folder holding only WAVs, a folder of .rar archives, a spreadsheet
+    # next to the discs it describes. Those rows are dropped -- the user still
+    # sees every library root, just not dead ends below it.
+    budget = [_PROBE_DIR_BUDGET]
+    return [n for n in out
+            if n.kind != "directory" or _dir_has_content(n.payload, budget)]
+
+
+_PROBE_DIR_BUDGET = 400   # directories a single listing may look into before
+                          # it stops judging and just shows the rows
+
+
+def _dir_has_content(path: Path, budget: list[int]) -> bool:
+    """True if *path* holds something this browser can show, at any depth.
+
+    Deciding that needs exactly the rules _list_directory applies, so it calls
+    it rather than growing a second copy of them, and stops at the first row it
+    finds. Running out of budget answers True: showing a row that turns out
+    empty is a far smaller wrong than hiding real content behind a walk we
+    gave up on -- which is also why an unreadable directory stays visible.
+    """
+    budget[0] -= 1
+    if budget[0] < 0:
+        return True
+    children = _list_directory(path, None)
+    if not children:
+        # LocalDirVolume.list() answers [] both for an empty directory and for
+        # one it could not read at all. Tell those apart here: a directory
+        # whose contents we never got to see keeps its row.
+        try:
+            with os.scandir(path) as it:
+                next(it, None)
+        except OSError:
+            return True
+        return False
+    subdirs = []
+    for n in children:
+        if n.kind != "directory":
+            return True
+        subdirs.append(n.payload)
+    return any(_dir_has_content(p, budget) for p in subdirs)
+
+
+def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
     vol = LocalDirVolume(str(path))
     out: list[TreeNode] = []
     for e in vol.list():
@@ -210,7 +256,30 @@ def _fetch_vfs_listing(vol, folder_entry, parent_node: TreeNode) -> list[TreeNod
         # Plain OTHER_FILE with no detected format at all (WAVs, docs,
         # ...): still genuinely out of scope, not listed.
     out.sort(key=lambda n: (n.kind != "folder", n.label.lower()))
-    return out
+    budget = [_PROBE_DIR_BUDGET]
+    return [n for n in out
+            if n.kind != "folder" or _vfs_folder_has_content(*n.payload, budget)]
+
+
+def _vfs_folder_has_content(vol, entry, budget: list[int]) -> bool:
+    """_dir_has_content for a folder inside an image -- an empty 'New Folder'
+    left on a disc is the same dead end as an empty directory, and hiding one
+    but not the other would make the same tree behave two ways."""
+    budget[0] -= 1
+    if budget[0] < 0:
+        return True
+    try:
+        children = vol.list(entry)
+    except Exception:
+        return True
+    subfolders = []
+    for e in children:
+        if e.kind == EntryKind.FOLDER:
+            subfolders.append(e)
+        elif e.kind == EntryKind.BANK or (e.kind == EntryKind.OTHER_FILE
+                                          and e.meta.get("format")):
+            return True
+    return any(_vfs_folder_has_content(vol, e, budget) for e in subfolders)
 
 
 def _fetch_mpc_project(node: TreeNode) -> list[TreeNode]:
