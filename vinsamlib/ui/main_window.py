@@ -405,18 +405,31 @@ class MainWindow(QMainWindow):
         if not risks:
             return
         lines = convert.polyphony_risk_lines(risks)
-        self.statusBar().showMessage(
-            f"{len(lines)} preset(s) over the per-note voice limit", 8000)
-        QMessageBox.warning(
-            self, title,
-            "\n\n".join(lines)
-            + "\n\nA stereo sample costs two voices, and the ceiling is per "
-              "NOTE -- both measured on the machine itself: 32 per note on "
-              "the E4XT (whose global polyphony is 128), and 24 on the "
-              "K2000R, which is its whole polyphony.\n\n"
-              "To fix, re-import with Convert Options' \"Reduce Velocity "
-              "Layers\", or pick a Stereo Samples method other than Keep "
-              "Stereo to halve every stereo zone's cost.")
+        # This list is no longer polyphony-only: _verify_written's zone-loss
+        # finding arrives through it too, carrying its own sentence. The
+        # per-note-voice explanation below is appended only when a polyphony
+        # risk is actually present, or a bank that lost zones would be
+        # answered with advice about stereo voice cost.
+        polyphony = [r for r in risks if not r.get("message")]
+        others = len(risks) - len(polyphony)
+        summary = ", ".join(
+            part for part in (
+                f"{len(polyphony)} preset(s) over the per-note voice limit"
+                if polyphony else "",
+                f"{others} written-bank warning(s)" if others else "")
+            if part)
+        self.statusBar().showMessage(summary, 8000)
+        detail = "\n\n".join(lines)
+        if polyphony:
+            detail += (
+                "\n\nA stereo sample costs two voices, and the ceiling is per "
+                "NOTE -- both measured on the machine itself: 32 per note on "
+                "the E4XT (whose global polyphony is 128), and 24 on the "
+                "K2000R, which is its whole polyphony.\n\n"
+                "To fix, re-import with Convert Options' \"Reduce Velocity "
+                "Layers\", or pick a Stereo Samples method other than Keep "
+                "Stereo to halve every stereo zone's cost.")
+        QMessageBox.warning(self, title, detail)
 
     def _on_xpm_import_error(self, message: str) -> None:
         last_line = workers.last_error_line(message)

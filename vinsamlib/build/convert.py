@@ -279,6 +279,14 @@ def polyphony_risk_lines(risks: list[dict]) -> list[str]:
     (mpc2emu's own warning names its CLI flags, which don't exist here)."""
     lines = []
     for r in risks:
+        # A risk carrying its own sentence renders verbatim. Not every risk
+        # this list now holds is a polyphony one -- _verify_written adds
+        # written-file findings through the same channel, because they reach
+        # the user by the same route and a second mechanism would just be a
+        # second thing to forget to display.
+        if r.get("message"):
+            lines.append(r["message"])
+            continue
         why = (f" ({r['stereo']} of {r['samples']} samples are stereo, and a "
                f"stereo sample costs two voices)") if r["stereo"] else ""
         lines.append(
@@ -441,6 +449,12 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
         out_path = tmp_dir / f"{out_stem}.e4b"
         _run_captured(e4b_writer.write_e4b, bank, str(out_path))
     _verify_written(bank, out_path, opts)
+    # After the refusal check, not before: there is no point warning about the
+    # zones of a bank that is about to be thrown away for losing samples.
+    if risks_out is not None:
+        zone_risk = _zone_loss_risk(bank, out_path, opts)
+        if zone_risk is not None:
+            risks_out.append(zone_risk)
     return str(out_path)
 
 
@@ -503,6 +517,85 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
         f"present in memory. If a vintage resample profile is switched on, "
         f"try it off -- a resampled stereo sample can end half a frame long, "
         f"which the E4B writer mis-sizes.")
+
+
+def _zone_loss_risk(bank: Any, out_path: Path, opts: ConversionOptions) -> Optional[dict]:
+    """Warn when the written bank references FEWER zones than the Bank held.
+
+    The other half of the check above, and the half its own docstring said it
+    could not do. Counting samples catches a bank that came back short;
+    it cannot catch one that kept every sample and stopped POINTING at them.
+
+    Measured 2026-08-08, which is why this exists: a folder of 13 WAVs
+    imported to EIII wrote all 13 samples and exactly ONE zone, so twelve of
+    them could never sound.
+
+    THE TRIGGER IS OVERLAPPING KEY RANGES, not the voice/zone shape. That
+    correction came from mpc2emu after this was first reported, and it is
+    kept here because the wrong version is the intuitive one: it is NOT true
+    that "many zones in one voice" is the unsafe shape and "one zone per
+    voice" the safe one. An EIII preset maps each key to exactly ONE note
+    zone -- a real format limit, not a writer oversight -- so the writer
+    resolved overlaps the way the sampler's own panel does, later wins, and
+    dropped whatever was left holding no keys. Our 13 WAVs had filenames
+    carrying no note names, so every zone spanned the whole keyboard and
+    twelve lost every key. A 40-voice bank would have lost zones too, had any
+    two of them overlapped.
+
+    Fixed upstream in mpc2emu `4b0dcde`, which spreads a colliding voice
+    across the linked-preset chain instead. This check stays anyway: it is a
+    verification, and it stays true whoever fixes what.
+
+    A WARNING, not a refusal, and not a correction. The bank is real and its
+    audio is intact -- a user who wants it should get it -- but nobody should
+    receive it without being told, which is what happened until this ran.
+    Returns a risk dict for the same list polyphony findings use, or None.
+    """
+    from ..banks import eiii as vs_eiii
+    # EIII ONLY, deliberately, and this is the part that was got wrong first.
+    #
+    # The check originally ran for E4B too, and on ordinary real-bank
+    # conversions it reported "140 of 141 zones" -- an off-by-one nobody has
+    # explained. It is not the empty-zone artefact it looks like: our reader's
+    # _parse_zone_refs counts every entry including sample index 0, so the
+    # two sides really do disagree by one somewhere. That is worth chasing,
+    # and it is NOT worth a modal warning in the meantime: a guard that cries
+    # about one zone in 141 on every conversion trains the user to dismiss it,
+    # and the next time it means something they will dismiss that too.
+    #
+    # So this warns only where the loss is measured, understood and severe:
+    # EIII drops all but the first zone of a multi-zone voice, which for a
+    # folder of 13 WAVs is 1 of 13. KRZ is excluded for a different reason --
+    # it reaches samples through keymaps rather than zone entries, so a
+    # like-for-like count needs the keymap walk and is not guessed at here.
+    if opts.target_format != "EIII":
+        return None
+    wanted = sum(len(v.zones) for p in bank.presets for v in p.voices)
+    if not wanted:
+        return None
+    try:
+        data = out_path.read_bytes()
+        got = sum(len(p.zone_refs) for p in
+                   vs_eiii.parse_bytes(data, out_path.name).presets)
+    except Exception:
+        return None
+    if got >= wanted:
+        return None
+    return {
+        "kind": "zone_loss",
+        "message": (
+            f"The written {opts.target_format} bank points at {got} of "
+            f"{wanted} zone(s). Its samples are all present and its audio is "
+            f"intact, but {wanted - got} of them cannot be played by the "
+            f"instrument as written. An EIII preset maps each key to exactly "
+            f"one zone, so where two zones claim the same keys only one "
+            f"survives — most often when the source gives no note information "
+            f"to place samples by, and they all end up spanning the whole "
+            f"keyboard. Naming the samples after the keys they play, or "
+            f"setting their ranges in Adjust Sample Placement, avoids the "
+            f"collision. E4B and KRZ keep overlapping zones and are "
+            f"unaffected."),
+    }
 
 
 def _sniff_format(bank_path: str) -> str:
