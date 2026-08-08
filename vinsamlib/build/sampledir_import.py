@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .convert import ConversionOptions, _apply_and_write, _run_captured
+from .sample_names import apply_sample_names, names_from_base
 from ..mpc2emu_bridge import sampledir_parser
 
 
@@ -123,7 +124,10 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
                        octave_offset: Optional[int] = None,
                        zone_overrides: Optional[dict] = None,
                        risks_out: Optional[list] = None,
-                       bank_name: Optional[str] = None) -> str:
+                       bank_name: Optional[str] = None,
+                       name_base: str = "", name_octave: int = 2,
+                       name_with_key: bool = True,
+                       name_overrides: Optional[dict] = None) -> str:
     """Parses a folder of WAV files (via mpc2emu's own parse_sample_dir)
     into a single multisampled preset and writes it out as a real E4B/
     KRZ/EIII bank file in a fresh temp dir, applying whatever resample/
@@ -159,4 +163,9 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
     # bank_name: what the preset is called. The folder's name is right for a
     # folder import and meaningless for a staged selection, whose directory is
     # a temp path -- see stage_files().
+    # Base scheme first, then the per-sample edits on top: a user who typed
+    # one name meant that name, whatever the scheme would have produced.
+    wanted = names_from_base(bank, name_base, name_octave, name_with_key)
+    wanted.update(name_overrides or {})
+    apply_sample_names(bank, wanted)
     return _apply_and_write(bank, opts, bank_name or Path(dir_path).name, risks_out)

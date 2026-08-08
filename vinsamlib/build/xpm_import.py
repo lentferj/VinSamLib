@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Optional
 
 from .convert import ConversionOptions, _apply_and_write, _run_captured
+from .sample_names import apply_sample_names, names_from_base
 from ..banks.summary import ZoneSummary
 from ..mpc2emu_bridge import xpm_parser
 
@@ -478,7 +479,10 @@ def load_samples_for_test(xpm_path: str, wav_dir: Optional[str] = None,
 
 def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = None,
                risks_out: Optional[list] = None,
-               preset_index: Optional[int] = None) -> str:
+               preset_index: Optional[int] = None,
+               name_base: str = "", name_octave: int = 2,
+               name_with_key: bool = True,
+               name_overrides: Optional[dict] = None) -> str:
     """Parses an MPC program, track or project (via mpc2emu's own
     parse_xpm) and writes it out as a real E4B or KRZ bank file in a fresh
     temp dir, applying whatever resample/reduce options were chosen along
@@ -517,4 +521,10 @@ def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = 
         preset.program_number = 0
         bank.presets = [preset]
         bank.samples = _preset_samples(bank, preset)
+    # After narrowing, so a per-program import renames only what it keeps.
+    # Base scheme first, then the per-sample edits on top: a user who typed
+    # one name meant that name, whatever the scheme would have produced.
+    wanted = names_from_base(bank, name_base, name_octave, name_with_key)
+    wanted.update(name_overrides or {})
+    apply_sample_names(bank, wanted)
     return _apply_and_write(bank, opts, Path(xpm_path).stem, risks_out)

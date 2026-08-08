@@ -14,26 +14,7 @@ rule -- this doesn't need mpc2emu at all).
 
 from __future__ import annotations
 
-import re
-from typing import Optional
-
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-_NAME_RE = re.compile(r'^\s*([A-Ga-g])(#?)(-?\d+)\s*$')
-
-
-def midi_to_name(midi: int, octave_offset: int) -> str:
-    semitone = midi % 12
-    octave = midi // 12 - octave_offset
-    return f"{NOTE_NAMES[semitone]}{octave}"
-
-
-def name_to_midi(text: str, octave_offset: int) -> Optional[int]:
-    m = _NAME_RE.match(text)
-    if not m:
-        return None
-    name = f"{m.group(1).upper()}{m.group(2)}"
-    if name not in NOTE_NAMES:
-        return None
-    semitone = NOTE_NAMES.index(name)
-    octave = int(m.group(3))
-    return (octave + octave_offset) * 12 + semitone
+# Moved to vinsamlib/notes.py so build/ can use it too without importing ui/.
+# Re-exported here because this is the name the placement editor and the
+# piano keyboard already import.
+from ..notes import NOTE_NAMES, midi_to_name, name_to_midi  # noqa: F401

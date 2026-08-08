@@ -20,8 +20,10 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QMessage
                              QPushButton, QWidget)
 
 from .format_convert_dialog import FormatConvertDialog
+from .sample_names_widget import SampleNamesWidget
 from .sample_placement_dialog import SamplePlacementDialog
 from ..build.convert import ConversionOptions
+from ..build.sample_names import names_from_base
 
 # Fallback note-name display convention (C4=60) when the user left "Middle
 # C is:" on Auto-detect -- parse_sample_dir() resolves its own real octave
@@ -29,6 +31,14 @@ from ..build.convert import ConversionOptions
 # single concrete offset to display note names in; this only affects how
 # Sample Placement's fields are LABELED, never the actual key numbers.
 _DISPLAY_OCTAVE_OFFSET_FALLBACK = 1
+
+# The offset used to build the KEY SUFFIX of a generated sample name when the
+# picker is on Auto-detect. Must stay equal to main_window._start_sample_import's
+# own fallback, which is what the import actually applies -- these two disagreeing
+# is how a previewed name and an imported name end up an octave apart.
+# NOT the same value as the display fallback above, and deliberately separate:
+# one labels spin boxes, this one goes into a name written to hardware.
+_NAME_OCTAVE_FALLBACK = 2
 
 # QComboBox row index -> parsers.sampledir_parser.parse_sample_dir()'s own
 # octave_offset convention (2=C3, 1=C4, 0=C5; None lets it auto-detect).
@@ -60,6 +70,7 @@ class SampleDirImportDialog(FormatConvertDialog):
 
         self._placement_loader = placement_loader
         self._zone_overrides: Optional[dict] = None
+        self._name_overrides: dict = {}
 
         octave_row = QWidget()
         row_layout = QHBoxLayout(octave_row)
@@ -85,6 +96,21 @@ class SampleDirImportDialog(FormatConvertDialog):
         placement_layout.addWidget(self._placement_status, 1)
         self.layout().insertWidget(self._header_base + 2, placement_row)
 
+        # Under placement, because it is the same kind of decision: what the
+        # import writes, reviewed before it writes it.
+        # _NAME_OCTAVE_FALLBACK, not the display one. This widget previews the
+        # generated NAME, so on Auto-detect it has to use the offset the import
+        # will use; with the display fallback it said C4 where the import wrote
+        # C3. Its own set_octave_offset docstring already asks for exactly this
+        # ("a preview that said C3 where the import wrote C4 would be worse
+        # than no preview at all") -- it was the caller that did not comply.
+        self._names = SampleNamesWidget(
+            octave_offset=self.octave_offset() or _NAME_OCTAVE_FALLBACK)
+        self.layout().insertWidget(self._header_base + 3, self._names)
+        self._octave_box.currentIndexChanged.connect(
+            lambda *_: self._names.set_octave_offset(
+                self.octave_offset() or _NAME_OCTAVE_FALLBACK))
+
         # sample_loader/placement_loader both take the LIVE octave_offset
         # (this dialog's own choice), unlike ConvertOptionsDialog's plain
         # zero-arg bank_loader -- parse_sample_dir()'s root-note detection
@@ -107,6 +133,19 @@ class SampleDirImportDialog(FormatConvertDialog):
     def zone_overrides(self) -> Optional[dict]:
         return self._zone_overrides
 
+    def sample_name_base(self) -> str:
+        """Base name for `<base>-<key>` sample names, or "" to keep the names
+        the conversion produced."""
+        return self._names.base_name()
+
+    def sample_name_with_key(self) -> bool:
+        return self._names.with_key()
+
+    def sample_name_overrides(self) -> dict:
+        """Per-sample names typed in the placement editor, which win over the
+        base scheme."""
+        return dict(self._name_overrides)
+
     def _on_adjust_placement_clicked(self) -> None:
         if self._placement_loader is None:
             return
@@ -123,12 +162,39 @@ class SampleDirImportDialog(FormatConvertDialog):
         zones = bank.presets[0].voices[0].zones
         rows = [{"name": z.sample_name, "lo": z.lo_key, "root": z.root_key, "hi": z.hi_key}
                 for z in zones]
+
+        # Show the names the IMPORT will produce, not the ones the parse
+        # produced. Same call the import itself makes (sampledir_import /
+        # xpm_import), against the same bank, so the editor cannot drift from
+        # the result: this is the only moment both the root notes and the
+        # user's current base name exist together.
+        #
+        # Goes in `scheme_name`, never `new_name` -- see the placement
+        # dialog's _baseline_name for why seeding the latter would turn every
+        # untouched row into an override that outranks the scheme.
+        base = self.sample_name_base()
+        if base:
+            # _NAME_OCTAVE_FALLBACK, not the display fallback: on Auto-detect
+            # these two differ, and the one that decides the generated suffix
+            # is the import's. Using the display value here would preview a
+            # name the import does not produce, which is the very fault this
+            # block exists to fix.
+            octave = self.octave_offset()
+            if octave is None:
+                octave = _NAME_OCTAVE_FALLBACK
+            scheme = names_from_base(bank, base, octave,
+                                      self.sample_name_with_key())
+            for row in rows:
+                if row["name"] in scheme:
+                    row["scheme_name"] = scheme[row["name"]]
+
         display_octave = self.octave_offset()
         if display_octave is None:
             display_octave = _DISPLAY_OCTAVE_OFFSET_FALLBACK
         dialog = SamplePlacementDialog(rows, octave_offset=display_octave, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._zone_overrides = dialog.overrides()
+            self._name_overrides = dialog.name_overrides()
             self._placement_status.setText(
                 f"Custom placement set for {len(self._zone_overrides)} sample(s)")
         # Cancel: whatever override (if any) was already set stays as-is.
@@ -140,17 +206,24 @@ class SampleDirImportDialog(FormatConvertDialog):
                             sample_loader: Optional[Callable[[Optional[int]], list]] = None,
                             placement_loader: Optional[Callable[[Optional[int]], Any]] = None,
                             source_text: str = ""
-                            ) -> tuple[Optional[ConversionOptions], Optional[int], Optional[dict]]:
-        """Returns (opts, octave_offset, zone_overrides) -- None, None, None
-        if cancelled. octave_offset isn't part of ConversionOptions (it
+                            ) -> tuple[Optional[ConversionOptions], Optional[int],
+                                        Optional[dict], str]:
+        """Returns (opts, octave_offset, zone_overrides,
+        (name_base, with_key, name_overrides)) -- the last tuple is the
+        "Sample names" section plus any names typed per row in the placement
+        editor. None, None, None, ("", True, {}) if cancelled. octave_offset isn't part of ConversionOptions (it
         only matters at parse time, before there's a Bank to apply
         resample/reduce options to at all); zone_overrides is the Sample
         Placement dialog's manual per-sample key-range/root override, or
-        None if it was never opened or never accepted."""
+        None if it was never opened or never accepted; name_base is the
+        "Sample names" section's base name, or "" to keep whatever names the
+        conversion produced."""
         dialog = SampleDirImportDialog(parent, initial=initial, title=title,
                                         warning_text=warning_text, locked_format=locked_format,
                                         sample_loader=sample_loader, placement_loader=placement_loader,
                                         source_text=source_text)
         if dialog.exec() != QDialog.DialogCode.Accepted:
-            return None, None, None
-        return dialog._to_options(), dialog.octave_offset(), dialog.zone_overrides()
+            return None, None, None, ("", True, {})
+        return (dialog._to_options(), dialog.octave_offset(), dialog.zone_overrides(),
+                (dialog.sample_name_base(), dialog.sample_name_with_key(),
+                 dialog.sample_name_overrides()))

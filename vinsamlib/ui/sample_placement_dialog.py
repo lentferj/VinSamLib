@@ -58,6 +58,31 @@ def _contrasting_text(color: QColor) -> QColor:
     return QColor(0, 0, 0) if luminance > 140 else QColor(255, 255, 255)
 
 
+def _baseline_name(row: dict) -> str:
+    """What this row is called before anyone types in it.
+
+    `scheme_name` is the name the caller's own naming scheme will give this
+    sample (build/sample_names.names_from_base). When it is supplied, THAT is
+    what the editor must show -- showing the pre-scheme name meant editing
+    names in a dialog that displayed something other than what the import
+    would produce.
+
+    Deliberately kept apart from `new_name`. Seeding `new_name` with the
+    scheme name would have shown the right text too, but name_overrides()
+    reports every row with a `new_name` as hand-typed, and a hand-typed name
+    beats the scheme -- so changing the base name afterwards would silently
+    stop working. `name` remains the row's identity throughout, whatever is
+    displayed on top of it.
+    """
+    return row.get("scheme_name") or row["name"]
+
+
+def _shown_name(row: dict) -> str:
+    """The text in the name cell: a hand-typed name if there is one, else the
+    scheme's, else the original."""
+    return row.get("new_name") or _baseline_name(row)
+
+
 class NoteSpinBox(QSpinBox):
     """A QSpinBox whose displayed text is a note name (e.g. "C3", "F#4")
     over the real MIDI value, using the SAME octave-offset convention as
@@ -142,15 +167,24 @@ class SamplePlacementDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        self._table.itemChanged.connect(self._on_name_edited)
         self._rebuild_table()
 
     # -- table (re)construction --------------------------------------------------
 
     def _rebuild_table(self, focus: Optional[tuple[str, int]] = None) -> None:
+        # Signals off while filling: setItem() emits itemChanged, which would
+        # otherwise read half-built rows as user edits.
+        self._table.blockSignals(True)
         self._table.setRowCount(len(self._rows))
         for r, row in enumerate(self._rows):
-            name_item = QTableWidgetItem(row["name"])
-            name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)   # read-only, no editing
+            name_item = QTableWidgetItem(_shown_name(row))
+            # Editable: the name a sample gets on the hardware is worth as much
+            # as its key range, and this is the one place the whole list is in
+            # front of the user. The ORIGINAL name stays the row's identity --
+            # placement overrides key on it, and so does the colour map.
+            name_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsEditable)
+            name_item.setData(Qt.ItemDataRole.UserRole, row["name"])
             color = self._colors[row["name"]]
             name_item.setBackground(color)
             name_item.setForeground(_contrasting_text(color))
@@ -164,8 +198,63 @@ class SamplePlacementDialog(QDialog):
                 self._table.setCellWidget(r, col, spin)
                 if focus == (row["name"], col):
                     spin.setFocus()
+        self._table.blockSignals(False)
         self._refresh_warnings()
         self._refresh_piano()
+
+    def _on_name_edited(self, item) -> None:
+        """A name cell was typed into. Recorded against the row's ORIGINAL
+        name, which stays its identity everywhere else."""
+        if item.column() != 0:
+            return
+        original = item.data(Qt.ItemDataRole.UserRole)
+        if original is None:
+            return
+        row = next((r for r in self._rows if r["name"] == original), None)
+        if row is None:
+            return
+        # Compared against what the cell ALREADY SHOWED, not against the row's
+        # identity. Two reasons it has to be the shown text: mpc2emu pads names
+        # to the field width, so a row nobody touched would read as renamed the
+        # moment its trailing spaces were stripped; and when the caller supplied
+        # a `scheme_name`, the cell showed that rather than the original, so
+        # comparing against the original would record every untouched row as a
+        # hand-typed override -- which then WINS over the scheme, and a base
+        # name changed afterwards would silently stop taking effect.
+        typed = item.text().strip()
+        baseline = _baseline_name(row).strip()
+        row["new_name"] = typed if typed and typed != baseline else ""
+        self._refresh_name_warnings()
+
+    def _refresh_name_warnings(self) -> None:
+        """Two things a typed name can be: too long for the 16-character field,
+        or the same as another row's. Neither loses audio -- the import applies
+        names through mpc2emu's own uniquifier -- but a user who typed one name
+        and gets another should see it before pressing OK."""
+        # Compared stripped: mpc2emu pads names to the field width, so
+        # "Clap Drumulator" and "Clap Drumulator " are the same name once
+        # written -- a clash check that missed that would pass the user
+        # straight into the collision it exists to prevent.
+        final = {row["name"]: _shown_name(row).strip() for row in self._rows}
+        clashing = {n for n in final.values() if list(final.values()).count(n) > 1}
+        for r, row in enumerate(self._rows):
+            item = self._table.item(r, 0)
+            if item is None:
+                continue
+            name = final[row["name"]]
+            trouble = []
+            if len(name) > 16:
+                trouble.append(f"{len(name)} characters — the field holds 16")
+            if name in clashing:
+                trouble.append("another sample has this name — it will be numbered apart")
+            item.setToolTip("; ".join(trouble) if trouble else name)
+            font = item.font()
+            font.setItalic(bool(trouble))
+            item.setFont(font)
+
+    def name_overrides(self) -> dict:
+        """{original sample name: typed name} for the rows that were edited."""
+        return {row["name"]: row["new_name"] for row in self._rows if row.get("new_name")}
 
     def _on_value_changed(self, name: str, key: str, value: int) -> None:
         row = next(r for r in self._rows if r["name"] == name)
