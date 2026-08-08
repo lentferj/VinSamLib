@@ -115,11 +115,30 @@ class E4BFile:
 
 
 def _name16(s: str) -> bytes:
-    return s.encode("ascii", errors="replace")[:MAX_NAME].ljust(MAX_NAME, b" ")
+    # latin-1, to be the exact inverse of _strip_name below. This used to
+    # encode ASCII, which silently turned every byte above 0x7E into "?" --
+    # and only on the TOC path, because a sample's chunk body is copied
+    # verbatim. One real bank in this project's library then came out of
+    # assemble() with the SAME sample named two different things depending
+    # on which of the two a reader trusts.
+    #
+    # `replace` still matters here, unlike in _strip_name: a name typed in
+    # New Bank can hold a codepoint above 0xFF, which latin-1 genuinely
+    # cannot encode. A real bank name off a real image never can.
+    return s.encode("latin-1", errors="replace")[:MAX_NAME].ljust(MAX_NAME, b" ")
 
 
 def _strip_name(raw: bytes) -> str:
-    return raw.rstrip(b"\x00 ").decode("latin-1", "replace")
+    # latin-1 rather than ASCII because a real E4XT writes bytes above 0x7E
+    # into this field -- they are whatever glyph the author picked off its
+    # front panel, and EOS's character ROM is not ISO-8859-1, so the
+    # codepoint we show is a best effort. The BYTE, though, survives
+    # unchanged through _name16 and back, which is what a librarian needs.
+    #
+    # No `errors=` argument: latin-1 maps all 256 byte values by definition
+    # and cannot fail. One used to be passed, which read as though this
+    # guarded against undecodable input; it never did anything.
+    return raw.rstrip(b"\x00 ").decode("latin-1")
 
 
 def _iff_chunk(tag: bytes, body: bytes) -> bytes:
