@@ -1044,6 +1044,38 @@ material with a current mpc2emu and VinSamLib.
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
 
+### If you used a Vintage Resample profile on stereo content before 2026-08-08, reconvert
+
+**Affects:** any bank you produced with Convert Options → **Vintage
+Resample** set to *EMU Emulator II* or *EMU Emax I*, from a source whose
+samples are stereo. Any target format. Mono sources are unaffected.
+
+**What went wrong:** the vintage profiles never handled stereo. They
+processed a stereo sample as though it were one long mono stream, which
+smears the two channels into each other, and left the buffer a half-frame
+long. For an **E4B** target the half-frame then made mpc2emu's writer
+declare a chunk two bytes shorter than it wrote, so every later chunk
+misaligned and the bank read back with **almost all of its samples gone** —
+one measured bank went from 77 samples to 1, with 77 zones pointing at
+samples that were no longer there.
+
+**Why you would not have noticed:** nothing warned, at any layer. The bank
+in memory was correct, the file appeared, the row appeared in the Image
+column, and the file parses. VinSamLib's own conversion smoke test had been
+running this combination into a disk image for months and passing, because
+it checked that a bank row appeared and never that the bank was intact.
+
+**The part a check cannot catch:** VinSamLib now reads back every bank it
+writes and refuses one whose samples went missing, so the E4B collapse
+cannot reach you again. That check counts samples. It **cannot** see the
+channel smearing, which affects the samples that *did* survive and every
+KRZ and EIII bank built this way — those kept all their samples and the
+audio inside them is still wrong.
+
+**What to do:** reconvert anything you built with a vintage profile from
+stereo material, with a current mpc2emu. Fixed upstream in mpc2emu
+`662dbf8`.
+
 ### If you imported MPC programs before 2026-08-04, re-import the big ones
 
 In the MPC import path rather than the KRZ writer, and the symptom is

@@ -457,6 +457,14 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
     printed a word about it. KRZ and EIII survive the same input, so this is
     not something a caller could have predicted from the options alone.
 
+    **Necessary, not sufficient.** This counts samples, which is what the
+    E4B chunk misalignment destroys. It cannot see the other half of the
+    same upstream fault: the vintage profiles processed a stereo sample as
+    one long mono stream, so the samples that DID survive have their
+    channels smeared, and a KRZ or EIII bank built the same way kept every
+    sample and every one of them is wrong. No count check can catch that.
+    See the README's "Fixed defects" entry.
+
     Deliberately a VERIFICATION and not a correction. A correction for
     someone else's bug has to guess when to stop applying itself, and this
     module has already had one outlive its fault and start doing damage of
