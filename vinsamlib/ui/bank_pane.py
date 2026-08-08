@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QFrame, QHBoxLayo
 from . import dnd, workers
 from .detail_pane import _escape, zone_stats_lines
 from ..banks import e4b, eiii, krz, summary
+from ..filenames import safe_filename
 from ..config import Config
 
 _RECOMPUTE_DEBOUNCE_MS = 250
@@ -73,12 +74,9 @@ def _sanitize_bank_name(name: str) -> str:
     parameter — see _recompute()/_save_as() below), but the sanitized
     result is used as this bank's *filename* everywhere regardless of
     format, so it has to survive as a real filename on every target
-    platform either way, hence stripping the characters Windows forbids
-    even though this app also runs on Linux/macOS."""
-    name = name.strip()
-    if not name:
-        return _DEFAULT_BANK_NAME
-    return re.sub(r'[\\/:*?"<>|]', "_", name)
+    platform either way -- see filenames.safe_filename for why that is an
+    allowlist rather than the Windows-forbidden set this used to strip."""
+    return safe_filename(name, fallback=_DEFAULT_BANK_NAME)
 
 
 class BankPane(QWidget):

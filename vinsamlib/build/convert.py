@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .. import tempdirs
+from ..filenames import safe_filename
 from ..mpc2emu_bridge import (bank_splitter, e4b_parser, e4b_writer, eiii_parser,
                                 eiii_writer, krz_parser, krz_writer, models_common,
                                 resampler, start_trim, tail_trim, zone_reducer)
@@ -47,14 +49,15 @@ _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
 def _sanitize_stem(name: str) -> str:
     """A real preset name is free-form (e.g. "CL EspHdFst/Sld" -- "/" used
-    literally as part of the name, not a separator) but has to survive as
-    a single path component once used as a temp filename stem: `tmp_dir /
+    literally as part of the name, not a separator) but has to survive as a
+    single path component once used as a temp filename stem: `tmp_dir /
     f"{stem}.e4b"` silently turns an embedded "/" into an extra directory
     level that was never created, so writing to it raises FileNotFoundError.
-    Same character set ui/bank_pane.py's _sanitize_bank_name() strips for
-    the same reason (a real bank/preset name becoming a real filename)."""
-    name = name.strip()
-    return re.sub(r'[\\/:*?"<>|]', "_", name) or "preset"
+
+    Delegates to filenames.safe_filename, which is an allowlist. This used to
+    strip only the characters Windows forbids, and 30 names in a real 7 931-name
+    library got through it -- 21 with control characters and 9 ending in a dot."""
+    return safe_filename(name, fallback="preset")
 
 
 class ConvertOpError(RuntimeError):
@@ -349,10 +352,13 @@ def load_sources_samples_for_test(sources: list, fmt: str) -> list:
     _EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
     fn = _ASSEMBLE[fmt]
     data = fn(sources, bank_name="TestPreview") if fmt == "EIII" else fn(sources)
-    tmp_dir = Path(tempfile.mkdtemp(prefix=_CONVERT_TEMP_PREFIX))
-    tmp_path = tmp_dir / f"preview.{_EXT[fmt]}"
-    tmp_path.write_bytes(data)
-    return load_samples_for_test(str(tmp_path))
+    # The file exists only to be parsed straight back -- the SampleData
+    # returned carries its own PCM in memory -- so it goes at the end of the
+    # block rather than living until shutdown.
+    with tempdirs.temp_dir(_CONVERT_TEMP_PREFIX) as tmp_dir:
+        tmp_path = tmp_dir / f"preview.{_EXT[fmt]}"
+        tmp_path.write_bytes(data)
+        return load_samples_for_test(str(tmp_path))
 
 
 def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
@@ -420,7 +426,11 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
     if risks_out is not None:
         risks_out.extend(polyphony_risk(bank, opts.target_format))
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix=_CONVERT_TEMP_PREFIX))
+    # Session-scoped: this file is the RESULT, and the caller reads it after
+    # we return -- New Bank re-parses it, the image builders copy it. Nothing
+    # here can know when the last reader is done, so it is registered and
+    # removed at shutdown instead.
+    tmp_dir = tempdirs.session_temp_dir(_CONVERT_TEMP_PREFIX)
     if opts.target_format == "KRZ":
         out_path = tmp_dir / f"{out_stem}.krz"
         _run_captured(krz_writer.write_krz, bank, str(out_path))
@@ -498,7 +508,7 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
-    tmp_dir = Path(tempfile.mkdtemp(prefix=_CONVERT_TEMP_PREFIX))
+    tmp_dir = tempdirs.session_temp_dir(_CONVERT_TEMP_PREFIX)
     stem = _sanitize_stem(getattr(preset_obj, "name", "") or "")
     if isinstance(bank, vs_e4b.E4BFile):
         data = vs_e4b.assemble([(bank, preset_obj)])
@@ -512,4 +522,10 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
     else:
         raise ConvertOpError(f"not a recognized E4B, KRZ or EIII bank: {type(bank)!r}")
     tmp_path.write_bytes(data)
-    return apply_conversion(str(tmp_path), opts, risks_out)
+    out = apply_conversion(str(tmp_path), opts, risks_out)
+    # The intermediate was only ever input to apply_conversion, so it can go
+    # now -- unless the options were a genuine no-op, in which case
+    # apply_conversion handed the very same path back and it IS the result.
+    if Path(out) != tmp_path:
+        tempdirs.forget(tmp_dir)
+    return out

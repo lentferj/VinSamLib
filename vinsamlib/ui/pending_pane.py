@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDia
                              QPushButton, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import workers
+from .. import tempdirs
 from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _sanitize_bank_name
 from .convert_options_dialog import ConvertOptionsDialog
 from ..build.convert import (apply_conversion, load_sources_samples_for_test,
@@ -65,7 +66,9 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         name = _sanitize_bank_name(entry["name"])
         data = fn(selections, bank_name=name) if fmt == "EIII" else fn(selections)
         ext = _FORMAT_EXT[fmt]
-        tmp_dir = Path(tempfile.mkdtemp(prefix=_PENDING_TEMP_PREFIX))
+        # Session-scoped: the returned paths go to the image builders, which
+        # read them after this function is long finished.
+        tmp_dir = tempdirs.session_temp_dir(_PENDING_TEMP_PREFIX)
         tmp_path = tmp_dir / f"{name}.{ext}"
         tmp_path.write_bytes(data)
         final_path = str(tmp_path)
