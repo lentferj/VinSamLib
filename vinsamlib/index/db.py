@@ -229,9 +229,17 @@ def _fts_query(user_text: str) -> str:
     indexing. Quotes any token containing characters FTS5's default
     tokenizer would otherwise choke on (': ', '-', etc., common in real
     sample names like "kit:Beatnik'sKit")."""
-    tokens = user_text.split()
     parts = []
-    for t in tokens:
+    for t in user_text.split():
+        # A token with no letter or digit in it tokenizes to NOTHING, and an
+        # empty term AND-ed into the query makes the whole query match
+        # nothing. Real preset names hit this constantly: any name of the
+        # form "<word> & <word>" splits into three tokens, the middle one
+        # tokenizes away, and searching a preset by its own displayed name
+        # returned zero results. Punctuation INSIDE a word is fine and must
+        # stay -- "R&B" and "kit:Beatnik'sKit" tokenize normally.
+        if not any(ch.isalnum() for ch in t):
+            continue
         safe = t.replace('"', '""')
         parts.append(f'"{safe}"*')
     return " AND ".join(parts) if parts else user_text

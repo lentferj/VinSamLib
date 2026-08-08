@@ -440,7 +440,61 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
     else:
         out_path = tmp_dir / f"{out_stem}.e4b"
         _run_captured(e4b_writer.write_e4b, bank, str(out_path))
+    _verify_written(bank, out_path, opts)
     return str(out_path)
+
+
+def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
+    """Read the freshly-written bank back and refuse it if samples went missing.
+
+    A writer is the one stage whose failures cannot be seen from the inside:
+    the Bank in memory is still correct, and the file is what the hardware
+    will load. Real case, measured 2026-08-07 -- a vintage resample profile
+    leaves some STEREO samples a half-frame long (`len(data) % 4 == 2`), and
+    mpc2emu's E4B writer then declares a chunk two bytes shorter than what it
+    writes. Every following chunk is misaligned, so a 77-sample bank reads
+    back as **1 sample with 77 orphaned zones** -- and nothing, at any layer,
+    printed a word about it. KRZ and EIII survive the same input, so this is
+    not something a caller could have predicted from the options alone.
+
+    Deliberately a VERIFICATION and not a correction. A correction for
+    someone else's bug has to guess when to stop applying itself, and this
+    module has already had one outlive its fault and start doing damage of
+    its own (see the AKAI pan note above). Reading back what was written
+    stays true no matter who fixes what, costs one parse, and catches every
+    writer-side loss rather than the one shape known today.
+
+    Uses VinSamLib's own byte-level readers rather than mpc2emu's, so the
+    check is independent of the code that produced the file.
+    """
+    from ..banks import e4b as vs_e4b
+    from ..banks import eiii as vs_eiii
+    from ..banks import krz as vs_krz
+    expected = len(bank.samples)
+    if not expected:
+        return
+    try:
+        data = out_path.read_bytes()
+        if opts.target_format == "KRZ":
+            got = len(vs_krz.parse_bytes(data, out_path.name).samples)
+        elif opts.target_format == "EIII":
+            got = len(vs_eiii.parse_bytes(data, out_path.name).samples)
+        else:
+            got = len(vs_e4b.parse_bytes(data, out_path.name).samples)
+    except Exception:
+        # Unreadable for some other reason is a separate problem, and the
+        # caller will meet it soon enough; do not mask it as sample loss.
+        return
+    if got >= expected:
+        return
+    raise ConvertOpError(
+        f"the converted {opts.target_format} bank came back with {got} of "
+        f"{expected} sample(s) after being written, so it was discarded "
+        f"rather than handed on. This is a fault in the writer, not in the "
+        f"material: the conversion itself completed and the samples were all "
+        f"present in memory. If a vintage resample profile is switched on, "
+        f"try it off -- a resampled stereo sample can end half a frame long, "
+        f"which the E4B writer mis-sizes.")
 
 
 def _sniff_format(bank_path: str) -> str:
