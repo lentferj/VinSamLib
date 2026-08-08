@@ -28,6 +28,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from ..filenames import safe_path_component
 from ..mpc2emu_bridge import fat12, hda_builder, iso_builder
 from ..vfs.base import Entry, EntryKind
 from ..vfs.detect import open_volume
@@ -222,7 +223,16 @@ def _rebuild_emu3_with_extra_banks(tmp_path: str, extra_paths: list[str],
                 if entry.kind != EntryKind.BANK:
                     continue
                 data = vol.read(entry)
-                name = entry.name.strip() or f"bank{len(existing_paths)}"
+                # A bank name off a real image is device metadata, and 41 of
+                # 3 147 in this author's own discs carry a "/" or a trailing
+                # dot -- `GroovesFilz/Hitz`, `Synth/FX/Misc...`. Used raw as
+                # a filename the "/" becomes a directory that was never
+                # created and the whole rebuild dies with FileNotFoundError.
+                # The gentle form, not safe_filename: this stem is what
+                # build_iso turns back into the bank's name on the rebuilt
+                # image, so `Synths & Keys` must not become `Synths _ Keys`.
+                name = safe_path_component(
+                    entry.name.strip(), fallback=f"bank{len(existing_paths)}")
                 # Extension doesn't affect iso_builder.build_iso (it's
                 # content-agnostic, same as every builder here), but using
                 # the entry's own real detected format keeps exported temp

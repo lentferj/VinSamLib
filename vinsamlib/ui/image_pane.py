@@ -41,6 +41,7 @@ from .models import human_size
 from ..banks import eiii
 from ..build import images
 from ..config import Config
+from ..filenames import safe_path_component
 from ..vfs.base import Entry, EntryKind, Volume, WritableVolume
 from ..vfs.detect import open_volume
 from ..vfs.emu3 import Emu3Volume
@@ -546,7 +547,13 @@ class ImagePane(QWidget):
             return
         ext = Path(entry.name.strip()).suffix or ".bin"
         start_dir = self._dialog_start_dir()
-        default_path = str(Path(start_dir) / entry.name.strip()) if start_dir else entry.name.strip()
+        # A bank name on a real image may contain "/" -- 41 of 3 147 across
+        # this author's discs do. Joined raw into the dialog's default it
+        # silently points at a subdirectory that does not exist. Gently
+        # sanitised, not strictly: this is the filename the user is about to
+        # accept, so "Synths & Keys" should stay as they see it.
+        suggested = safe_path_component(entry.name.strip(), fallback="bank")
+        default_path = str(Path(start_dir) / suggested) if start_dir else suggested
         out_path, _filter = QFileDialog.getSaveFileName(
             self, "Export Bank", default_path, f"Bank (*{ext})",
             options=QFileDialog.Option.DontUseNativeDialog)

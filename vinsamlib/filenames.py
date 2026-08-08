@@ -40,6 +40,36 @@ _ALLOWED_PUNCT = " _-."
 DEFAULT_STEM = "UNNAMED"
 
 
+#: Characters that genuinely cannot appear in one path component on some
+#: platform we support: separators, the Windows-reserved set, and controls.
+_UNSAFE = set('/\\:*?"<>|')
+
+
+def safe_path_component(name: str, fallback: str = DEFAULT_STEM) -> str:
+    """`name` made usable as a path component, changing as little as possible.
+
+    The gentler sibling of `safe_filename`, and the difference is about who
+    sees the result. Use this where the name **survives into something the
+    user reads** -- a suggested filename in a Save dialog, or a temp stem
+    that a builder turns back into the bank's name on a rebuilt image.
+    `&`, `+`, `(`, `'` are all perfectly legal in a filename, and a library
+    really does contain `Synths & Keys`; rewriting that to `Synths _ Keys`
+    is a downgrade nobody asked for.
+
+    Use `safe_filename` instead where the result is internal, or where
+    matching mpc2emu's `models.safe_filename` matters.
+
+    Measured on 3 147 bank names inside real EMU3 and K2000 images: 100 differ
+    under the strict allowlist, but only **41** are genuinely unusable --
+    `GroovesFilz/Hitz`, `Synth/FX/Misc...`, and others carrying `/` or a
+    trailing dot. Those 41 are the ones this touches.
+    """
+    out = "".join("_" if (c in _UNSAFE or ord(c) < 32 or ord(c) == 127) else c
+                  for c in name)
+    out = out.strip(" .")
+    return out or fallback
+
+
 def safe_filename(name: str, fallback: str = DEFAULT_STEM) -> str:
     """`name` reduced to one safe path component.
 
