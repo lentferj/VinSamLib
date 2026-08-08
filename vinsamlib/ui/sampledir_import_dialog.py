@@ -52,10 +52,11 @@ class SampleDirImportDialog(FormatConvertDialog):
                  title: str = "Import Sample Folder", warning_text: Optional[str] = None,
                  locked_format: Optional[str] = None,
                  sample_loader: Optional[Callable[[Optional[int]], list]] = None,
-                 placement_loader: Optional[Callable[[Optional[int]], Any]] = None):
+                 placement_loader: Optional[Callable[[Optional[int]], Any]] = None,
+                 source_text: str = ""):
         super().__init__(parent, initial=initial, title=title,
                           warning_text=warning_text or _DEFAULT_WARNING,
-                          locked_format=locked_format)
+                          locked_format=locked_format, source_text=source_text)
 
         self._placement_loader = placement_loader
         self._zone_overrides: Optional[dict] = None
@@ -68,8 +69,9 @@ class SampleDirImportDialog(FormatConvertDialog):
         self._octave_box.addItems([label for label, _offset in _OCTAVE_CHOICES])
         row_layout.addWidget(self._octave_box)
         row_layout.addStretch()
-        # Index 0 is the format-picker row FormatConvertDialog just inserted.
-        self.layout().insertWidget(1, octave_row)
+        # Relative to the format-picker row, not to a hardcoded 0: an optional
+        # source header may sit above it (FormatConvertDialog._header_base).
+        self.layout().insertWidget(self._header_base + 1, octave_row)
 
         placement_row = QWidget()
         placement_layout = QHBoxLayout(placement_row)
@@ -81,7 +83,7 @@ class SampleDirImportDialog(FormatConvertDialog):
         self._placement_status = QLabel("Auto-computed placement (default)")
         self._placement_status.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         placement_layout.addWidget(self._placement_status, 1)
-        self.layout().insertWidget(2, placement_row)
+        self.layout().insertWidget(self._header_base + 2, placement_row)
 
         # sample_loader/placement_loader both take the LIVE octave_offset
         # (this dialog's own choice), unlike ConvertOptionsDialog's plain
@@ -136,7 +138,8 @@ class SampleDirImportDialog(FormatConvertDialog):
                             title: str = "Import Sample Folder", warning_text: Optional[str] = None,
                             locked_format: Optional[str] = None,
                             sample_loader: Optional[Callable[[Optional[int]], list]] = None,
-                            placement_loader: Optional[Callable[[Optional[int]], Any]] = None
+                            placement_loader: Optional[Callable[[Optional[int]], Any]] = None,
+                            source_text: str = ""
                             ) -> tuple[Optional[ConversionOptions], Optional[int], Optional[dict]]:
         """Returns (opts, octave_offset, zone_overrides) -- None, None, None
         if cancelled. octave_offset isn't part of ConversionOptions (it
@@ -146,7 +149,8 @@ class SampleDirImportDialog(FormatConvertDialog):
         None if it was never opened or never accepted."""
         dialog = SampleDirImportDialog(parent, initial=initial, title=title,
                                         warning_text=warning_text, locked_format=locked_format,
-                                        sample_loader=sample_loader, placement_loader=placement_loader)
+                                        sample_loader=sample_loader, placement_loader=placement_loader,
+                                        source_text=source_text)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None, None, None
         return dialog._to_options(), dialog.octave_offset(), dialog.zone_overrides()

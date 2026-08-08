@@ -317,7 +317,8 @@ class MainWindow(QMainWindow):
         opts = FormatConvertDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
             bank_loader=lambda: xpm_import.load_samples_for_test(
-                path, None, preset_index))
+                path, None, preset_index),
+            source_text=path)
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
@@ -460,20 +461,33 @@ class MainWindow(QMainWindow):
         staged = sampledir_import.stage_files(paths)
         self.statusBar().showMessage(
             f"{len(paths)} sample(s) selected from {Path(paths[0]).parent.name}")
+        # The real origin, not staged.name: the files were copied into a temp
+        # directory to give parse_sample_dir() the shape it reads, and naming
+        # that at the top of the dialog would point at a path the user has
+        # never seen. The folder they picked from, and how many they picked.
         self._start_sample_import(staged.name, sampledir_import.selection_label(paths),
-                                   staged)
+                                   staged,
+                                   source_text=f"{len(paths)} file(s) from "
+                                                f"{Path(paths[0]).parent}")
 
-    def _start_sample_import(self, path: str, label: str, staged=None) -> None:
+    def _start_sample_import(self, path: str, label: str, staged=None,
+                              source_text: str = "") -> None:
         """Shared tail of both sample imports: same options dialog, same
         worker, same landing in New Bank. `label` names the preset -- the
         folder for a folder import, what the filenames have in common for a
         hand-picked one -- and `staged`, when there is one, is the temporary
         directory holding the selection, kept alive until the import is over
-        (the dialog re-reads it for its preview) and dropped either way."""
+        (the dialog re-reads it for its preview) and dropped either way.
+
+        `source_text` is what the dialog shows at the top, and it is a
+        SEPARATE argument from `path` on purpose: for a hand-picked selection
+        `path` is the staging directory, so showing it would name a temp
+        directory the user has never seen instead of the files they chose."""
         opts, octave_offset, zone_overrides = SampleDirImportDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
             sample_loader=lambda octave: sampledir_import.load_samples_for_test(path, octave),
-            placement_loader=lambda octave: sampledir_import.parse_preview(path, octave))
+            placement_loader=lambda octave: sampledir_import.parse_preview(path, octave),
+            source_text=source_text or path)
         def drop_staging(*_):
             if staged is not None:
                 try:
@@ -594,6 +608,14 @@ class MainWindow(QMainWindow):
         source_fmt = source_fmts.pop() if len(source_fmts) == 1 else "E4B"
         title = "Import via mpc2emu" if len(nodes) == 1 \
             else f"Import {len(nodes)} presets via mpc2emu"
+        # No path to show here -- the source is a preset (or several) already
+        # in the tree, so name it the way the tree does. The bank it sits in
+        # is the disambiguating half: preset names repeat across banks, and
+        # the title only says how MANY were selected.
+        bank_names = {n.parent.label for n in nodes if n.parent is not None}
+        in_bank = f" — {bank_names.pop()}" if len(bank_names) == 1 else ""
+        source_text = (f"{nodes[0].label}{in_bank}" if len(nodes) == 1
+                       else f"{len(nodes)} presets{in_bank}")
         sources = [node.payload for node in nodes]
         opts = FormatConvertDialog.get_import_options(
             self, initial=convert.ConversionOptions(target_format=source_fmt or "E4B"),
@@ -605,7 +627,8 @@ class MainWindow(QMainWindow):
                 "by default for either target format."),
             locked_format=self._bank_pane.format,
             bank_loader=lambda: convert.load_sources_samples_for_test(
-                sources, source_fmt or "E4B"))
+                sources, source_fmt or "E4B"),
+            source_text=source_text)
         if opts is None:
             return
         self._preset_convert_queue = list(nodes)

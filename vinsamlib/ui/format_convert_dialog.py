@@ -44,7 +44,10 @@ from __future__ import annotations
 import dataclasses
 from typing import Callable, Optional
 
-from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontMetrics
+from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel,
+                                QSizePolicy, QWidget)
 
 from .convert_options_dialog import ConvertOptionsDialog
 from ..build.convert import ConversionOptions
@@ -59,14 +62,62 @@ _DEFAULT_WARNING = (
     "and off by default for either target format.")
 
 
+class SourceLabel(QLabel):
+    """One line naming what is being imported, elided in the MIDDLE.
+
+    Elided rather than wrapped, deliberately. This dialog's groups already
+    want more height than `adjustSize()` will grant (see the project notes on
+    keeping the QScrollArea), and Qt takes any shortfall out of the group
+    bodies -- below their minimumSizeHint, so rows overlap. A path wrapping
+    to three lines would spend exactly the budget that shortfall comes from.
+
+    Middle rather than right, because the two ends are the parts that
+    identify a source: the volume it is on and the folder it is in. The full
+    text is always on the tooltip.
+    """
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self._full = text
+        self.setToolTip(text)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # Without this the un-elided text sets the dialog's minimum width, and
+        # a deep path would make the window wider than the screen.
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text: str) -> None:      # noqa: N802  (Qt casing)
+        self._full = text
+        self.setToolTip(text)
+        self._reelide()
+
+    def resizeEvent(self, event) -> None:      # noqa: N802  (Qt casing)
+        super().resizeEvent(event)
+        self._reelide()
+
+    def _reelide(self) -> None:
+        metrics = QFontMetrics(self.font())
+        super().setText(metrics.elidedText(self._full, Qt.TextElideMode.ElideMiddle,
+                                            max(0, self.width())))
+
+
 class FormatConvertDialog(ConvertOptionsDialog):
     def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
                  title: str = "Import MPC Program", warning_text: Optional[str] = None,
                  locked_format: Optional[str] = None,
-                 bank_loader: Optional[Callable[[], list]] = None):
+                 bank_loader: Optional[Callable[[], list]] = None,
+                 source_text: str = ""):
         super().__init__(parent, initial=initial, bank_loader=bank_loader)
         self.setWindowTitle(title)
         self._warning_label.setText(warning_text or _DEFAULT_WARNING)
+
+        # Built here, inserted after the format row below -- that one also
+        # goes in at index 0 and would otherwise end up above this.
+        self._source_label: Optional[SourceLabel] = None
+        if source_text:
+            self._source_label = SourceLabel(source_text)
+            self._source_label.setStyleSheet(
+                "font-weight: 600; padding-bottom: 2px;")
 
         format_row = QWidget()
         row_layout = QHBoxLayout(format_row)
@@ -92,6 +143,20 @@ class FormatConvertDialog(ConvertOptionsDialog):
                 f"clear it or send it to Pending first to import as a "
                 f"different format.")
         self.layout().insertWidget(0, format_row)
+
+        # Now, so it lands ABOVE the format picker: the first question this
+        # dialog has to answer is "what am I about to import?". Only present
+        # when a caller supplies one -- an empty row would be a blank line at
+        # the top of every other dialog in this family.
+        if self._source_label is not None:
+            self.layout().insertWidget(0, self._source_label)
+
+        #: Layout index of the format row. Subclasses insert their own header
+        #: rows relative to THIS rather than to a hardcoded 0 -- the source
+        #: label above shifts everything down by one when it is present, and
+        #: hardcoded indices silently reordered the header when it appeared
+        #: (the format picker sank below rows that are meant to follow it).
+        self._header_base = self.layout().indexOf(format_row)
 
         if initial is None and self._format_box.currentText() == "KRZ":
             self._apply_krz_sane_default()
@@ -132,10 +197,12 @@ class FormatConvertDialog(ConvertOptionsDialog):
     def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
                             title: str = "Import MPC Program", warning_text: Optional[str] = None,
                             locked_format: Optional[str] = None,
-                            bank_loader: Optional[Callable[[], list]] = None
+                            bank_loader: Optional[Callable[[], list]] = None,
+                            source_text: str = ""
                             ) -> Optional[ConversionOptions]:
         dialog = FormatConvertDialog(parent, initial=initial, title=title, warning_text=warning_text,
-                                  locked_format=locked_format, bank_loader=bank_loader)
+                                  locked_format=locked_format, bank_loader=bank_loader,
+                                  source_text=source_text)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog._to_options()
