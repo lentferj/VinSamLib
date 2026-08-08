@@ -107,6 +107,12 @@ enforced; a separate, lower, configurable-in-Settings byte threshold
 exceeds *your own* hardware's actual RAM. Save the result directly to a
 file, or queue it for image building.
 
+Samples inside the bank can also be **renamed** before it is written —
+individually, or all at once after the key each one plays — for E4B, KRZ and
+EIII alike. ⚠️ **Experimental and not confirmed on any sampler**; see
+[Known Limitations](#️-renaming-samples-inside-a-bank--experimental-not-hardware-confirmed)
+before writing media you care about.
+
 ### Queue several banks, then build
 
 The Pending for Image column holds any number of banks-in-progress;
@@ -551,6 +557,38 @@ again until you drop back under the limit.
 Selecting an item in the list shows the same condensed Detail-pane-style
 summary described above, computed in the background so large presets
 don't stall the UI.
+
+**Rename Samples…** ⚠️ *experimental* renames the samples inside the bank
+being assembled — the label the instrument shows, never the audio. The
+button covers whatever is selected in the list, so right-clicking a preset
+renames only its samples and clicking with nothing selected covers the whole
+bank.
+
+![Rename Samples dialog: seven demo samples as Sample / Plays / New name rows, a "Name them all" field set to DrumKit with "append key" ticked, most rows filled in as DrumKit-<key>, one row hand-typed as "BD Main", and two rows in italic because another preset also uses those samples](docs/screenshots/11_rename_samples.png)
+
+**Name them all** fills every row at once — with **append key** ticked each
+sample is named after the key it plays (`DrumKit-C1`, `DrumKit-D1`), which is
+the same scheme the sample-folder import offers; unticked they are numbered.
+A row you have typed into is left alone by a later bulk apply, because a
+typed name is a decision and the field is a convenience. Names that would
+collide are numbered apart (`-C2`, `-C2-2`) rather than left for the writer's
+own uniquifier to rename behind your back.
+
+The **Plays** column is read-only. Where a sample sits on the keyboard came
+with the material and is not edited here — that belongs to the sample-folder
+import, where the mapping is being decided in the first place.
+
+*Italic* rows are samples another staged preset also uses. A rename follows
+the sample, so those presets show the new name too, and confirming names them
+before it happens. The audio is shared and only one copy of it goes into the
+bank; there is deliberately no "make a copy instead", which would duplicate
+the audio — on one real pair of presets that is +22.4 MB against a 24.2 MB
+bank.
+
+> ⚠️ **No sampler has yet loaded a bank renamed this way**, and for KRZ the
+> object block physically grows to fit a longer name — the least verified
+> thing in this program. See
+> [Known Limitations](#️-renaming-samples-inside-a-bank--experimental-not-hardware-confirmed).
 
 **Save as…** writes the exact assembled bytes to a file you choose.
 **Send to Image Column** hands the current (bank, preset list, name)
@@ -1160,6 +1198,42 @@ source its own run when a batch mixes them.
 ---
 
 ## Known Limitations
+
+### ⚠️ Renaming samples inside a bank — EXPERIMENTAL, not hardware-confirmed
+
+New Bank can rename the samples inside a bank it is assembling (**Rename
+Samples…**, or right-click a preset). The audio is never touched; only the
+label the instrument displays changes. It is exercised against real banks in
+all three formats — audio byte-identical, sample and program counts
+unchanged, no other name altered — but **no sampler has yet loaded a bank
+renamed this way.** Treat output as unverified and keep the original file.
+
+| Format | Status |
+|---|---|
+| **E4B** | ⚠️ experimental. The name is a fixed 16-byte field in two places (the `E3S1` chunk and its TOC entry) and both are rewritten together, so the file's shape is unchanged — the lowest-risk of the three |
+| **EIII** | ⚠️ experimental. Fixed 16-byte field, stored in one place only; shape unchanged |
+| **KRZ** | ⚠️⚠️ **the least verified thing in this program.** A KRZ name has no fixed field — it is null-terminated and padded only to the next 2-byte boundary, with a median of **zero** spare bytes across 111 real objects — so a longer name makes the object **block physically bigger**. Nothing else in VinSamLib changes a block's length |
+
+**Why KRZ is called out separately.** Growing a block is safe on paper and
+was reviewed against mpc2emu with its code cited: objects reference each
+other by id rather than file offset, `osize` is recomputed from the assembled
+length, and a sample's PCM word offsets index into the PCM region rather than
+the file, so nothing downstream shifts. It is verified across 8 real banks and
+every name length from 1 to 16. **But a K2000 has only ever been asked to load
+blocks written at a given size from the start — never one grown from an
+existing bank.** That is the gap, and it is the one no amount of testing here
+closes.
+
+`assemble()` therefore re-reads any bank it resized and refuses to hand on one
+that will not parse or comes back short. A wrong block size is not silent
+corruption — it lands the object walk mid-block, which a re-parse catches at
+once. So the failure mode is a refusal, not a bad file. **If you see that
+refusal, please report it.**
+
+Names are capped at 16 characters for every format. E4B and EIII enforce it
+with their fixed field; KRZ has no such limit and would happily carry more,
+but 16 is the longest authored name across 9 700 real K2000 objects and the
+width of the machine's own display.
 
 ### EIII / ESI-32
 

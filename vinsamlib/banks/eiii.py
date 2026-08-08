@@ -219,7 +219,23 @@ def _put_u32(data: bytearray, offset: int, value: int) -> None:
 def _decode_name(data: bytes, offset: int) -> str:
     if offset + NAME_LENGTH > len(data):
         return ""
-    return data[offset:offset + NAME_LENGTH].rstrip(b"\x00 ").decode("latin-1", "replace")
+    # No errors= argument: latin-1 maps all 256 byte values by definition and
+    # cannot fail, so one here reads as a guard that does nothing. Same
+    # correction as banks/e4b.py's _strip_name.
+    return data[offset:offset + NAME_LENGTH].rstrip(b"\x00 ").decode("latin-1")
+
+
+def _encode_name(name: str) -> bytes:
+    """The exact inverse of _decode_name: 16 bytes, space-padded, latin-1.
+
+    latin-1 rather than ASCII for the reason banks/e4b.py's _name16 gives --
+    a real device writes bytes above 0x7E into these fields, and encoding
+    ASCII turns each into "?" on the way out. `errors="replace"` belongs here,
+    on the ENCODE side, where a codepoint above 0xFF genuinely has no
+    representation; a name typed into New Bank can hold one.
+    """
+    return name.encode("latin-1", errors="replace")[:NAME_LENGTH].ljust(
+        NAME_LENGTH, b" ")
 
 
 def detect_format(data: bytes) -> BankFormat | None:
@@ -421,7 +437,8 @@ def parse(path: str) -> EIIIFile:
 # ── assembly ─────────────────────────────────────────────────────────────────
 
 def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x",
-             bank_name: str | None = None) -> bytes:
+             bank_name: str | None = None,
+             sample_names: dict | None = None) -> bytes:
     """Build a new EIII bank from selected (source_bank, preset) pairs.
 
     Each preset's every linked segment is copied verbatim; only each
@@ -440,6 +457,22 @@ def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x"
     (offset `BANK_NAME` — unlike E4B/KRZ, whose only "name" a real device
     ever shows is the filename, EIII stores one on disk). Defaults to the
     first selected preset's source bank's own name when not given.
+
+    `sample_names` renames samples on the way out, {current name: new name},
+    the same contract banks/e4b.py's assemble() takes. Applied AFTER the
+    dedupe decision, deliberately: samples are deduplicated by (name, exact
+    content), so renaming first could merge two distinct samples or split one
+    that appears twice. The bank that comes out holds exactly the samples it
+    would have held, under different names.
+
+    Safe in this format for the same reason it is in E4B — a zone points at
+    a sample INDEX, not at a name, so the name is a pure label. EIII is in
+    fact simpler: the name lives in ONE place, the sample body's own 16-byte
+    field, where E4B has to keep a TOC entry in step as well. KRZ cannot do
+    this at all, and not for want of trying: its name is null-terminated and
+    padded only to the next 2-byte boundary, measured across 111 objects in
+    12 real banks as a median of ZERO spare bytes, so any longer name means
+    growing the block and re-offsetting everything after it.
     """
     if not selections:
         raise ValueError("no presets selected")
@@ -475,8 +508,17 @@ def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x"
                     if len(new_sample_bodies) >= fmt.max_samples:
                         raise ValueError(f"too many distinct samples: > {fmt.max_samples}")
                     new_idx = len(new_sample_bodies) + 1
-                    new_sample_bodies.append(samp.body)
-                    new_sample_names.append(samp.name)
+                    # `key` above was built from the ORIGINAL name, so the
+                    # dedupe decision is already made and a rename cannot
+                    # change which samples are distinct.
+                    final_name = (sample_names or {}).get(samp.name, samp.name)
+                    body = samp.body
+                    if final_name != samp.name:
+                        patched_body = bytearray(body)
+                        patched_body[0:NAME_LENGTH] = _encode_name(final_name)
+                        body = bytes(patched_body)
+                    new_sample_bodies.append(body)
+                    new_sample_names.append(final_name)
                     dedupe_key_to_new_idx[key] = new_idx
                 new_raw = (old_raw & ~ZONE_SAMPLE_INDEX_MASK) | (new_idx & ZONE_SAMPLE_INDEX_MASK)
                 _put_u16(seg_bytes, off - seg_start, new_raw)

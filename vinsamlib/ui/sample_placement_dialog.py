@@ -153,8 +153,17 @@ class SamplePlacementDialog(QDialog):
         self._table.setColumnCount(4)
         self._table.setHorizontalHeaderLabels(["Sample", "Low", "Root", "High"])
         self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        # The key columns are spin-box CELL WIDGETS, which work regardless of
+        # these two -- but the Sample column is a plain editable item, and
+        # NoEditTriggers plus NoSelection made it impossible to type into.
+        # That is this dialog's own per-row rename feature, unreachable since
+        # the day it was added: its test set the text programmatically, which
+        # bypasses the view entirely.
+        self._table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.SelectedClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._table, 1)
 

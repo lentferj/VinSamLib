@@ -47,6 +47,7 @@ from __future__ import annotations
 import re
 import struct
 from dataclasses import dataclass, field
+from typing import Optional
 
 FORM_MAGIC = b"FORM"
 FORM_TYPE = b"E4B0"
@@ -381,12 +382,22 @@ def parse(path: str) -> E4BFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
-def assemble(selections: list[tuple[E4BFile, E4BPreset]]) -> bytes:
+def assemble(selections: list[tuple[E4BFile, E4BPreset]],
+              sample_names: Optional[dict] = None) -> bytes:
     """Build a new E4B FORM from selected (source_bank, preset) pairs.
 
     Each preset's original chunk bytes are copied verbatim; only the 2-byte
     sample-index field of each zone entry (and the preset's own embedded
     index at body[0:2]) is patched to match the new, renumbered layout.
+    `sample_names` renames samples on the way out, {current name: new name}.
+    Applied AFTER the dedupe decision, so renaming cannot merge two distinct
+    samples or split one that appears twice -- the bank that comes out has
+    exactly the samples it would have had, under different names. Safe in
+    this format because an E4B zone points at a sample INDEX, not at a name
+    (see the zone patching below); the name is a label, and the only places
+    it is stored are the sample chunk's own 16-byte field and its TOC entry,
+    both rewritten here.
+
     Samples are deduplicated by (name, exact content) across every source
     bank touched, so pulling the same sample into a new bank via two
     different presets/banks doesn't duplicate its PCM.
@@ -439,8 +450,15 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]]) -> bytes:
                 # keys samples by this embedded value, not by file position.
                 sbody = bytearray(samp.body)
                 struct.pack_into(">H", sbody, 0, new_idx & 0xFFFF)
+                final_name = (sample_names or {}).get(samp.name, samp.name)
+                if final_name != samp.name:
+                    # The name lives in the chunk body too, not only in the
+                    # TOC entry built further down -- a rename that patched
+                    # one and not the other would show two different names
+                    # for one sample depending on which a reader trusts.
+                    sbody[2:18] = _name16(final_name)
                 new_sample_bodies.append(bytes(sbody))
-                new_sample_names.append(samp.name)
+                new_sample_names.append(final_name)
                 dedupe_key_to_new_idx[key] = new_idx
             struct.pack_into(">H", body, zone_off + 10, new_idx & 0xFFFF)
         struct.pack_into(">H", body, 0, len(new_preset_bodies) & 0xFFFF)

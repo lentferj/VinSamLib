@@ -46,6 +46,11 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
+#: Longest authored name in 9 700 real KRZ objects, and the width of the
+#: K2000's own display. E4B and EIII enforce it with a fixed field; KRZ
+#: has to be told.
+MAX_NAME = 16
+
 FILE_MAGIC = b"PRAM"
 
 T_PROGRAM = 36
@@ -450,7 +455,14 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
             name_end = data.index(b"\x00", name_start, next_pos)
         except ValueError:
             name_end = next_pos
-        name = data[name_start:name_end].decode("ascii", "replace")
+        # latin-1, not ASCII: a real K2000 bank puts bytes above 0x7E in
+        # here. Measured over 2 237 banks INCLUDING those inside disc
+        # images -- 157 carry one, 0x7F alone appearing 4 036 times as a
+        # separator ("BRA:Sect.3.01 <7F> L"). ASCII-with-replace turned
+        # each into U+FFFD before anything could see it, the same fault
+        # reported in mpc2emu's E4B parser. A loose-file-only scan found
+        # zero and produced exactly the wrong conclusion.
+        name = data[name_start:name_end].decode("latin-1")
 
         obj = KrzObject(type=type_code, id=obj_id, name=name, block=data[pos:next_pos])
         if type_code == T_PROGRAM:
@@ -480,7 +492,8 @@ def parse(path: str) -> KrzFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
-def assemble(selections: list[tuple[KrzFile, KrzObject]]) -> bytes:
+def assemble(selections: list[tuple[KrzFile, KrzObject]],
+             sample_names: dict | None = None) -> bytes:
     """Build a new KRZ file from selected (source_bank, program) pairs.
 
     Each selected Program pulls in the Keymaps its CAL segments reference,
@@ -541,6 +554,7 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]]) -> bytes:
     sample_key_to_new_id: dict[tuple[int, int], int] = {}
     dedupe_key_to_new_id: dict[tuple, int] = {}
     patched_sample_blocks: list[bytes] = []
+    sample_names_by_pos: list[str] = []
     pcm_pieces: list[bytes] = []
     cursor = 0
 
@@ -562,6 +576,11 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]]) -> bytes:
 
             delta = new_start - old_start
             patched_sample_blocks.append(_rebias_sample_block(samp, delta))
+            # Parallel to patched_sample_blocks: the ORIGINAL name of the
+            # sample at each position, which is the key a rename is looked
+            # up by. Recorded here rather than re-derived later because the
+            # list is already deduped and reordered by this point.
+            sample_names_by_pos.append(samp.name)
         sample_key_to_new_id[key] = new_id
 
     new_pcm = b"".join(pcm_pieces)
@@ -570,7 +589,17 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]]) -> bytes:
     sample_objs: list[bytes] = []
     for i, block in enumerate(patched_sample_blocks):
         new_id = base_id + i
-        sample_objs.append(_repack_block(block, T_SAMPLE, new_id))
+        repacked = _repack_block(block, T_SAMPLE, new_id)
+        # AFTER the dedupe decision and after the PCM rebias, same ordering
+        # rule as banks/e4b.py and banks/eiii.py: samples dedupe by (name,
+        # content), so renaming earlier could merge two distinct samples or
+        # split one that appears twice. Unlike those two, a rename here can
+        # change the block's LENGTH -- see _rename_block for why that is safe
+        # and for the blocksize trap it avoids.
+        wanted = (sample_names or {}).get(sample_names_by_pos[i])
+        if wanted is not None and wanted != sample_names_by_pos[i]:
+            repacked = _rename_block(repacked, wanted)
+        sample_objs.append(repacked)
 
     # ── build new keymap objects (renumbered hash + sample-id fields) ───────
     keymap_new_id: dict[tuple[int, int], int] = {}
@@ -591,7 +620,27 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]]) -> bytes:
         program_objs.append(_repack_block(patched, T_PROGRAM, new_id))
 
     preserve_from = selections[0][0]
-    return _build_file(preserve_from.rest, sample_objs, keymap_objs, program_objs, new_pcm)
+    out = _build_file(preserve_from.rest, sample_objs, keymap_objs, program_objs, new_pcm)
+
+    # Self-check, and ONLY when a rename actually resized a block. This is the
+    # single path in this module that changes a block's physical length, so it
+    # is the single path where the object walk can be left inconsistent -- and
+    # a wrong `blocksize` does not corrupt audio quietly, it makes the walk
+    # land mid-block, which re-parsing catches at once. Costs a parse of a
+    # file we just built, on a path the user explicitly asked for; the normal
+    # assemble pays nothing.
+    if sample_names:
+        try:
+            check = parse_bytes(out, "rename-selfcheck")
+        except Exception as ex:
+            raise ValueError(
+                f"renaming produced a bank that cannot be read back "
+                f"({ex}) -- refusing to hand it on") from ex
+        if len(check.samples) != len(sample_objs):
+            raise ValueError(
+                f"renaming produced a bank with {len(check.samples)} of "
+                f"{len(sample_objs)} sample(s) -- refusing to hand it on")
+    return out
 
 
 def _rebias_sample_block(samp: KrzObject, delta: int) -> bytes:
@@ -697,4 +746,77 @@ def _build_file(rest: tuple, sample_objs: list[bytes], keymap_objs: list[bytes],
     osize = len(out)
     struct.pack_into(">i", out, osize_pos, osize)
     out += pcm
+    return bytes(out)
+
+
+def _rename_block(block: bytes, new_name: str) -> bytes:
+    """Return `block` with its name replaced, resizing the block if needed.
+
+    The one place in this module where a block's physical length changes.
+    Every other patch is in place, because a KRZ name slot has no slack --
+    measured over 111 objects in 12 real banks, the median spare is ZERO
+    bytes and 1 in 111 could hold a 16-character name. A longer name has to
+    grow the block.
+
+    Growing is LOCAL, which is what makes this tractable at all. Reviewed
+    against mpc2emu 2026-08-08, with its code cited for each point:
+
+    * nothing points into the object section by file offset -- objects
+      reference each other by id, and a reader walks by `-blocksize`;
+    * `osize` is recomputed from the assembled length by `_build_file()`,
+      and the K2000 takes the PCM region purely from it;
+    * a sample's PCM word offsets are indexes INTO that region
+      (`start_byte = osize + 2 * start_word`), so when the object section
+      grows, `osize` grows with it and every offset stays valid untouched.
+
+    THE TRAP, and it is the reason this is not a two-line function: `size`
+    is measured to the 2-byte-aligned end of the object, and only THEN is
+    the block padded to a 4-byte boundary and `blocksize` computed from the
+    padded length. `delta` is always even but not always a multiple of 4, so
+    `size += delta` is right while `blocksize += delta` is wrong about half
+    the time -- growing a name from 4 to 6 characters flips whether the
+    block needs its two pad bytes. `blocksize` is therefore RECOMPUTED from
+    the re-padded length, never adjusted by the delta.
+    """
+    old_ofs = struct.unpack_from(">H", block, 8)[0]
+    data_start = 8 + old_ofs                      # object body begins here
+    body = block[data_start:]
+
+    # Name field is `name + NUL`, padded so the body starts on an even
+    # offset -- `ofs` is even in every real block measured.
+    # Capped at MAX_NAME even though the container could hold more -- this is
+    # the one format here with no fixed name field, so nothing stops a longer
+    # name physically. The corpus does: across 9 700 objects in real K2000
+    # banks the longest authored name is exactly 16, which reads as the
+    # format's ceiling rather than anyone's taste, and the K2000's own display
+    # is 16 wide. Writing 34 produced a structurally valid file that no real
+    # bank resembles -- and the rename dialog already warns at 16, so without
+    # this the warning was simply untrue for KRZ.
+    # latin-1, the inverse of the reader above. ASCII here would be the
+    # very asymmetry reported in mpc2emu's E4B parser -- reading 0x7F
+    # correctly and then writing "?" back out. `errors="replace"` still
+    # earns its place on the encode side: a name typed in the dialog can
+    # hold a codepoint above 0xFF, which latin-1 genuinely cannot carry.
+    encoded = new_name.encode("latin-1", errors="replace")[:MAX_NAME]
+    field_len = (len(encoded) + 1 + 1) // 2 * 2
+    new_ofs = field_len + 2
+    delta = new_ofs - old_ofs
+    if delta == 0 and block[10:10 + field_len].split(b"\x00")[0] == encoded:
+        return block                              # nothing to do
+
+    head = bytearray(block[:10])
+    name_field = encoded + b"\x00" * (field_len - len(encoded))
+
+    # `size` counts to the 2-byte end, so it moves with the name by exactly
+    # `delta`. Adjusted rather than recomputed: recomputing would need to
+    # know where this block's body truly ends, and for a third-party block
+    # that is not knowable from here -- the delta is exact either way.
+    old_size = struct.unpack_from(">H", block, 6)[0]
+    struct.pack_into(">H", head, 6, (old_size + delta) & 0xFFFF)
+    struct.pack_into(">H", head, 8, new_ofs)
+
+    out = bytearray(head) + name_field + body
+    pad = (-len(out)) % 4                         # 4-byte boundary, then size it
+    out += b"\x00" * pad
+    struct.pack_into(">i", out, 0, -len(out))
     return bytes(out)

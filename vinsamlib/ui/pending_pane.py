@@ -64,7 +64,17 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         fn = _ASSEMBLE_FNS[fmt]
         selections = [(bank, preset) for bank, preset, _name in entry["items"]]
         name = _sanitize_bank_name(entry["name"])
-        data = fn(selections, bank_name=name) if fmt == "EIII" else fn(selections)
+        kwargs = {"bank_name": name} if fmt == "EIII" else {}
+        # All three native formats take this. It read ("E4B", "EIII") until
+        # 2026-08-09: written when KRZ genuinely could not rename, and not
+        # revisited when it learned how, so a KRZ rename reached the size
+        # meter and Save as… but was silently dropped on the way to an IMAGE.
+        # Kept as a list rather than "not AKAI" so adding a format is a
+        # deliberate edit here, which is exactly what did not happen last time.
+        renames = entry.get("sample_renames") or {}
+        if renames and fmt in ("E4B", "EIII", "KRZ"):
+            kwargs["sample_names"] = renames
+        data = fn(selections, **kwargs)
         ext = _FORMAT_EXT[fmt]
         # Session-scoped: the returned paths go to the image builders, which
         # read them after this function is long finished.
@@ -81,7 +91,7 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
 
 class PendingBanksPane(QWidget):
     statusMessage = Signal(str)
-    moveToNewBankRequested = Signal(str, str, list)   # (name, format, items)
+    moveToNewBankRequested = Signal(str, str, list, dict)   # (name, format, items, sample_renames)
     buildRequested = Signal(list, str)                # (temp_file_paths, format)
 
     def __init__(self, parent=None):
@@ -210,7 +220,8 @@ class PendingBanksPane(QWidget):
 
     # -- receiving from New Bank ---------------------------------------------
 
-    def add_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]]) -> bool:
+    def add_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
+                     sample_renames: Optional[dict] = None) -> bool:
         if not items:
             return False
         if self._format is not None and fmt != self._format:
@@ -220,7 +231,8 @@ class PendingBanksPane(QWidget):
         if self._format is None:
             self._format = fmt
         self._pending.append({"name": name or "NewBank", "format": fmt, "items": list(items),
-                               "convert_opts": None})
+                               "convert_opts": None,
+                               "sample_renames": dict(sample_renames or {})})
         self._refresh()
         self._list.setCurrentRow(len(self._pending) - 1)
         self.statusMessage.emit(f'Added "{name}" to the pending queue')
@@ -379,7 +391,11 @@ class PendingBanksPane(QWidget):
         if not self._pending:
             self._format = None
         self._refresh()
-        self.moveToNewBankRequested.emit(entry["name"], entry["format"], entry["items"])
+        # Renames go back too, or double-clicking a bank into New Bank and
+        # sending it straight back would quietly strip them -- the round trip
+        # is meant to be editable, not lossy.
+        self.moveToNewBankRequested.emit(entry["name"], entry["format"], entry["items"],
+                                          dict(entry.get("sample_renames") or {}))
 
     def _clear(self) -> None:
         self._pending = []

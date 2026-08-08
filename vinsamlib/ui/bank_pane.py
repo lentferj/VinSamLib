@@ -35,11 +35,13 @@ from typing import Any, Optional
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QFrame, QHBoxLayout,
-                             QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
+                             QGridLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                             QMenu,
                              QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import dnd, workers
 from .detail_pane import _escape, zone_stats_lines
+from .sample_rename_dialog import SampleRenameDialog
 from ..banks import e4b, eiii, krz, summary
 from ..filenames import safe_filename
 from ..config import Config
@@ -64,6 +66,15 @@ _ASSEMBLE_FNS = {"E4B": e4b.assemble, "KRZ": krz.assemble, "EIII": eiii.assemble
 _FORMAT_EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
 _DEFAULT_BANK_NAME = "NewBank"
 
+#: An EIII zone stores its root as an E-mu key number where 0 is MIDI 21
+#: (A-1) -- mpc2emu's eiii_writer KEY_OFFSET. E4B stores plain MIDI.
+_EIII_KEY_OFFSET = 21
+
+#: Octave convention for the key suffix a bulk rename appends. Matches the
+#: import path's own name_octave fallback, so a bank named here and one
+#: named at import agree instead of sitting an octave apart.
+_RENAME_OCTAVE = 2
+
 
 def _sanitize_bank_name(name: str) -> str:
     """Neither E4B nor KRZ has an internal 'bank name' field — the name a
@@ -81,7 +92,7 @@ def _sanitize_bank_name(name: str) -> str:
 
 class BankPane(QWidget):
     statusMessage = Signal(str)
-    sendToPendingRequested = Signal(str, str, list)   # (name, format, items)
+    sendToPendingRequested = Signal(str, str, list, dict)   # (name, format, items, sample_renames)
 
     def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
@@ -90,6 +101,10 @@ class BankPane(QWidget):
 
         self._format: Optional[str] = None
         self._items: list[tuple[Any, Any, str]] = []   # (bank, preset_obj, name)
+        #: {original sample name: new name}, from the Rename Samples dialog.
+        #: Cleared with the bank -- a rename belongs to the material that
+        #: was staged, not to the pane.
+        self._sample_renames: dict = {}
         self._dedupe_enabled = True
         self._prompt_on_duplicate = True
         self._last_bytes: Optional[bytes] = None
@@ -177,26 +192,44 @@ class BankPane(QWidget):
         self._info_label.setContentsMargins(0, 4, 0, 6)
         layout.addWidget(self._info_label)
 
-        row1 = QHBoxLayout()
+        # ONE grid for every button, with both columns forced to equal
+        # stretch. Three separate QHBoxLayouts could not stay aligned: each
+        # gave its buttons their own sizeHint plus a share of the leftover, so
+        # "Clear" and "Save as..." started at different widths and drifted
+        # further apart as the pane was resized. A grid with equal column
+        # stretch is the same two columns at every width.
+        buttons = QGridLayout()
+        buttons.setColumnStretch(0, 1)
+        buttons.setColumnStretch(1, 1)
+
         remove_btn = QPushButton("Remove Selected")
         remove_btn.clicked.connect(self._remove_selected)
-        row1.addWidget(remove_btn)
+        buttons.addWidget(remove_btn, 0, 0)
         clear_btn = QPushButton("Clear")
         clear_btn.clicked.connect(self._clear)
-        row1.addWidget(clear_btn)
-        layout.addLayout(row1)
+        buttons.addWidget(clear_btn, 0, 1)
 
-        row2 = QHBoxLayout()
+        self._rename_btn = QPushButton("Rename Samples…")
+        self._rename_btn.clicked.connect(self._rename_samples)
+        buttons.addWidget(self._rename_btn, 1, 0)
+        # Second cell left empty rather than filled with the status: a label
+        # there would be the only thing in the grid that is not a button, and
+        # it was what knocked the row out of line in the first place.
+        self._rename_status = QLabel("")
+        self._rename_status.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;")
+        buttons.addWidget(self._rename_status, 2, 0, 1, 2)
+
         self._send_to_image_btn = QPushButton("Send to Image Column")
         self._send_to_image_btn.setToolTip(
             "Add this bank to the Pending for Image queue — nothing is "
             "written to a real image until Build Image → is clicked there")
         self._send_to_image_btn.clicked.connect(self._send_to_pending)
-        row2.addWidget(self._send_to_image_btn)
+        buttons.addWidget(self._send_to_image_btn, 3, 0)
         self._save_btn = QPushButton("Save as…")
         self._save_btn.clicked.connect(self._save_as)
-        row2.addWidget(self._save_btn)
-        layout.addLayout(row2)
+        buttons.addWidget(self._save_btn, 3, 1)
+        layout.addLayout(buttons)
 
         return page
 
@@ -209,7 +242,13 @@ class BankPane(QWidget):
             self.statusMessage.emit("Can't send an over-limit bank — remove some presets first")
             return
         name = _sanitize_bank_name(self._name_edit.text())
-        self.sendToPendingRequested.emit(name, self._format, list(self._items))
+        # The renames travel WITH the recipe. Pending re-assembles from
+        # (bank, preset) pairs rather than from the bytes this pane already
+        # built, so a rename left behind here would be silently absent from
+        # the image -- the meter and Save as... would show one bank and the
+        # media would hold another.
+        self.sendToPendingRequested.emit(name, self._format, list(self._items),
+                                          dict(self._sample_renames))
 
     @property
     def format(self) -> Optional[str]:
@@ -236,11 +275,13 @@ class BankPane(QWidget):
     def set_prompt_on_duplicate(self, enabled: bool) -> None:
         self._prompt_on_duplicate = enabled
 
-    def load_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]]) -> None:
+    def load_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
+                      sample_renames: Optional[dict] = None) -> None:
         """Public entry point for the Pending column's double-click "send
         back to New Bank" — replaces whatever's currently staged here with
         the given recipe, exactly as if it had been assembled from scratch."""
         self._items = list(items)
+        self._sample_renames = dict(sample_renames or {})
         self._format = fmt
         self._name_edit.setText(name)
         self._head.setText(f"New Bank  [{fmt}]")
@@ -402,7 +443,25 @@ class BankPane(QWidget):
         menu = QMenu(self)
         label = "Remove Selected" if len(self._list.selectedIndexes()) > 1 else "Remove"
         remove_action = menu.addAction(label)
+        # Same action as the button, not a second implementation: the
+        # button can be off-screen in a narrow pane, and right-clicking
+        # the list is where a user looks for what to do WITH the list.
+        menu.addSeparator()
+        # Scoped to the SELECTION here, unlike the button. Right-clicking a
+        # preset means "this one", and a bank of twenty presets otherwise
+        # opens a dialog of hundreds of rows -- the same unusability the bulk
+        # base-name field exists to solve, one level up. The rename itself is
+        # still keyed by sample name, so it lands wherever that sample is
+        # used; the dialog says which other staged presets that is.
+        n_sel = len(self._list.selectedIndexes())
+        rename_action = menu.addAction(
+            "Rename Samples of Selected…" if n_sel > 1 else "Rename Samples…")
+        rename_action.setEnabled(self._rename_btn.isEnabled())
+        rename_action.setToolTip(self._rename_btn.toolTip())
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+        if chosen is rename_action:
+            self._rename_samples(selected_only=True)
+            return
         if chosen == remove_action:
             self._remove_selected()
 
@@ -421,6 +480,7 @@ class BankPane(QWidget):
 
     def _clear(self) -> None:
         self._items = []
+        self._sample_renames = {}
         self._reset_format_lock()
         self._name_edit.clear()
         self._refresh()
@@ -451,6 +511,10 @@ class BankPane(QWidget):
         self._send_to_image_btn.setToolTip(
             "Add this bank to the Pending for Image queue — nothing is "
             "written to a real image until Build Image → is clicked there")
+        # Here rather than only at drop time: the format lock can change (a
+        # Clear, or a bank loaded back from Pending), and the button has to
+        # follow it or it would offer a rename for a format that cannot.
+        self._sync_rename_button()
         if self._items:
             self._meter_label.setText("Calculating…")
             self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
@@ -525,6 +589,181 @@ class BankPane(QWidget):
         self._live_workers.append(w)
         workers.run(w)
 
+    #: All three now. E4B and EIII patch a fixed-width field; KRZ has to GROW
+    #: its block, because its name slot is padded only to the next 2-byte
+    #: boundary and has a median of zero spare bytes across 111 real objects.
+    #: That turned out to be local rather than cascading -- objects reference
+    #: each other by id, `osize` is recomputed, and PCM word offsets index
+    #: into the PCM region rather than the file -- and banks/krz.py's
+    #: assemble() re-reads any bank it resized before handing it on.
+    _RENAMEABLE = ("E4B", "EIII", "KRZ")
+
+    def _selected_presets(self) -> list:
+        """The staged (bank, preset, name) tuples the user has selected, or
+        all of them when nothing is selected."""
+        rows = sorted(idx.row() for idx in self._list.selectedIndexes())
+        chosen = [self._items[r] for r in rows if 0 <= r < len(self._items)]
+        return chosen or list(self._items)
+
+    def _sample_rows_in_bank(self, items=None) -> list[dict]:
+        """[{"name", "root"}] for every sample the staged presets reference,
+        in bank order, deduped the way assemble() dedupes -- so the list is
+        the one the written bank will hold, not one entry per zone.
+
+        `root` is the MIDI note the sample is recorded at, read straight out
+        of the zone entry's own bytes and matched to the sample by INDEX.
+        That last part is the whole reason it can be done at all: the obvious
+        route to a root note is mpc2emu's summary, but joining that back to
+        these rows would have to be BY NAME, and its name decoding is exactly
+        what produces U+FFFD on some real banks -- untrustworthy as a key for
+        precisely the samples most in need of renaming. An index cannot be
+        mis-decoded.
+
+        None when a sample's root cannot be read (an unfamiliar layout, or a
+        sample no zone references); the caller falls back to numbering.
+        """
+        scope = self._items if items is None else items
+        # Which OTHER staged presets each sample also appears in. A rename is
+        # keyed by the sample's name, so it lands wherever that sample is used
+        # -- scoping the VIEW to one preset does not scope the effect, and the
+        # user should be told rather than surprised.
+        elsewhere: dict = {}
+        for bank, preset, label in self._items:
+            if any(preset is p for _b, p, _n in scope):
+                continue
+            for name, _root in self._samples_of(bank, preset):
+                elsewhere.setdefault(name, set()).add(label)
+
+        rows: list[dict] = []
+        known: set[str] = set()
+        for bank, preset, _name in scope:
+            for name, root in self._samples_of(bank, preset):
+                if name in known:
+                    continue
+                known.add(name)
+                rows.append({"name": name, "root": root,
+                             "shared_with": sorted(elsewhere.get(name, ()))})
+        return rows
+
+    def _samples_of(self, bank, preset):
+        """[(name, root)] for one staged preset, per format.
+
+        KRZ needs its own walk and this is the second time that has bitten:
+        a KrzObject has no `sample_indices` because a KRZ program does not
+        reference samples at all -- it references KEYMAPS, and those
+        reference samples. Reusing E4B's attribute here left the Rename
+        Samples dialog opening with zero rows for a KRZ bank while its button
+        sat enabled, which is precisely the "control that silently does
+        nothing" this whole feature was held back to avoid.
+        """
+        if self._format == "KRZ":
+            for km_id in bank.program_keymap_refs(preset):
+                km = bank.keymaps.get(km_id)
+                if km is None:
+                    continue
+                for sid in bank.keymap_sample_refs(km):
+                    samp = bank.samples.get(sid)
+                    if samp is not None:
+                        yield samp.name, self._krz_root(samp)
+            return
+        roots = self._zone_roots(bank, preset)
+        for idx in getattr(preset, "sample_indices", []) or []:
+            samp = bank.samples.get(idx)
+            if samp is not None:
+                yield samp.name, roots.get(idx)
+
+    @staticmethod
+    def _krz_root(samp) -> Optional[int]:
+        """A KRZ sample carries its own root in Soundfilehead byte 0 -- there
+        is no zone entry to read it from, unlike E4B and EIII. Same byte
+        banks/summary.py's _krz_zone() uses."""
+        body = samp.body()
+        if len(body) <= krz.SAMPLE_HDR:
+            return None
+        root = body[krz.SAMPLE_HDR]
+        return root if 0 <= root <= 127 else None
+
+    def _zone_roots(self, bank, preset) -> dict:
+        """{sample index: MIDI root note} from a preset's own zone bytes.
+
+        Two formats, two layouts, both byte-level so no parse through
+        mpc2emu is involved:
+
+        * E4B -- `zone_refs` gives the offset of each 22-byte zone entry, and
+          byte 14 of it is the root key (mpc2emu's e4b_writer writes
+          `entry[14] = root_key`, its parser reads the same byte back).
+        * EIII -- `zone_refs` gives the offset of the 2-byte sample-index
+          field, which sits one byte into the 48-byte zone; byte 0 of the
+          zone is the ORIGINAL KEY in E-mu numbering, where key 0 is MIDI 21.
+
+        First zone wins: one sample can be spread over several zones and the
+        name belongs to the sample, so it is named for the root it was
+        recorded at rather than for wherever it also happens to be mapped.
+        """
+        out: dict = {}
+        body = getattr(preset, "body", None)
+        refs = getattr(preset, "zone_refs", None)
+        if not body or not refs:
+            return out
+        for off, raw in refs:
+            if self._format == "E4B":
+                idx, root_off, bias = raw, off + 14, 0
+            else:                                   # EIII
+                idx, root_off, bias = raw & 0x3FFF, off - 1, _EIII_KEY_OFFSET
+            if idx in out or not (0 <= root_off < len(body)):
+                continue
+            root = body[root_off] + bias
+            if 0 <= root <= 127:
+                out[idx] = root
+        return out
+
+    def _sync_rename_button(self) -> None:
+        ok = bool(self._items) and self._format in self._RENAMEABLE
+        self._rename_btn.setEnabled(ok)
+        if self._format and self._format not in self._RENAMEABLE:
+            self._rename_btn.setToolTip(
+                f"{self._format} stores a sample name in a slot sized exactly "
+                f"to the name already there, so renaming means rebuilding the "
+                f"block. Not offered rather than half-offered.")
+        else:
+            self._rename_btn.setToolTip(
+                "Rename the samples inside this bank. The audio is untouched.")
+        n = len(self._sample_renames)
+        self._rename_status.setText(f"{n} sample(s) renamed" if n else "")
+
+    def _rename_samples(self, selected_only: bool = False) -> None:
+        # Always follows the selection, from the button and the context menu
+        # alike. They used to differ -- button bank-wide, right-click scoped --
+        # which was too clever to guess at: with a preset highlighted, the
+        # button still listed every other preset's samples. Nothing selected
+        # still means the whole bank, the same rule "Remove Selected" uses in
+        # this pane.
+        del selected_only                       # kept for call-site clarity
+        items = self._selected_presets()
+        rows = self._sample_rows_in_bank(items)
+        if not rows:
+            self.statusMessage.emit("No samples to rename yet")
+            return
+        renames = SampleRenameDialog.get_renames(rows, fmt=self._format or "E4B",
+                                                  octave_offset=_RENAME_OCTAVE,
+                                                  existing=self._sample_renames,
+                                                  parent=self)
+        if renames is None:
+            return                     # cancelled: keep whatever was set before
+        # MERGED, not replaced. Renaming preset A's samples and then opening
+        # preset B used to discard A's work, because the dialog only ever
+        # returns what its own rows carried. Renames accumulate across the
+        # bank; the dialog is a view onto part of it, so only the names it
+        # actually showed may be revised by it.
+        shown = {r["name"] for r in rows}
+        self._sample_renames = {k: v for k, v in self._sample_renames.items()
+                                 if k not in shown}
+        self._sample_renames.update(renames)
+        self._sync_rename_button()
+        # The meter re-runs assemble(), and a rename changes the bytes, so the
+        # displayed size has to be recomputed rather than left stale.
+        self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
+
     def _assemble_fn(self):
         """The real assemble() to call for the currently-locked format,
         pre-bound with the user's typed bank name for EIII (the one format
@@ -535,6 +774,14 @@ class BankPane(QWidget):
         fn = _ASSEMBLE_FNS[self._format]
         if self._format == "EIII":
             fn = functools.partial(fn, bank_name=_sanitize_bank_name(self._name_edit.text()))
+        # Bound the same way as bank_name, so the meter, Save as… and Send to
+        # Image all assemble the identical bytes -- a rename visible only in
+        # one of the three would be worse than no rename at all. Only for the
+        # formats whose assemble() accepts it; _sync_rename_button keeps the
+        # dict empty for the others, but binding an argument KRZ's assemble()
+        # does not take would be a TypeError rather than a no-op.
+        if self._sample_renames and self._format in self._RENAMEABLE:
+            fn = functools.partial(fn, sample_names=dict(self._sample_renames))
         return fn
 
     def _apply_size(self, gen: int, data: bytes) -> None:

@@ -157,9 +157,71 @@ was shown.
 | naming scheme `<base>-<key>` reaches the written file | `manual_names_e2e` | `manual_names_e2e` | `manual_names_e2e` |
 | a per-row typed name beats the scheme, in the file | `manual_names_e2e` | `manual_names_e2e` | `manual_names_e2e` |
 | the written bank is still VALID — re-parses, sample count and zones intact | `manual_names_e2e` | `manual_names_e2e` | `manual_names_e2e` |
-| a name byte above 0x7E survives assemble() | `manual_e4b_name_bytes` | ⚠ untested | ⚠ untested |
+| a name byte above 0x7E survives assemble() | `manual_e4b_name_bytes` | n/a ⁴ | n/a ⁴ |
 | a name byte above 0x7E survives CONVERSION | ⛔ known loss ³ | ⛔ known loss ³ | ⛔ known loss ³ |
 | a bank NAME with such a byte reaching an image | ⚠ untested | ⚠ untested | ⚠ untested |
+
+### Renaming a sample INSIDE an assembled bank
+
+Separate from the naming scheme above, which names samples on the way IN. This
+renames what is already in a bank New Bank is staging, and each format stores
+the name differently enough that they are genuinely three implementations.
+
+| what | E4B | KRZ | EIII |
+|---|---|---|---|
+| where the name lives | fixed 16 B at `body[2:18]` **and** a TOC entry | null-terminated, padded to 2 B, **no slack** — the block regrows | fixed 16 B at `body[0:16]` |
+| rename leaves audio byte-identical | `manual_bank_sample_rename` | `manual_krz_sample_rename` | `manual_eiii_sample_rename` |
+| rename leaves preset/program bodies untouched | ✅ | ✅ | ✅ |
+| an empty rename map is a byte-identical no-op | ✅ | ✅ | ✅ |
+| every name length 1–16 round-trips | — | ✅ (block regrows) | — |
+| the rename reaches the IMAGE, not just Save as… | `manual_rename_reaches_image` | ⚠ untested ⁵ | ⚠ untested ⁵ |
+| key-suffixed bulk rename `<base>-<key>` | ✅ root from zone byte 14 | ✅ root from Soundfilehead byte 0 | ✅ root from zone byte 0 (+21) |
+| name length capped to the format's 16 | ✅ fixed field | ✅ enforced ⁶ | ✅ fixed field |
+| colliding `<base>-<key>` names disambiguated | ✅ | ✅ | ✅ |
+| the dialog is reachable and its cells editable | ✅ | ✅ | ✅ ⁷ |
+
+⁴ **This footnote used to say KRZ and EIII need no high-byte handling. For
+KRZ that was wrong, and the way it was wrong is worth keeping.** The scan
+behind it walked only LOOSE `.KRZ` files — 201 banks, zero high bytes — while
+nearly all real K2000 content in this library lives inside disc images.
+Rescanned including them: **2 237 banks, 69 676 objects, 157 carrying a byte
+above 0x7E**, `0x7F` alone **4 036 times**, authored rather than incidental —
+it separates the name from the channel marker, `BRA:Sect.3.01 <7F> L`, the
+same role 0xA5 plays in E4B. `banks/krz.py` now reads latin-1; the retraction
+is in mpc2emu's handoff, since I had told them to leave their writer ASCII on
+the strength of it.
+
+EIII still stands: that scan DID walk images — **1 019 banks / 30 935 sample
+names** out of EMU3 containers — and its six hits are control-character noise
+from deleted banks in free space.
+
+**The lesson is the release-gate one:** a zero from a corpus whose shape was
+never checked is not evidence of absence. Any ✅ here resting on "we measured
+and found none" should name what the measurement walked.
+
+⁶ KRZ has no fixed name field, so nothing truncates for it — a rename wrote a
+34-character name into a structurally valid bank before this was added.
+Sixteen is the longest authored name across 9 700 real objects and the width
+of the K2000's own display.
+
+⁷ Both name columns were read-only in the GUI and nobody noticed, because
+every test set the text with `setText()`, which bypasses the view.
+`NoSelection` blocks editing outright, and the placement dialog additionally
+set `NoEditTriggers` — its per-row rename had never been usable since the day
+it shipped. **A UI feature needs a test that drives the UI**; asserting on the
+model underneath will pass against a control the user cannot reach.
+
+⁵ `manual_rename_reaches_image` drives E4B through Pending → build → re-read.
+The other two share that code path and their format layers are separately
+tested, but the combination has not been run.
+
+**KRZ is the only one that changes a block's LENGTH**, and the only one with a
+self-check: `assemble()` re-reads any bank it resized and refuses one that
+will not parse or comes back short. The trap it avoids is that `size` is
+measured to the 2-byte-aligned end while `blocksize` is computed after a
+4-byte pad, so `size += delta` is right and `blocksize += delta` is wrong
+about half the time. `manual_krz_sample_rename` builds the wrong version
+deliberately and requires it to fail — it breaks 4 of 4.
 
 ³ mpc2emu's `parsers/e4b_parser._decode_name` reads the 16-byte field as
 ASCII with `errors='replace'`, so 0xA5 becomes U+FFFD before the Bank model
@@ -218,6 +280,25 @@ decides it is whether any two zones in one voice share a key — the 40-voice
 case would have lost zones too, had any two overlapped. Any bank previously
 cleared as "converted fine because it came from another sampler" is not
 cleared by that reasoning.
+
+**Why the check is EIII-only, and the E4B bug it exposed.** Run for E4B it
+reported "140 of 141 zones" on ordinary conversions — not the empty-zone
+artefact it resembles, since `_parse_zone_refs` counts index 0 too. mpc2emu
+identified the cause 2026-08-08 and it is **ours**: E4B voices pack
+back-to-back with no terminator, and only the LAST voice in a preset carries
+a trailer, two bytes of `00 00`. A walk that expects a terminator per voice,
+or reads those two bytes as the head of a zone entry, lands one short exactly
+once — which is what "140 of 141" is. The count is arithmetic, not a scan:
+
+```
+n_zones(voice) = (be16(vpar[2:4]) - 284) / 22      # VOICE_FIXED, ZONE_ENTRY
+next_voice     = this_voice_start + be16(vpar[2:4])
+```
+
+**Still unfixed here** — `banks/e4b.py`'s `_walk_voices` needs it, and the
+zone check can widen to E4B once it lands. Recorded rather than left as an
+open mystery, because a guard that cries about one zone in 141 on every
+conversion trains a user to dismiss it.
 
 VinSamLib **warns and does not refuse**: `_zone_loss_risk` re-reads every
 written bank and reports through the same risk list polyphony findings use.
