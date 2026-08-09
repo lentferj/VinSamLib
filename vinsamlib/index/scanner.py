@@ -18,7 +18,7 @@ from typing import Callable, Optional
 
 from .db import IndexDB
 from ..banks import e4b, eiii, krz
-from ..build import xpm_import
+from ..build import foreign_import, xpm_import
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
@@ -42,8 +42,15 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
         # keygroup-only rule below existed -- a rescan is the only way those
         # ever leave the search results, since the file itself is still there.
         p = Path(path)
-        if not p.exists() or (p.suffix.lower() in xpm_import.PROGRAM_EXTS
-                              and not xpm_import.holds_convertible_program(path)):
+        # A soundfont-style row must also leave the index when mpc2emu goes
+        # away, or a search would keep offering instruments that can no
+        # longer be imported -- the one case where the file is untouched and
+        # the row still has to go.
+        foreign_gone = (foreign_import.format_for(p) is not None
+                        and not foreign_import.available())
+        if not p.exists() or foreign_gone or (
+                p.suffix.lower() in xpm_import.PROGRAM_EXTS
+                and not xpm_import.holds_convertible_program(path)):
             db.forget_container(path)
 
 
@@ -70,6 +77,9 @@ def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: s
             if (Path(e.ref).suffix.lower() == xpm_import.PROJECT_EXT
                     or xpm_import.holds_convertible_program(e.ref)):
                 _scan_xpm_container(e.ref, e.size, db, progress, seen_paths)
+        elif (e.kind == EntryKind.OTHER_FILE
+                and foreign_import.format_for(e.ref) is not None):
+            _scan_foreign_container(e.ref, e.size, db, progress, seen_paths)
 
 
 def _scan_bank_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
@@ -139,6 +149,52 @@ def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
             # is found by name (see ui/search_resolve.py), never by index.
             db.add_item(cid, item_id, "mpc_program", program, native_id=program,
                          format=fmt, ordinal=i)
+    db.finish_container(cid)
+
+
+def _scan_foreign_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
+                            seen_paths: set) -> None:
+    """Index a soundfont-style import source (SF2, SFZ, EXS24, TAL, GIG).
+
+    Cheaper than the MPC case above, and by a wider margin: an MPC project
+    cannot be listed without parsing it, while these formats name their
+    instruments in a header that sits nowhere near the audio. Reading it is
+    a few hundred microseconds even for a 1 GB SoundFont, so a container's
+    presets are indexed individually and are findable by name -- the whole
+    corpus of 5977 files here classifies in about 1.4 s.
+
+    Nothing is indexed at all when mpc2emu is missing: without it these rows
+    could be found but never imported.
+    """
+    if not foreign_import.available():
+        return
+    verdict = foreign_import.inspect(path)
+    if verdict is None:
+        return                      # not one of ours (a macOS ._ fork, say)
+    seen_paths.add(path)
+    try:
+        mtime = Path(path).stat().st_mtime
+    except OSError:
+        return
+    if not db.needs_rescan(path, size, mtime):
+        return
+    if progress:
+        progress(f"Scanning {Path(path).name}…")
+    fmt = verdict.format
+    kind = "foreign_bank" if verdict.container else "foreign_preset"
+    cid = db.begin_container(path, "foreign", fmt, size, mtime)
+    name = Path(path).name
+    item_id = db.add_item(cid, None, kind, name, native_id=name, format=fmt,
+                          size=size, ordinal=0)
+    if verdict.container and verdict.importable:
+        for i, entry in enumerate(foreign_import.list_presets(path) or []):
+            # Same rule as an MPC project's programs: the name is the
+            # re-locatable id, because the parser drops an entry that holds
+            # no zones and positions shift when it does. The ordinal is
+            # stored too -- it is the tree row's own address into the FILE,
+            # which is a different number (see resolve_ordinal).
+            db.add_item(cid, item_id, "foreign_preset", entry.display,
+                        native_id=entry.display, format=fmt, ordinal=i)
     db.finish_container(cid)
 
 

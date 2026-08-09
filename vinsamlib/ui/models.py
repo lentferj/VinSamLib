@@ -20,18 +20,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import QAbstractItemModel, QMimeData, QModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtCore import (QAbstractItemModel, QMimeData, QModelIndex,
+                            QSortFilterProxyModel, Qt, Signal)
 from PySide6.QtGui import QColor
 
 from . import dnd, workers
 from ..banks import e4b, eiii, krz
-from ..build import xpm_import
+from ..build import foreign_import, xpm_import
 from ..build.convert import ConvertOpError
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
 
-EXPANDABLE_KINDS = {"directory", "volume_root", "folder", "bank", "mpc_project"}
+EXPANDABLE_KINDS = {"directory", "volume_root", "folder", "bank", "mpc_project",
+                    "foreign_bank"}
 
 _KIND_ICON = {
     "directory": "\U0001F4C1",     # 📁
@@ -42,6 +44,8 @@ _KIND_ICON = {
     "xpm": "\U0001F39B",           # 🎛
     "mpc_project": "\U0001F5C2",   # 🗂
     "mpc_program": "\U0001F39B",   # 🎛
+    "foreign_bank": "\U0001F4DA",    # 📚 -- one file, many instruments
+    "foreign_preset": "\U0001F3BC",  # 🎼 -- one instrument, not a preset yet
     "unsupported": "\U00002753",   # ❓
 }
 
@@ -55,6 +59,42 @@ MPC_FORMATS = frozenset(xpm_import.MPC_EXT_FORMAT.values())
 # what a user thinks of as one kind of file would be noise, and .xty/.xpj are
 # far rarer than .xpm.
 MPC_FILTER = "MPC"
+
+
+# The two row kinds a soundfont-style source produces: a file holding many
+# instruments, and one instrument (either a child of such a file, or a
+# whole single-instrument file like an .sfz).
+_FOREIGN_KINDS = ("foreign_bank", "foreign_preset")
+
+# Everything that reaches New Bank by being CONVERTED rather than added --
+# the soundfont-style sources and the MPC's containers alike. They all drag
+# the same way, carrying a request instead of a preset (see ui/dnd.py).
+#
+# The MPC rows were deliberately not draggable at first, on the reasoning
+# that only real E4B/KRZ/EIII content should be: an MPC program has to go
+# through a conversion before it is a preset at all. That reasoning was
+# right about the mechanism and wrong about the user -- once the soundfont
+# sources could be dragged, a `.xpm` that refused to be was just an
+# inconsistency, and the conversion is the same asynchronous round trip in
+# both cases.
+_IMPORT_DRAG_KINDS = _FOREIGN_KINDS + ("xpm", "mpc_project", "mpc_program")
+
+
+def _import_request(node: TreeNode) -> dict:
+    """The drag payload / context-menu argument for one import-source row.
+
+    Two payload shapes, across five node kinds. A row addressing ONE entry
+    of a multi-entry file carries `(path, ordinal)`; a row addressing a
+    whole file carries just the path and imports everything in it -- an
+    ordinal of None. `mpc_program` is the MPC's version of the former,
+    `foreign_preset` the soundfont one.
+    """
+    if node.kind in ("mpc_program", "foreign_preset"):
+        path, ordinal = node.payload
+    else:
+        path, ordinal = node.payload, None
+    return {"path": str(path), "format": node.format_label,
+            "ordinal": ordinal, "name": node.label}
 
 
 def format_matches_filter(format_label: str, wanted: Optional[str]) -> bool:
@@ -139,6 +179,8 @@ def _fetch_children(node: TreeNode) -> list[TreeNode]:
         return _fetch_bank(node)
     if node.kind == "mpc_project":
         return _fetch_mpc_project(node)
+    if node.kind == "foreign_bank":
+        return _fetch_foreign_bank(node)
     return []
 
 
@@ -223,9 +265,62 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
                     "xpm", e.name, node, Path(e.ref), size=e.size,
                     format_label=f"{label} drum kit" if kind == xpm_import.DRUM else label,
                     note=xpm_import.DRUM_2X_PAD_MAP_NOTE if kind == xpm_import.DRUM else ""))
+        elif e.kind == EntryKind.OTHER_FILE:
+            foreign = _foreign_node(Path(e.ref), e.name, node, e.size)
+            if foreign is not None:
+                out.append(foreign)
         # plain OTHER_FILE (WAVs, docs, ...): out of scope for this browser
     out.sort(key=lambda n: (n.kind not in ("directory", "volume_root"), n.label.lower()))
     return out
+
+
+def _foreign_node(path: Path, name: str, node: Optional[TreeNode],
+                  size: int) -> Optional[TreeNode]:
+    """A row for a soundfont-style import source, or None if this is not one.
+
+    Gated on mpc2emu being present (foreign_import.available()): these
+    formats have no reader of their own here, so without it every row would
+    be one that can only fail. Better not to offer them at all.
+
+    Never parses -- the verdict comes from a header read (see
+    vinsamlib/foreign_names.py), which is what makes listing a folder of
+    1 GB SoundFonts as quick as listing any other folder.
+    """
+    verdict = foreign_import.inspect(path)
+    if verdict is None:
+        return None
+    kind = "foreign_bank" if verdict.container else "foreign_preset"
+    return TreeNode(kind, name, node,
+                    (path, None) if kind == "foreign_preset" else path,
+                    size=size, format_label=verdict.format,
+                    note=verdict.note, empty_reason=verdict.empty_reason)
+
+
+def _fetch_foreign_bank(node: TreeNode) -> list[TreeNode]:
+    """One row per preset in a SoundFont or GIG file.
+
+    The one place this deliberately departs from _fetch_mpc_project: it does
+    NOT parse, and leaves node.handle as None. An MPC project has to be
+    parsed to be listed, so that function caches the Bank on the node; a
+    SoundFont names its presets in a header chunk that sits nowhere near the
+    audio, so expanding one is a header read whatever its size. Parsing here
+    instead would mean 2.7 s and ~3 GB of RSS to expand a single 1 GB row.
+
+    The ordinal on each child is its position in the FILE. That is not
+    necessarily its position in the parsed bank -- see
+    foreign_import.resolve_ordinal(), which is where the two are reconciled.
+    """
+    path: Path = node.payload
+    listed = foreign_import.list_presets(path)
+    if listed is None:
+        raise ValueError(f"{path.name} does not read as a "
+                         f"{node.format_label} file.")
+    if not listed:
+        node.empty_reason = f"{path.name} holds no preset."
+        return []
+    return [TreeNode("foreign_preset", entry.display, node, (path, i),
+                     format_label=node.format_label)
+            for i, entry in enumerate(listed)]
 
 
 def _fetch_volume_root(node: TreeNode) -> list[TreeNode]:
@@ -302,10 +397,12 @@ def _fetch_mpc_project(node: TreeNode) -> list[TreeNode]:
     only drum, MIDI or plugin tracks -- raises out of parse_mpc(), and the
     model's own fetch-error path shows that message on the row.
 
-    Programs are NOT draggable into New Bank the way real presets are: an
-    MPC program only becomes an E4B/KRZ preset once it has been through a
-    conversion, so its row offers Import (the same Convert Options dialog a
-    .xpm row opens), not drag-and-drop."""
+    A program does not drag the way a real preset does -- it only becomes an
+    E4B/KRZ preset once it has been through a conversion, so there is no
+    (bank, preset) pair to hand over. It drags as a *request* instead (see
+    ui/dnd.py's IMPORT_MIME_TYPE), which opens the same Convert Options
+    dialog its Import action does and delivers the presets when the
+    conversion finishes."""
     path: Path = node.payload
     if node.handle is None:
         try:
@@ -463,6 +560,12 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
 # ── the Qt model ─────────────────────────────────────────────────────────────
 
 class LibraryTreeModel(QAbstractItemModel):
+    #: Something the model refused to do, in words. Qt gives a rejected drag
+    #: no feedback at all -- mimeData() returning None just makes the drag
+    #: not happen -- so the one case where that is a real decision (mixing
+    #: presets and import sources in one drag) has to say so out loud.
+    statusMessage = Signal(str)
+
     def __init__(self, roots: list[Path], parent=None):
         super().__init__(parent)
         sorted_roots = sorted(roots, key=lambda p: str(p).lower())
@@ -612,24 +715,49 @@ class LibraryTreeModel(QAbstractItemModel):
     def flags(self, index: QModelIndex):
         base = super().flags(index)
         node = self._node_for(index)
-        if node is not None and node.kind == "preset":
+        if node is None:
+            return base
+        if node.kind == "preset":
+            return base | Qt.ItemFlag.ItemIsDragEnabled
+        if node.kind in _IMPORT_DRAG_KINDS and not node.empty_reason:
+            # An import source drags too, but as a request rather than as a
+            # preset (see ui/dnd.py). A row that already said it holds
+            # nothing importable -- an all-encrypted TAL preset, a truncated
+            # SoundFont, an MPC project of empty kits -- stays visible and
+            # searchable and refuses the drag, rather than starting a
+            # conversion with a foregone conclusion.
             return base | Qt.ItemFlag.ItemIsDragEnabled
         return base
 
     def mimeTypes(self) -> list[str]:
-        return [dnd.DRAG_MIME_TYPE]
+        return [dnd.DRAG_MIME_TYPE, dnd.IMPORT_MIME_TYPE]
 
     def mimeData(self, indexes: list[QModelIndex]) -> Optional[QMimeData]:
         seen: set[int] = set()
         items = []
+        requests = []
         for idx in indexes:
             node = self._node_for(idx)
-            if node is None or node.kind != "preset" or id(node) in seen:
+            if node is None or id(node) in seen:
                 continue
             seen.add(id(node))
-            bank, preset_obj = node.payload
-            fmt = node.parent.format_label if node.parent else ""
-            items.append((bank, preset_obj, fmt, node.label))
+            if node.kind == "preset":
+                bank, preset_obj = node.payload
+                fmt = node.parent.format_label if node.parent else ""
+                items.append((bank, preset_obj, fmt, node.label))
+            elif node.kind in _IMPORT_DRAG_KINDS and not node.empty_reason:
+                requests.append(_import_request(node))
+        if items and requests:
+            # Two different journeys -- one is already a preset, the other has
+            # to be converted first -- and New Bank would have to run both a
+            # plain add and a conversion queue off one drop. Refusing is
+            # clearer than half-doing it.
+            self.statusMessage.emit(
+                "Presets and import sources can't be dragged together — "
+                "drop one kind at a time")
+            return None
+        if requests:
+            return dnd.build_import_mime_data(requests)
         return dnd.build_mime_data(items) if items else None
 
     # -- helpers used by the panes --------------------------------------------
@@ -679,6 +807,7 @@ class BankFormatFilterProxy(QSortFilterProxyModel):
         source_model = self.sourceModel()
         index = source_model.index(source_row, 0, source_parent)
         node = index.data(Qt.ItemDataRole.UserRole)
-        if node is None or node.kind not in ("bank", "xpm", "mpc_project"):
+        if node is None or node.kind not in (
+                "bank", "xpm", "mpc_project", "foreign_bank", "foreign_preset"):
             return True
         return format_matches_filter(node.format_label, self._format_filter)

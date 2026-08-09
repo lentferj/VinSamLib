@@ -20,10 +20,25 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QLabel
 from . import dnd, search_resolve
 from .detail_pane import DetailPane
 from .models import (MPC_FILTER, BankFormatFilterProxy, LibraryTreeModel, TreeNode,
+                     _FOREIGN_KINDS, _IMPORT_DRAG_KINDS, _import_request,
                      format_matches_filter)
+from ..build import foreign_import
 from ..index.db import IndexDB, SearchResult
 
-_FORMAT_FILTERS = ["All", "E4B", "KRZ", "EIII", MPC_FILTER]
+def _format_filters() -> list[str]:
+    """The dropdown's entries, decided when the pane is built rather than at
+    import time -- the soundfont-style formats are only listed when mpc2emu
+    can actually import them, and offering a filter for rows that cannot
+    exist would be a dead end.
+
+    Five separate entries rather than one grouped chip: unlike the MPC's
+    three containers for a single keygroup program, these are five unrelated
+    ecosystems, and someone hunting a SoundFont is not hunting an EXS24.
+    """
+    entries = ["All", "E4B", "KRZ", "EIII", MPC_FILTER]
+    if foreign_import.available():
+        entries.extend(foreign_import.FORMAT_FILTERS)
+    return entries
 
 
 class _ResultsListWidget(QListWidget):
@@ -35,23 +50,34 @@ class _ResultsListWidget(QListWidget):
 
     def mimeData(self, items):
         payload_items = []
+        requests = []
         for widget_item in items:
             hit = widget_item.data(Qt.ItemDataRole.UserRole)
             if hit is None:
                 continue
             node = search_resolve.resolve_result(hit)
-            if node is None or node.kind != "preset":
+            if node is None:
                 continue
-            bank, preset_obj = node.payload
-            fmt = node.parent.format_label if node.parent else ""
-            payload_items.append((bank, preset_obj, fmt, node.label))
+            if node.kind == "preset":
+                bank, preset_obj = node.payload
+                fmt = node.parent.format_label if node.parent else ""
+                payload_items.append((bank, preset_obj, fmt, node.label))
+            elif node.kind in _IMPORT_DRAG_KINDS and not node.empty_reason:
+                requests.append(_import_request(node))
+        if payload_items and requests:
+            # Same refusal the tree makes, for the same reason -- see
+            # LibraryTreeModel.mimeData().
+            return None
+        if requests:
+            return dnd.build_import_mime_data(requests)
         if not payload_items:
             return None
         return dnd.build_mime_data(payload_items)
 
 _KIND_ICON = {"folder": "\U0001F4C1", "bank": "\U0001F4E6", "preset": "\U0001F3B9",
               "xpm": "\U0001F39B", "mpc_project": "\U0001F5C2",
-              "mpc_program": "\U0001F39B"}
+              "mpc_program": "\U0001F39B", "foreign_bank": "\U0001F4DA",
+              "foreign_preset": "\U0001F3BC"}
 _SEARCH_DEBOUNCE_MS = 200
 
 
@@ -63,6 +89,10 @@ class ExplorerPane(QWidget):
     # .xty, every keygroup track for a project.
     importXpmRequested = Signal(str, object)
     convertPresetRequested = Signal(list)   # list[TreeNode], one or more "preset" nodes
+    # Import-request dicts for soundfont-style sources (see ui/dnd.py) --
+    # the same payload a drag onto New Bank carries, so both routes land in
+    # one handler.
+    importForeignRequested = Signal(list)
     removeLibraryRootRequested = Signal(object)   # Path of a root "directory" node
 
     def __init__(self, model: LibraryTreeModel, index_db: Optional[IndexDB] = None, parent=None):
@@ -83,7 +113,7 @@ class ExplorerPane(QWidget):
         search_row.addWidget(self._search_box, 1)
 
         self._filter_box = QComboBox()
-        self._filter_box.addItems(_FORMAT_FILTERS)
+        self._filter_box.addItems(_format_filters())
         self._filter_box.setToolTip(
             "Only show banks of this format (MPC covers .xpm programs, "
             ".xty tracks and .xpj projects)")
@@ -238,6 +268,12 @@ class ExplorerPane(QWidget):
             if allow_container:
                 self.importXpmRequested.emit(str(node.payload), None)
             return
+        if node.kind == "foreign_bank":
+            # Same rule as an MPC project: in the tree a double-click expands
+            # it, which importing on top of would hijack.
+            if allow_container and not node.empty_reason:
+                self.importForeignRequested.emit([_import_request(node)])
+            return
         if node.kind == "preset":
             self.addToBankRequested.emit([node])
         elif node.kind == "xpm":
@@ -245,6 +281,8 @@ class ExplorerPane(QWidget):
         elif node.kind == "mpc_program":
             path, preset_index = node.payload
             self.importXpmRequested.emit(str(path), preset_index)
+        elif node.kind == "foreign_preset" and not node.empty_reason:
+            self.importForeignRequested.emit([_import_request(node)])
 
     def _select(self, node: Optional[TreeNode]) -> None:
         self._current_node = node
@@ -286,7 +324,13 @@ class ExplorerPane(QWidget):
         # only those are individually tracked in Config.library_roots and
         # thus removable; a plain subdirectory isn't its own library entry.
         roots = [n for n in nodes if n is not None and n.kind == "directory" and n.parent is None]
-        if not presets and not xpms and not programs and not projects and not roots:
+        # A row that already declared itself unimportable offers no import
+        # action -- it stays visible and searchable, and says why in the
+        # Detail pane, which is the whole point of showing it.
+        foreigns = [n for n in nodes if n is not None
+                    and n.kind in _FOREIGN_KINDS and not n.empty_reason]
+        if not presets and not xpms and not programs and not projects \
+                and not roots and not foreigns:
             return
         menu = QMenu(self)
         add_action = None
@@ -327,6 +371,19 @@ class ExplorerPane(QWidget):
             # been expanded (that is what parses it), so don't promise one.
             import_action = menu.addAction(
                 f'Import all programs of "{projects[0].label}"…')
+        foreign_action = None
+        if foreigns:
+            # Unlike the MPC actions above this one takes a multi-selection:
+            # the requests are just paths, and MainWindow already runs them
+            # through one shared options dialog and a serial queue.
+            if len(foreigns) == 1:
+                node = foreigns[0]
+                label = (f'Import all of "{node.label}"…'
+                         if node.kind == "foreign_bank"
+                         else f'Import "{node.label}"…')
+            else:
+                label = f"Import {len(foreigns)} instruments…"
+            foreign_action = menu.addAction(label)
         if len(roots) == 1:
             # Multi-root removal isn't offered either -- same reasoning,
             # keep the one-item-at-a-time pattern consistent.
@@ -344,6 +401,8 @@ class ExplorerPane(QWidget):
                 self.importXpmRequested.emit(str(path), preset_index)
             else:
                 self.importXpmRequested.emit(str(projects[0].payload), None)
+        elif foreign_action is not None and chosen == foreign_action:
+            self.importForeignRequested.emit([_import_request(n) for n in foreigns])
         elif remove_action is not None and chosen == remove_action:
             self.removeLibraryRootRequested.emit(roots[0].payload)
 

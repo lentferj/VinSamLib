@@ -84,6 +84,8 @@ class DetailPane(QWidget):
             else:
                 self._run(xpm_import.summarize_xpm, (str(path), None, preset_index),
                           gen, self._apply_xpm)
+        elif node.kind in ("foreign_bank", "foreign_preset"):
+            self._show_foreign(node, gen)
         elif node.kind == "unsupported":
             self._render_kv(node.format_label or "Unsupported format",
                              [("Name", node.label), ("Size", human_size(node.size))],
@@ -91,6 +93,49 @@ class DetailPane(QWidget):
                                                 "reader for this format yet.")
         else:
             self._browser.setHtml("")
+
+    # A full zone table for an import source means parsing it, and parsing a
+    # soundfont means reading every sample it holds. That is fine for the
+    # small ones -- an .sfz or .exs is a few MB of external references -- and
+    # not fine for a 1 GB SoundFont, where it would cost seconds and gigabytes
+    # of RSS on a single click in the tree. Past this size the pane shows what
+    # the header already told it and says how to see the rest.
+    _PARSE_FOR_DETAIL_MAX = 64 << 20
+
+    def _show_foreign(self, node: TreeNode, gen: int) -> None:
+        from ..build import foreign_import
+        title = f"{node.format_label} file" if node.kind == "foreign_bank" \
+            else f"Instrument ({node.format_label})"
+        if node.empty_reason:
+            # Readable, and holding nothing this app can use. Say which,
+            # rather than showing an empty zone table that looks like a bug.
+            self._render_kv(title, [("Name", node.label),
+                                    ("Size", human_size(node.size))],
+                            note=node.empty_reason)
+            return
+        path = node.payload if node.kind == "foreign_bank" else node.payload[0]
+        ordinal = None if node.kind == "foreign_bank" else node.payload[1]
+        size = node.size or (node.parent.size if node.parent else 0)
+        if size > self._PARSE_FOR_DETAIL_MAX:
+            rows = [("Name", node.label), ("Size", human_size(size))]
+            if node.kind == "foreign_bank" and node.children:
+                rows.append(("Instruments", str(len(node.children))))
+            self._render_kv(title, rows, note=(
+                node.note or "") + ("<br>" if node.note else "") +
+                "Large file — import it to read its zones.")
+            return
+        self._browser.setHtml("<i>Loading…</i>")
+        self._run(foreign_import.summarize_foreign, (str(path), ordinal),
+                  gen, self._apply_foreign)
+
+    def _apply_foreign(self, gen: int, xs: xpm_import.XpmSummary) -> None:
+        if gen != self._gen:
+            return
+        html = (f"<b>{_escape(xs.preset_name) or '(untitled)'}</b><br>"
+                f"Samples: {xs.sample_count}<br>"
+                f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
+                f"{zone_stats_lines(xs.zones)}")
+        self._browser.setHtml(html)
 
     # -- rendering ------------------------------------------------------------
 

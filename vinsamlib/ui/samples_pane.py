@@ -193,6 +193,9 @@ class SamplesPane(QWidget):
         if node is not None and node.kind in ("xpm", "mpc_program"):
             self._show_mpc_program(node, gen)
             return
+        if node is not None and node.kind in ("foreign_bank", "foreign_preset"):
+            self._show_foreign(node, gen)
+            return
         if node is None or node.kind != "preset":
             self._title.setText("Select a preset or program to list the samples it uses.")
             self._model.set_zones([])
@@ -232,6 +235,30 @@ class SamplesPane(QWidget):
             return
         self._run(xpm_import.summarize_xpm, (str(node.payload),), gen,
                   node.payload, node.label)
+
+    def _show_foreign(self, node: TreeNode, gen: int) -> None:
+        """A soundfont-style instrument lists its samples like any preset.
+
+        Two things differ from the MPC case above. There is no cached Bank to
+        reuse -- expanding a SoundFont reads only its header, deliberately --
+        so this always parses. And a row that already declared itself
+        unimportable (encrypted TAL, a truncated file) is answered from that
+        declaration instead of being parsed to prove it again.
+        """
+        from ..build import foreign_import
+        if node.empty_reason:
+            self._title.setText(f"{node.label} — {node.empty_reason}")
+            self._model.set_zones([])
+            return
+        if node.kind == "foreign_bank":
+            self._title.setText(
+                f"{node.label} — expand it in the tree and pick an instrument.")
+            self._model.set_zones([])
+            return
+        path, ordinal = node.payload
+        self._title.setText(f"Loading {node.label}…")
+        self._run(foreign_import.summarize_foreign, (str(path), ordinal), gen,
+                  None, node.label)
 
     def _run(self, fn, args: tuple, gen: int, source=None, label: str = "") -> None:
         # The whole names come off the same worker thread as the summary --

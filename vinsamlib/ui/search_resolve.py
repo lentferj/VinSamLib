@@ -33,10 +33,52 @@ def resolve_result(result: SearchResult) -> Optional[TreeNode]:
                          format_label=result.format or "XPM")
     if result.kind == "mpc_program":
         return _resolve_project_program(result)
+    if result.kind in ("foreign_bank", "foreign_preset"):
+        return _resolve_foreign(result)
     container_path = result.container_path
     if sniff(container_path) is None:
         return _resolve_loose_bank(container_path, result)
     return _resolve_in_image(container_path, result)
+
+
+def _resolve_foreign(result: SearchResult) -> Optional[TreeNode]:
+    """A soundfont-style hit: the file itself, or one instrument in it.
+
+    The happier version of _resolve_project_program below. That one has to
+    parse a whole project to find its row again; here the names come from a
+    header read, so re-deriving the ordinal costs microseconds even for a
+    1 GB SoundFont -- and it is re-derived by NAME rather than trusted from
+    the index, so a file edited since the last scan resolves to the right
+    instrument instead of its neighbour.
+    """
+    from ..build import foreign_import                      # circular at import time
+    path = Path(result.container_path)
+    verdict = foreign_import.inspect(path)
+    if verdict is None:
+        return None
+    if result.kind == "foreign_bank":
+        return TreeNode("foreign_bank", path.name, None, path,
+                        format_label=verdict.format, note=verdict.note,
+                        empty_reason=verdict.empty_reason)
+    ordinal = None
+    if foreign_import.is_container(path):
+        listed = foreign_import.list_presets(path) or []
+        # The indexed name is the instrument's own display name (scanner.py
+        # stores it as both name and native_id), so it is the key -- and it
+        # is matched afresh against the file rather than trusted from the
+        # index, so an edited file resolves to the right instrument.
+        wanted = result.name.strip()
+        matches = [i for i, entry in enumerate(listed)
+                   if entry.display == wanted or entry.name.strip() == wanted]
+        if not matches:
+            # Gone from the file since the scan. The container row is the
+            # honest answer -- that is where the user can see what it holds.
+            return TreeNode("foreign_bank", path.name, None, path,
+                            format_label=verdict.format)
+        ordinal = matches[0]
+    return TreeNode("foreign_preset", result.name, None, (path, ordinal),
+                    format_label=verdict.format, note=verdict.note,
+                    empty_reason=verdict.empty_reason)
 
 
 def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:
