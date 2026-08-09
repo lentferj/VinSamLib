@@ -24,10 +24,11 @@ the unplayable case so one bad row can't trap a user in the dialog.
 from __future__ import annotations
 
 import functools
+import re
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QValidator
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QHeaderView,
                              QLabel, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
@@ -128,7 +129,48 @@ class NoteSpinBox(QSpinBox):
 
     def valueFromText(self, text: str) -> int:
         midi = name_to_midi(text, self._octave_offset)
+        if midi is None:
+            # A bare MIDI number is a reasonable thing to type into a field
+            # whose whole job is a key number, and validate() lets it through.
+            t = text.strip()
+            if t.isdigit() and MIDI_MIN <= int(t) <= MIDI_MAX:
+                return int(t)
         return midi if midi is not None else self.value()
+
+    #: A note name being typed, before it is finished: "C", "C#", "C#-", "C#-1".
+    _PARTIAL = re.compile(r'^[A-Ga-g]#?-?\d*$')
+
+    def validate(self, text: str, pos: int):
+        """Accept note names as they are TYPED.
+
+        Without this the field silently refuses letters. QSpinBox installs its
+        own numeric validator, which runs on every keystroke and rejects the
+        character before `valueFromText` is ever reached -- so overriding
+        `valueFromText` alone gives a field that displays "C3", steps
+        correctly, and cannot be typed into. Clear it and only digits go in.
+
+        Reported from the GUI: double-click a key field, backspace it empty,
+        and letters do nothing. It had been that way since the editor shipped,
+        and no test caught it because every one of them set the value through
+        the model rather than through the keyboard."""
+        t = text.strip()
+        if not t:
+            # Empty is Intermediate, not Invalid: backspacing the field clear
+            # is how you start retyping it, and Invalid would refuse the
+            # deletion itself.
+            return (QValidator.State.Intermediate, text, pos)
+        if name_to_midi(t, self._octave_offset) is not None:
+            return (QValidator.State.Acceptable, text, pos)
+        if t.isdigit() and MIDI_MIN <= int(t) <= MIDI_MAX:
+            return (QValidator.State.Acceptable, text, pos)
+        if self._PARTIAL.match(t) or t == "-":
+            return (QValidator.State.Intermediate, text, pos)
+        return (QValidator.State.Invalid, text, pos)
+
+    def fixup(self, text: str) -> str:
+        """Whatever half-typed text is left when focus leaves goes back to the
+        current value, rather than being committed as something arbitrary."""
+        return self.textFromValue(self.value())
 
 
 class SamplePlacementDialog(QDialog):

@@ -468,8 +468,23 @@ cannot reach.**
 | the "New name" cell accepts typing | ✅ | ✅ | ✅ | `manual_ui_reachability` |
 | the original-name column stays read-only | ✅ | ✅ | ✅ | `manual_ui_reachability` |
 | the placement dialog's Sample column accepts typing | ✅ (format-independent) | | | `manual_ui_reachability` |
+| a key field accepts a note name TYPED at it | ✅ (format-independent) | | | `manual_note_field_typing` ¹⁵ |
 | **Adjust Placement…** enabled, or disabled with a reason | ✅ enabled | ✅ disabled + tooltip | ✅ disabled + tooltip | `manual_placement_reaches_image` |
 | it opens on the bank's REAL ranges, not defaults | ✅ | n/a | n/a | `manual_placement_reaches_image` |
+
+¹⁵ **The purest example this file has.** `NoteSpinBox` overrides
+`textFromValue`/`valueFromText`, so it displays "C3" and steps by semitone and
+looks finished — but `QSpinBox` installs its own NUMERIC validator, which runs
+per keystroke and rejects a letter long before `valueFromText` is reached.
+Double-click a Low/Root/High field, backspace it empty, and only digits go in.
+That shipped with the editor and survived every test, because every test set
+the value through the model (`setValue`) or read it back (`value`) — never
+through the keyboard.
+
+Reported from the GUI, not found here. The check uses `QTest.keyClicks`;
+asserting on `valueFromText("C3")` passes with the validator removed again.
+Also pins that the Vel columns stay PLAIN number fields — a velocity is 0-127
+and showing it as "C3" would be nonsense.
 
 **Three measurements that lie**, all learned by being fooled by them here, and
 all worth knowing before writing the next UI test:
