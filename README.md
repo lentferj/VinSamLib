@@ -84,8 +84,10 @@ appending to any disk image** (every image kind's writer lives there,
 E4B/EIII and KRZ alike), **E4B/EIII** preset-level zone/velocity/
 bit-depth detail in the Detail pane (KRZ's own detail view is
 self-contained), building an EIII bank at all, XPM import, sample-folder
-import, and vintage conversion. Settings shows exactly which of these is unavailable and
-why if mpc2emu isn't configured.
+import, **browsing or importing the soft-sampler formats (SF2, SFZ,
+EXS24, TAL-Sampler, GIG) — without mpc2emu those do not appear in the
+Explorer at all**, and vintage conversion. Settings shows exactly which of
+these is unavailable and why if mpc2emu isn't configured.
 
 ### Browse your whole library at once
 
@@ -141,6 +143,27 @@ An MPC **project** (`.xpj`) holds one program per keygroup track, so it
 is browsed like a bank: expand it in the Explorer and each program shows
 up as its own row, with the same zone summary a real preset gets. Import
 one program, or the whole project at once.
+
+### Bring in SoundFont, SFZ, EXS24, TAL-Sampler and GigaSampler instruments
+
+Also when mpc2emu is available: `.sf2`, `.sfz`, `.exs`, `.talsmpl` and
+`.gig` files sit in the Explorer next to your hardware banks — indexed,
+searchable, filterable, and draggable straight into New Bank. A SoundFont
+or GigaSampler file expands like a bank, one row per instrument inside it,
+so you can pull a single sound out of a 1 GB soundfont without importing
+the rest. The others hold one instrument each and import as a single row.
+
+**These are import sources only.** VinSamLib reads them and writes the
+hardware bank you choose — E4B, KRZ or EIII. It never writes a SoundFont
+or an SFZ, and New Bank will refuse to build one.
+
+Expanding a soundfont does **not** read its audio: the instrument names
+come out of the file header, so a 985 MB `.gig` opens in milliseconds.
+Only an actual import parses the samples.
+
+Instruments that cannot be converted still appear, greyed, with the
+reason — most often a TAL-Sampler preset whose samples are encrypted
+`.talwav` files, which nothing outside TAL-Sampler can decode.
 
 ### Run an existing preset through mpc2emu's vintage pipeline
 
@@ -405,9 +428,13 @@ you type. Search is **word-prefix matching**: each space-separated word
 you type must *start* a word somewhere in the item's name, and multiple
 words are AND-ed together (so `bass str` matches "Bassoon Strings" but
 not "Bassoon Trumpet"). The format dropdown next to the search box
-(`All`/`E4B`/`KRZ`/`EIII`/`MPC`) filters both the live tree and search
-results to just that format. `MPC` covers all three Akai containers at
-once — `.xpm` programs, `.xty` tracks and `.xpj` projects.
+(`All`/`E4B`/`KRZ`/`EIII`/`MPC`, plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`
+when mpc2emu is available) filters both the live tree and search results
+to just that format. `MPC` covers all three Akai containers at once —
+`.xpm` programs, `.xty` tracks and `.xpj` projects — because they are
+three wrappers around one keygroup program. The five soft-sampler
+formats get an entry each: they are unrelated ecosystems, and someone
+hunting a SoundFont is not hunting an EXS24 instrument.
 
 ### Explorer
 
@@ -957,10 +984,67 @@ Two consequences worth knowing:
   project, on expansion, and never during a background library scan —
   the index records projects by filename only, so search finds the
   project but not its programs by name.
-- Programs are **imported, not dragged**. A real preset can be dragged
-  into New Bank because it already is E4B/KRZ/EIII content; an MPC
-  program only becomes one by going through a conversion, so its row
-  offers the same Convert Options dialog a `.xpm` does.
+- Programs are **converted, not added** — but they still drag. A real
+  preset dropped on New Bank is added immediately, because it already is
+  E4B/KRZ/EIII content; an MPC program only becomes one by going through
+  a conversion, so dropping one opens the same Convert Options dialog its
+  Import action does and the presets appear when the conversion finishes.
+  Dragging a project row imports every program in it.
+
+### Soft-sampler import (SF2 / SFZ / EXS24 / TAL / GIG)
+
+Five formats from software samplers, all **read-only sources**: SoundFont 2
+(`.sf2`), SFZ, Logic EXS24 (`.exs`), TAL-Sampler (`.talsmpl`) and
+GigaSampler (`.gig`). Every one of them is browsed, indexed and searched
+like a bank, and every import leaves as E4B, KRZ or EIII. Nothing here is
+ever written in these formats, and New Bank refuses to build one — the
+target-format picker only ever offers the three hardware formats.
+
+They appear **only when mpc2emu is available**. Without it there is no
+reader for any of them, so the rows, the index entries and the five format
+filters are all absent rather than present-and-broken.
+
+**Two shapes.** A `.sf2` or `.gig` can hold many instruments, so it expands
+in the Explorer with one row each. A `.sfz`, `.exs` or `.talsmpl` holds one
+and is a single row. (An SFZ using keyswitches is still one row, but may
+import as several presets — mpc2emu splits it one preset per articulation.)
+
+**Expanding does not parse.** Unlike an MPC project, these name their
+instruments in a header that sits nowhere near the audio, so expanding even
+a 1 GB SoundFont is a header read — measured at 1.6 ms for a 985 MB `.gig`.
+The index stores every instrument by name, so search finds a sound inside a
+soundfont, not just the file. Only an import reads samples, and for a large
+soundfont that is genuinely slow and memory-hungry (one 1 GB file costs
+about 3 GB of RAM while it converts). The Detail pane shows a zone table for
+the smaller ones and falls back to a summary above 64 MB, for the same
+reason.
+
+**These rows can be dragged**, exactly as MPC rows can. The drag carries a
+request rather than a preset — dropping one on New Bank opens the same
+Convert Options dialog the right-click "Import…" does, and the presets
+appear when the conversion finishes. Dragging a container row imports
+everything in it. Presets and import sources cannot be dragged together in
+one go: one is added, the other has to be converted first, so mixing them
+is refused with a message rather than half-done.
+
+**What is refused, and why.** A row that cannot produce anything is shown
+greyed with its reason rather than hidden:
+
+- **Encrypted TAL samples.** `.talwav` is TAL-Sampler's own encrypted audio
+  container and nothing else can decode it. In this author's library 745 of
+  1712 presets reference only those. They stay visible and searchable, and
+  refuse to be dragged.
+- **Built-in waveforms only.** A TAL preset playing TAL's own `Saw`/`Rect`
+  oscillators references no sample at all.
+- **Broken or truncated files**, and `.exs` files whose header carries no
+  EXS magic. macOS `._` AppleDouble forks are skipped silently — they are
+  not instruments, and they carry the same names as the real files.
+
+**TAL sample paths.** TAL stores them as Windows wrote them
+(`..\Folder\Sample.wav`), which resolves to nothing on Linux — 547 of the
+1712 presets here. VinSamLib resolves those itself and hands mpc2emu a
+directory of the files under the names it looks for, so they import with
+their samples instead of silently producing an empty bank.
 
 ### "Import via mpc2emu"
 

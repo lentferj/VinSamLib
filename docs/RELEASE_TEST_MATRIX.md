@@ -45,6 +45,11 @@ without ever reaching it. It belongs wherever releases are cut.
 | I14 | MPC `.xpj` project | 2.x and MPC 3 differ |
 | I15 | Folder of WAVs | Sample Folder import |
 | I16 | Hand-picked WAV files | multi-select import |
+| I17 | SoundFont 2 `.sf2` | multi-preset: whole file **and** one preset |
+| I18 | SFZ `.sfz` | incl. one using keyswitches (imports as several presets) |
+| I19 | Logic EXS24 `.exs` | Logic's `Sampler Instruments/` + `Samples/` layout |
+| I20 | TAL-Sampler `.talsmpl` | one with Windows-relative sample paths, one all-`.talwav` (must be refused) |
+| I21 | GigaSampler `.gig` | multi-instrument: whole file **and** one instrument |
 
 **Import path** — how it reaches New Bank:
 
@@ -57,6 +62,8 @@ without ever reaching it. It belongs wherever releases are cut.
 | P5 | MPC import dialog (single program, and whole project) |
 | P6 | Sample Folder import, incl. name scheme and placement overrides |
 | P7 | Per-bank Convert Options in Pending for Image |
+| P8 | Soft-sampler import: right-click "Import…", **and** drag onto New Bank (both routes, same file) |
+| P9 | MPC import by **drag** onto New Bank — must land identically to P5's context-menu route |
 
 **Output** — where it ends up:
 
