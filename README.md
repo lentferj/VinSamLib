@@ -39,7 +39,8 @@ irreplaceable, and test unfamiliar images on a spare SD card / floppy
 before touching real hardware.
 
 **Several fixed defects produced files that are wrong and do not look
-it** — velocity-layered `.KRZ` banks built before 2026-08-09, two older
+it** — anything converted from an E4B between 28 July and 9 August,
+velocity-layered `.KRZ` banks built before 2026-08-09, two older
 kinds of `.KRZ` bank, anything converted with a Vintage Resample profile
 from stereo, and any large MPC multisample imported before 2026-08-04.
 All are fixed, none can be repaired in place, and nothing warns you
@@ -1141,6 +1142,33 @@ material with a current mpc2emu and VinSamLib.
 
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
+
+### If you converted anything FROM an E4B between 2026-07-28 and 2026-08-09, reconvert it
+
+**Affects:** every conversion whose *source* was an E4B — to KRZ, EIII, or a
+new E4B — made in that window. Not the reading or browsing of E4B banks, which
+is untouched on disk; the banks you *wrote* from them.
+
+**What went wrong:** the E4XT's amp-envelope sustain byte is a **dB law**.
+mpc2emu corrected its writer for that on 28 July and did not move the parser
+with it, so the two stopped being inverses. A bank written at 12.5% amplitude
+read back as **79.5%**, and since the byte means the same thing in a
+third-party bank, every E4B read over-reported sustain — handing the other
+writers a sustain of 50% where the E4XT plays 0.5%.
+
+**Why it is easy to miss:** sustain at exactly **0% or 100% is identical under
+both laws**. The banks that look fine really are fine; only *partial* sustains
+moved. Nothing warns, and the output parses and plays.
+
+**How much of your own library is exposed, measured rather than guessed:**
+across 55 of the 141 loose `.e4b` files here — 15 831 voices — **19 carry a
+partial sustain (0.12%)**, in a handful of banks. Rare, but the ones that have
+it are wrong by an order of magnitude. (Scope worth stating: E4B content in
+this library lives in loose files. The disc images hold EMU3/EIII banks, which
+a different reader handles and this defect does not touch.)
+
+**What to do:** reconvert anything whose source was an E4B. Fixed upstream in
+mpc2emu `49a9aa0`.
 
 ### If you imported a velocity-layered sample folder before 2026-08-09, re-import it
 
