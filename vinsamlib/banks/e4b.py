@@ -431,12 +431,12 @@ def _apply_velocity(body: bytearray, voice_start: int,
     """Set the VOICE's velocity window. Unlike a key move there is no zone
     half to this: the zone entry carries no usable velocity range, so the
     voice is the whole edit."""
-    lo_vel = max(0, min(127, lo_vel))
-    hi_vel = max(0, min(127, hi_vel))
-    if lo_vel > hi_vel:
-        lo_vel, hi_vel = hi_vel, lo_vel
-    body[voice_start + VOICE_LO_VEL] = lo_vel
-    body[voice_start + VOICE_HI_VEL] = hi_vel
+    # Clamped to the byte range, NOT reordered. An inverted window is how a
+    # velocity layer is switched off in real material, so swapping the two
+    # would re-enable something somebody silenced on purpose. The editor
+    # flags it instead.
+    body[voice_start + VOICE_LO_VEL] = max(0, min(127, lo_vel))
+    body[voice_start + VOICE_HI_VEL] = max(0, min(127, hi_vel))
 
 
 def _split_voices_by_velocity(body: bytearray, num_voices: int,
@@ -587,10 +587,10 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
             # simply produces one group.
             vel = (voice_velocity or {}).get(samp.name)
             if vel is not None and zone_off in owner:
-                lo_v, hi_v = (max(0, min(127, int(v))) for v in vel)
-                if lo_v > hi_v:
-                    lo_v, hi_v = hi_v, lo_v
-                vel_wanted[zone_off] = (lo_v, hi_v)
+                # Applied as typed; see _apply_velocity for why an inverted
+                # window is preserved rather than tidied up.
+                vel_wanted[zone_off] = tuple(
+                    max(0, min(127, int(v))) for v in vel)
             key = (samp.name, samp.body)
             new_idx = dedupe_key_to_new_idx.get(key)
             if new_idx is None:

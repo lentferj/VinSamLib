@@ -84,6 +84,24 @@ def _shown_name(row: dict) -> str:
     return row.get("new_name") or _baseline_name(row)
 
 
+def _vel_unreachable(lo_vel: int, hi_vel: int) -> bool:
+    """A velocity window no note-on can satisfy.
+
+    Two shapes, and the second is the one that gets missed: an INVERTED range
+    (`lo > hi`), and `hi == 0` -- MIDI velocity 0 is note-off, so nothing can
+    ever fall inside 0..0.
+
+    Both are DELIBERATE in real material: a velocity zone is switched off by
+    making its range unreachable, not by clearing its name. mpc2emu measured
+    that on AKAI discs and needed two passes to get it right -- their first fix
+    tested only `lo > hi`, because that is what the disc in hand wrote, and a
+    second disc spelled the same thing `(0, 0)`. So this is a WARNING and never
+    a correction: silently swapping the two would re-enable a layer somebody
+    switched off on purpose.
+    """
+    return lo_vel > hi_vel or hi_vel == 0
+
+
 def vel_window(vel):
     """(lo, hi) for a velocity window worth reporting, or None for one that
     covers everything.
@@ -233,7 +251,11 @@ class SamplePlacementDialog(QDialog):
                      "layering is, so the overlap warning stays a warning. "
                      "Samples currently sharing one window show it as their "
                      "starting value; giving one its own splits it out on "
-                     "write, leaving the others where they were."
+                     "write, leaving the others where they were. A window "
+                     "that can never be satisfied — low above high, or a high "
+                     "of 0, which is note-off — turns red and is applied as "
+                     "typed: that is how a layer is switched off, not a "
+                     "mistake to correct."
                      "\n⚠ Experimental: neither the key ranges nor the "
                      "velocity windows edited here have been confirmed on "
                      "hardware, and a velocity change rebuilds the preset's "
@@ -420,6 +442,11 @@ class SamplePlacementDialog(QDialog):
                     overlapping.add(b["name"])
         invalid = {row["name"] for row in self._rows
                    if row["lo"] > row["hi"] or not (row["lo"] <= row["root"] <= row["hi"])}
+        # A velocity window that can never be satisfied gets the same
+        # treatment as an impossible key range: flagged, not corrected.
+        silent_vel = {row["name"] for row in self._rows
+                      if self._show_velocity and _vel_unreachable(
+                          row.get("lo_vel", 0), row.get("hi_vel", 127))}
         for r, row in enumerate(self._rows):
             if row["name"] in invalid:
                 style = f"background-color: {_INVALID_BG};"
@@ -431,6 +458,20 @@ class SamplePlacementDialog(QDialog):
                 widget = self._table.cellWidget(r, col)
                 if widget is not None:
                     widget.setStyleSheet(style)
+            if not self._show_velocity:
+                continue
+            vstyle = (f"background-color: {_INVALID_BG};"
+                      if row["name"] in silent_vel else "")
+            tip = ("This window can never be satisfied, so the sample will "
+                   "not sound. That is a real idiom -- it is how a velocity "
+                   "layer is switched off -- so it is applied as typed rather "
+                   "than corrected. MIDI velocity 0 is note-off, which is why "
+                   "a high of 0 counts too." if row["name"] in silent_vel else "")
+            for col in (4, 5):
+                widget = self._table.cellWidget(r, col)
+                if widget is not None:
+                    widget.setStyleSheet(vstyle)
+                    widget.setToolTip(tip)
 
     def _refresh_piano(self) -> None:
         self._piano.set_zones([

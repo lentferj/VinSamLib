@@ -1438,6 +1438,15 @@ preset is rebuilt with one voice per distinct window, zones wanting the same
 window sharing a voice. Everything else about the voice is cloned, the zone
 order is preserved, and a preset nobody re-placed comes back unchanged.
 
+A velocity window that can never be satisfied — low above high, or a high of
+**0**, which is note-off — turns red in the editor and is written **as typed**.
+That is deliberate: an unreachable range is how a velocity layer is switched
+*off* in real material, not a slip to be corrected, so silently swapping the
+two numbers would re-enable something you meant to silence. mpc2emu measured
+this on AKAI discs and needed two passes to get it right — their first version
+tested only the inverted form, and a second disc spelled the same thing
+`(0, 0)`.
+
 **This is the only edit here that changes a preset's shape** — its body grows
 and its voice count rises — rather than patching bytes in place. It is
 verified across the corpus (zone count, sample count and audio all unchanged,

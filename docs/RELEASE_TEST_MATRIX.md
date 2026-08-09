@@ -252,6 +252,7 @@ failing.
 | a sample sharing a voice is SPLIT out, not refused | ✅ ¹² | n/a | n/a |
 | the split preserves zones, samples and audio | `manual_e4b_velocity` (12 presets) | n/a | n/a |
 | neighbouring samples keep their own window | ✅ | n/a | n/a |
+| an UNREACHABLE window is flagged, not corrected | ✅ ¹⁶ | n/a | n/a |
 | an empty velocity map is a byte-identical no-op | ✅ | n/a | n/a |
 | "Plays" shows a window only where it distinguishes | ✅ ¹² | n/a | n/a |
 | the button is enabled, or disabled WITH A REASON | ✅ enabled | ✅ disabled + tooltip | ✅ disabled + tooltip |
@@ -460,6 +461,18 @@ so a round trip **rebuilds a distinction the hardware would have lost** and
 passes either way. Their own first reproduction passed for exactly that
 reason. A round trip through one project's own reader cannot see a fault its
 own writer compensates for.
+
+¹⁶ `lo > hi` and `hi == 0` both describe a window no note-on can satisfy, and
+both are DELIBERATE in real material: a velocity layer is switched off by
+making its range unreachable, not by clearing its name. So the editor turns
+the row red and the writer applies it as typed — swapping the two numbers
+would re-enable a layer somebody silenced.
+
+Reported from the GUI as "not checked against each other": true, and the fix
+was not the obvious one. mpc2emu needed two passes on the same question —
+their first test was `lo > hi` alone, because that is what the disc in hand
+wrote, and a second disc spelled it `(0, 0)`. MIDI velocity 0 being note-off
+is what makes `hi == 0` the general case rather than a curiosity.
 
 ## Matrix G — the control is REACHABLE, not merely correct
 
