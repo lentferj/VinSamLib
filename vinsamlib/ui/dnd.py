@@ -42,3 +42,49 @@ def descriptor_from(mime: QMimeData) -> list[dict]:
 
 def payload_from(mime: QMimeData) -> list[tuple[Any, Any]]:
     return getattr(mime, "vinsamlib_payload", [])
+
+
+# ── dragging something that is not a preset yet ────────────────────────────
+#
+# A soundfont-style source (SF2, SFZ, EXS24, TAL, GIG) can be dragged into
+# New Bank too, but it cannot travel the way a real preset does: there is no
+# (bank, preset_obj) pair to carry, because none exists until mpc2emu has
+# converted the thing. What such a drag carries is a *request* -- "import
+# this file, this entry of it" -- which MainWindow answers asynchronously
+# with the Convert Options dialog and a worker.
+#
+# Deliberately a SECOND mime type rather than a variant of the descriptor
+# above. BankPane._acceptable() reads descriptor["format"] as the format of
+# the bank being built and rejects an empty one; an import request has no
+# such format until the user picks a target in the dialog, so it must not
+# occupy that field. With a separate type every existing check stays exactly
+# as it was, and "is this a preset or a request?" is one hasFormat() call.
+
+IMPORT_MIME_TYPE = "application/x-vinsamlib-import"
+
+
+def build_import_mime_data(requests: list[dict]) -> QMimeData:
+    """requests: list of {"path", "format", "ordinal", "name"} dicts.
+
+    Nothing but JSON rides along -- unlike a preset drag there are no live
+    Python objects to preserve, which also means such a drag would survive
+    leaving the process if it ever needed to.
+    """
+    mime = QMimeData()
+    mime.setData(IMPORT_MIME_TYPE, json.dumps(requests).encode("utf-8"))
+    return mime
+
+
+def import_requests_from(mime: QMimeData) -> list[dict]:
+    if not mime.hasFormat(IMPORT_MIME_TYPE):
+        return []
+    raw = bytes(mime.data(IMPORT_MIME_TYPE))
+    try:
+        found = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return []
+    return [r for r in found if isinstance(r, dict) and r.get("path")]
+
+
+def has_import_request(mime: QMimeData) -> bool:
+    return mime.hasFormat(IMPORT_MIME_TYPE)
