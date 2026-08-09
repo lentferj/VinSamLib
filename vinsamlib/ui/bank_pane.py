@@ -941,12 +941,28 @@ class BankPane(QWidget):
                 if eo + e4b.ZONE_ENTRY > len(body):
                     break
                 idx = struct.unpack_from(">H", body, eo + 10)[0]
-                if idx in out or idx not in bank.samples:
+                if idx not in bank.samples:
                     continue
-                out[idx] = (max(vlo, body[eo + e4b.ZONE_LO_KEY]),
-                            body[eo + e4b.ZONE_ROOT_KEY],
-                            min(vhi, body[eo + e4b.ZONE_HI_KEY]),
-                            vlov, vhiv, v_start)
+                lo = max(vlo, body[eo + e4b.ZONE_LO_KEY])
+                hi = min(vhi, body[eo + e4b.ZONE_HI_KEY])
+                prev = out.get(idx)
+                if prev is None:
+                    out[idx] = (lo, body[eo + e4b.ZONE_ROOT_KEY], hi,
+                                vlov, vhiv, v_start)
+                    continue
+                # WIDEST SPAN across every zone using this sample, not the
+                # first one found. Skipping the later zones here made the
+                # editor under-report a sample spread over several: a GIG
+                # instrument with 7 zones on one sample covering keys 24-96
+                # showed C0-B0, the first zone alone. The per-sample row is
+                # supposed to carry all of them, and _placement_rows' own
+                # min/max was dead code because this had already deduped.
+                #
+                # Root and velocity stay FIRST-WINS: a sample has one root
+                # worth showing, and an edit applies to every zone using it,
+                # so a second opinion here would only be lost again.
+                out[idx] = (min(prev[0], lo), prev[1], max(prev[2], hi),
+                            prev[3], prev[4], prev[5])
         return out
 
     def _adjust_placement(self) -> None:
