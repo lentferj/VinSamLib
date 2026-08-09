@@ -9,6 +9,7 @@ pattern, needed because `QRunnable` itself cannot emit signals.
 from __future__ import annotations
 
 import re
+import shiboken6
 import traceback
 from typing import Any, Callable
 
@@ -70,11 +71,31 @@ class Worker(QRunnable):
 
     def run(self) -> None:
         try:
-            result = self._fn(*self._args, **self._kwargs)
+            payload, signal_name = self._fn(*self._args, **self._kwargs), "finished"
         except Exception:
-            self.signals.error.emit(traceback.format_exc())
-        else:
-            self.signals.finished.emit(result)
+            payload, signal_name = traceback.format_exc(), "error"
+
+        # Deliver only if there is still someone to deliver to.
+        #
+        # MainWindow.closeEvent waits a BOUNDED three seconds for the pool to
+        # drain, on purpose, so quitting never hangs on a slow scan. A worker
+        # that outruns that bound — parsing a 939 MB GigaSampler file takes
+        # three seconds on its own — comes back to a widget tree that is
+        # already being torn down: its WorkerSignals has been collected with
+        # the pane that owned it, and emitting into the deleted C++ object
+        # raises "Signal source has been deleted" from the pool thread, where
+        # nothing can catch it. Seen at exit after closing the window mid-scan.
+        #
+        # isValid() is the precise question — "is the C++ side still there" —
+        # and it is asked before touching `self.signals` at all, since the
+        # attribute access is itself what raises. The except is a backstop for
+        # the object dying in the gap between the two.
+        if not shiboken6.isValid(self.signals):
+            return
+        try:
+            getattr(self.signals, signal_name).emit(payload)
+        except RuntimeError:
+            pass          # torn down mid-emit; the result has no receiver
 
 
 def run(worker: Worker) -> None:
