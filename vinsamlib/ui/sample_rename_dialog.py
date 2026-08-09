@@ -59,6 +59,7 @@ class SampleRenameDialog(QDialog):
         self._rows: list[dict] = [
             {"name": r["name"] if isinstance(r, dict) else r,
              "root": r.get("root") if isinstance(r, dict) else None,
+             "vel": r.get("vel") if isinstance(r, dict) else None,
              # Carried through, not rebuilt: the caller knows which other
              # staged presets use this sample and the dialog cannot work it
              # out. Dropping it here silently disabled both the italic
@@ -179,7 +180,13 @@ class SampleRenameDialog(QDialog):
                 font.setItalic(True)
                 original.setFont(font)
 
-            plays = QTableWidgetItem(_note(row["root"], self._octave_offset))
+            # A full-range window (0-127) is the overwhelming default and
+            # adds nothing but noise; only a REAL layer is worth the space.
+            label = _note(row["root"], self._octave_offset)
+            vel = row.get("vel")
+            if vel and tuple(vel) != (0, 127):
+                label = f"{label}  v{vel[0]}-{vel[1]}"
+            plays = QTableWidgetItem(label)
             plays.setFlags(Qt.ItemFlag.ItemIsEnabled)      # read-only: information
             plays.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(r, 1, plays)

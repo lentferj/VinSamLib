@@ -167,12 +167,17 @@ def _grab(widget, name: str) -> None:
     print(f"  wrote {path.relative_to(Path.cwd()) if str(path).startswith(str(Path.cwd())) else path}")
 
 
-def shot_new_bank(app, win) -> None:
-    """02_new_bank -- three presets staged, showing the full button grid."""
-    from PySide6.QtCore import QItemSelectionModel
+def _stage(win) -> None:
+    """Put the three demo presets into New Bank, once.
+
+    Its own function because the placement shot needs a staged bank too, and
+    depending on 02 having run first meant asking for 12 alone silently
+    produced nothing ("SKIPPED: nothing staged")."""
     from vinsamlib.banks import e4b
 
     pane = win._bank_pane
+    if pane._items:
+        return
     items = []
     for fname, label in (("DemoBank.e4b", "Demo Multisample"),
                          ("DemoToneA.e4b", "Demo Tone A"),
@@ -187,6 +192,13 @@ def shot_new_bank(app, win) -> None:
     pane.add_presets(items)
     pane._name_edit.setText("MyNewBank")
     pane._list.setCurrentRow(0)
+
+
+def shot_new_bank(app, win) -> None:
+    """02_new_bank -- three presets staged, showing the full button grid."""
+    from PySide6.QtCore import QItemSelectionModel
+
+    _stage(win)
 
     # Expand the library and select a preset, so the Explorer and the Detail
     # pane below it show something -- an empty tree and "Nothing selected."
@@ -216,13 +228,18 @@ def shot_placement(app, win) -> None:
     from vinsamlib.ui.bank_pane import _RENAME_OCTAVE
     from vinsamlib.ui.sample_placement_dialog import SamplePlacementDialog
 
+    _stage(win)
     pane = win._bank_pane
     rows = pane._placement_rows(pane._selected_presets())
     if not rows:
         print("  SKIPPED 12_bank_placement: nothing staged")
         return
-    dialog = SamplePlacementDialog(rows, octave_offset=_RENAME_OCTAVE)
-    dialog.resize(760, 560)
+    # show_velocity matches what New Bank opens; the import dialog's own shot
+    # (09_sample_placement) deliberately stays without the columns, because
+    # that path has no velocity to carry.
+    dialog = SamplePlacementDialog(rows, octave_offset=_RENAME_OCTAVE,
+                                    show_velocity=True)
+    dialog.resize(880, 560)
     dialog.show()
     _settle(app)
     _grab(dialog, "12_bank_placement")

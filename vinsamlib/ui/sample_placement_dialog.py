@@ -113,17 +113,34 @@ class NoteSpinBox(QSpinBox):
 
 
 class SamplePlacementDialog(QDialog):
-    def __init__(self, zones: list[dict], octave_offset: int = 1, parent=None):
+    def __init__(self, zones: list[dict], octave_offset: int = 1, parent=None,
+                  show_velocity: bool = False):
         """`zones`: [{"name": str, "lo": int, "root": int, "hi": int}, ...],
         one per sample -- see sampledir_import_dialog.py's caller for how
         these come from an mpc2emu Bank's zones. `octave_offset` is
         display-only (note-name convention), independent of the actual
-        key numbers being edited."""
+        key numbers being edited.
+
+        `show_velocity` adds "Vel lo"/"Vel hi" columns, reading `lo_vel` and
+        `hi_vel` off each row. OFF by default, and deliberately so: a folder
+        being imported has no velocity information to show -- mpc2emu's
+        sampledir parser writes 0-127 on every zone -- so the columns would
+        be four identical numbers per row and an invitation to set something
+        the import cannot carry. Only New Bank, editing a real bank whose
+        voices have real windows, turns them on. A row may also carry
+        `vel_locked`: a reason string, which greys that row's velocity
+        fields and explains itself in the tooltip.
+        """
         super().__init__(parent)
         self.setWindowTitle("Sample Placement")
         self.setMinimumSize(880, 480)
         self._octave_offset = octave_offset
+        self._show_velocity = show_velocity
         self._rows: list[dict] = [dict(z) for z in zones]
+        if show_velocity:
+            for r in self._rows:
+                r.setdefault("lo_vel", 0)
+                r.setdefault("hi_vel", 127)
         self._rows.sort(key=lambda r: r["lo"])
 
         # Colors assigned once, keyed by sample name, from the INITIAL
@@ -138,20 +155,35 @@ class SamplePlacementDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        info = QLabel(
-            "Override each sample's key range and root note. Rows stay "
-            "sorted low to high and reorder automatically if an edit "
-            "changes that order. Overlapping ranges turn light red; a row "
-            "that can never sound (low above high, or a root outside its "
-            "own range) turns a stronger red. Both are warnings only -- OK "
-            "still applies whatever is shown.")
+        text = ("Override each sample's key range and root note. Rows stay "
+                "sorted low to high and reorder automatically if an edit "
+                "changes that order. Overlapping ranges turn light red; a row "
+                "that can never sound (low above high, or a root outside its "
+                "own range) turns a stronger red. Both are warnings only -- OK "
+                "still applies whatever is shown.")
+        if show_velocity:
+            # Say why a field is grey IN THE DIALOG. A disabled spin box with
+            # the reason only in its tooltip reads as a broken feature, and
+            # every bank built by the sample-folder import is this case --
+            # mpc2emu's writer puts every zone in one voice.
+            text += ("\nVel lo / Vel hi are the velocity window the sample "
+                     "answers to. These belong to the VOICE, not the zone, so "
+                     "they are greyed where one voice holds several samples: "
+                     "there is a single window and changing it would move the "
+                     "others too. Overlapping key ranges are normal once "
+                     "samples are separated by velocity — that is what "
+                     "layering is.")
+        info = QLabel(text)
         info.setWordWrap(True)
         info.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(info)
 
         self._table = QTableWidget()
-        self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(["Sample", "Low", "Root", "High"])
+        heads = ["Sample", "Low", "Root", "High"]
+        if show_velocity:
+            heads += ["Vel lo", "Vel hi"]
+        self._table.setColumnCount(len(heads))
+        self._table.setHorizontalHeaderLabels(heads)
         self._table.verticalHeader().setVisible(False)
         # The key columns are spin-box CELL WIDGETS, which work regardless of
         # these two -- but the Sample column is a plain editable item, and
@@ -207,6 +239,26 @@ class SamplePlacementDialog(QDialog):
                 self._table.setCellWidget(r, col, spin)
                 if focus == (row["name"], col):
                     spin.setFocus()
+
+            if not self._show_velocity:
+                continue
+            # Velocity is a plain 0-127 number, not a note, so these are
+            # ordinary spin boxes rather than NoteSpinBox -- showing "C3" for
+            # a velocity would be nonsense.
+            locked = row.get("vel_locked")
+            for col, key in ((4, "lo_vel"), (5, "hi_vel")):
+                vspin = QSpinBox()
+                vspin.setRange(0, 127)
+                vspin.setValue(int(row.get(key, 0 if key == "lo_vel" else 127)))
+                if locked:
+                    vspin.setEnabled(False)
+                    vspin.setToolTip(locked)
+                else:
+                    vspin.valueChanged.connect(functools.partial(
+                        self._on_value_changed, row["name"], key))
+                self._table.setCellWidget(r, col, vspin)
+                if focus == (row["name"], col):
+                    vspin.setFocus()
         self._table.blockSignals(False)
         self._refresh_warnings()
         self._refresh_piano()
@@ -268,6 +320,13 @@ class SamplePlacementDialog(QDialog):
     def _on_value_changed(self, name: str, key: str, value: int) -> None:
         row = next(r for r in self._rows if r["name"] == name)
         row[key] = value
+        if key in ("lo_vel", "hi_vel"):
+            # Velocity changes neither the low-to-high sort nor the piano, and
+            # two samples overlapping in KEY are perfectly normal once they
+            # are separated by velocity -- that is what layering IS. Repainting
+            # the key warnings here would flag correct layering as a fault.
+            self._refresh_warnings()
+            return
         old_order = [r["name"] for r in self._rows]
         new_rows = sorted(self._rows, key=lambda r: r["lo"])
         new_order = [r["name"] for r in new_rows]
@@ -315,6 +374,17 @@ class SamplePlacementDialog(QDialog):
         ])
 
     # -- result --------------------------------------------------------------
+
+    def velocity_overrides(self) -> dict[str, tuple[int, int]]:
+        """{sample_name: (lo_vel, hi_vel)} for every row, when the velocity
+        columns are shown; empty otherwise. Like `overrides()` this reports
+        EVERY row, not the edited ones -- the caller compares against what it
+        supplied."""
+        if not self._show_velocity:
+            return {}
+        return {row["name"]: (int(row.get("lo_vel", 0)),
+                              int(row.get("hi_vel", 127)))
+                for row in self._rows if not row.get("vel_locked")}
 
     def overrides(self) -> dict[str, tuple[int, int, int]]:
         """{sample_name: (lo_key, root_key, hi_key)} for every row, in its

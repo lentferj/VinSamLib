@@ -612,13 +612,28 @@ anything leaves the bank byte-for-byte identical, which matters more than it
 sounds: what the dialog displays is the *resolved* range, and writing all of
 it back would quietly re-place every sample in the preset.
 
+**Vel lo / Vel hi** are the velocity window the sample answers to — the other
+half of where a sample sits. They are greyed where one voice holds several
+samples, because in an E4B the window belongs to the **voice**, not the zone:
+there is a single window and changing it would move the others with it. Every
+bank produced by the sample-folder import is that case, since mpc2emu's writer
+puts every zone in one voice; hand-authored banks tend to one zone per voice
+and are freely editable. The Rename Samples dialog's **Plays** column shows
+the same window beside the note, but only when a preset actually has more than
+one — repeating `v1-127` down seventy rows hides the note instead of
+qualifying it.
+
+Overlapping key ranges are normal once samples are separated by velocity —
+that is what layering *is* — so the overlap warning stays a warning.
+
 **E4B only.** The button is disabled for the other two and the tooltip says
 why, rather than opening an editor that cannot apply what you type: a KRZ
 program reaches its samples through keymaps, and an EIII preset has no
 per-zone range at all — it carries an 88-entry table mapping each key to one
 zone. Both are their own piece of work.
 
-> ⚠️ **No sampler has yet loaded a bank re-placed this way.** A moved zone
+> ⚠️ **No sampler has yet loaded a bank re-placed or re-layered this way.**
+> A moved zone
 > also has to widen its **voice's** own key window, or the instrument clamps
 > the zone back and the edit silently does nothing — that widening is applied
 > here and verified against the corpus, but not on hardware. See
@@ -1291,6 +1306,16 @@ zones across the 8-bank corpus test, which is how it is kept honest.
 
 A sample used by several zones moves in **all** of them; see [New
 Bank](#new-bank) for why that is per-sample rather than per-zone.
+
+**Velocity** is the same feature and the same warning, with one structural
+difference worth stating: in an E4B the velocity window lives on the
+**voice** (`vpar[18]`/`vpar[21]`), not on the zone. The zone entry *has*
+velocity bytes and they read `(0, 127)` on every real bank measured here —
+present, plausible and inert. Reading them said 0.4% of presets are
+velocity-layered; reading the voice says **36.4% of 1604**, up to nine
+windows in one preset. Because a voice has exactly one window, the field is
+offered only where a voice holds a single sample, and greyed with the reason
+everywhere else.
 
 ### EIII / ESI-32
 

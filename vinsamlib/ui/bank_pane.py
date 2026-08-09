@@ -78,6 +78,16 @@ _EIII_KEY_OFFSET = 21
 _RENAME_OCTAVE = 2
 
 
+def _vel_window(vel):
+    """(lo, hi) for a velocity window worth reporting, or None for one that
+    covers everything. `lo <= 1` because 0 and 1 both mean "from the softest
+    playable note" -- a K2000/E4XT never sends velocity 0 as a note-on."""
+    if vel is None:
+        return None
+    lo, hi = int(vel[0]), int(vel[1])
+    return None if lo <= 1 and hi >= 127 else (lo, hi)
+
+
 def _sanitize_bank_name(name: str) -> str:
     """Neither E4B nor KRZ has an internal 'bank name' field — the name a
     real E4XT/K2000 shows for a bank is always taken from its *filename*
@@ -94,7 +104,7 @@ def _sanitize_bank_name(name: str) -> str:
 
 class BankPane(QWidget):
     statusMessage = Signal(str)
-    sendToPendingRequested = Signal(str, str, list, dict, dict)   # (name, format, items, renames, placement)
+    sendToPendingRequested = Signal(str, str, list, dict, dict, dict)   # (+ voice_velocity)
 
     def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
@@ -110,6 +120,7 @@ class BankPane(QWidget):
         #: {original sample name: (lo, root, hi)} from Adjust Placement.
         #: Cleared with the bank, exactly like the renames.
         self._zone_placement: dict = {}
+        self._voice_velocity: dict = {}
         self._dedupe_enabled = True
         self._prompt_on_duplicate = True
         self._last_bytes: Optional[bytes] = None
@@ -257,7 +268,8 @@ class BankPane(QWidget):
         # media would hold another.
         self.sendToPendingRequested.emit(name, self._format, list(self._items),
                                           dict(self._sample_renames),
-                                          dict(self._zone_placement))
+                                          dict(self._zone_placement),
+                                          dict(self._voice_velocity))
 
     @property
     def format(self) -> Optional[str]:
@@ -286,13 +298,15 @@ class BankPane(QWidget):
 
     def load_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
                       sample_renames: Optional[dict] = None,
-                      zone_placement: Optional[dict] = None) -> None:
+                      zone_placement: Optional[dict] = None,
+                      voice_velocity: Optional[dict] = None) -> None:
         """Public entry point for the Pending column's double-click "send
         back to New Bank" — replaces whatever's currently staged here with
         the given recipe, exactly as if it had been assembled from scratch."""
         self._items = list(items)
         self._sample_renames = dict(sample_renames or {})
         self._zone_placement = dict(zone_placement or {})
+        self._voice_velocity = dict(voice_velocity or {})
         self._format = fmt
         self._name_edit.setText(name)
         self._head.setText(f"New Bank  [{fmt}]")
@@ -493,6 +507,7 @@ class BankPane(QWidget):
         self._items = []
         self._sample_renames = {}
         self._zone_placement = {}
+        self._voice_velocity = {}
         self._reset_format_lock()
         self._name_edit.clear()
         self._refresh()
@@ -647,6 +662,25 @@ class BankPane(QWidget):
             for name, _root in self._samples_of(bank, preset):
                 elsewhere.setdefault(name, set()).add(label)
 
+        # {sample name: (lo_vel, hi_vel)} for the staged presets. Only E4B
+        # exposes one; _zone_ranges returns {} for the others.
+        vel_by_name: dict = {}
+        for bank, preset, _label in scope:
+            for idx, info in self._zone_ranges(bank, preset).items():
+                samp = bank.samples.get(idx)
+                if samp is not None and samp.name not in vel_by_name:
+                    vel_by_name[samp.name] = (info[3], info[4])
+
+        # Only worth showing when it DISTINGUISHES something, and "full range"
+        # has to mean what a musician means by it: authored banks use 1-127 as
+        # often as 0-127, and treating those as two different windows made a
+        # preset with no layering at all sprout a "v1-127" on every row but
+        # the first. Both normalise to None, so a preset that is really one
+        # layer shows nothing and a genuinely layered one shows only the rows
+        # that differ.
+        vel_by_name = {n: _vel_window(v) for n, v in vel_by_name.items()}
+        vel_informative = len(set(vel_by_name.values())) > 1
+
         rows: list[dict] = []
         known: set[str] = set()
         for bank, preset, _name in scope:
@@ -664,7 +698,14 @@ class BankPane(QWidget):
                 moved = self._zone_placement.get(name)
                 if moved is not None:
                     root = moved[1]
-                rows.append({"name": name, "root": root,
+                # The velocity window belongs next to the note: two samples in
+                # different layers of one key are otherwise identical rows,
+                # which is exactly when you most need to tell them apart while
+                # naming them. None for formats with nothing to show.
+                vel = vel_by_name.get(name) if vel_informative else None
+                if name in self._voice_velocity:
+                    vel = self._voice_velocity[name]
+                rows.append({"name": name, "root": root, "vel": vel,
                              "shared_with": sorted(elsewhere.get(name, ()))})
         return rows
 
@@ -796,8 +837,10 @@ class BankPane(QWidget):
         seen: dict = {}
         order: list = []
         used: dict = {}
+        sharers = self._voice_sharers(items)
         for bank, preset, _label in items:
-            for idx, (lo, root, hi) in self._zone_ranges(bank, preset).items():
+            for idx, (lo, root, hi, lo_vel, hi_vel, v_start) in \
+                    self._zone_ranges(bank, preset).items():
                 samp = bank.samples.get(idx)
                 if samp is None:
                     continue
@@ -817,18 +860,33 @@ class BankPane(QWidget):
                 if shown in used:
                     shown = samp.name
                 used[shown] = samp.name
+                shared = sharers.get((id(preset), v_start), 1)
                 seen[samp.name] = {"name": shown, "orig": samp.name,
-                                    "lo": lo, "root": root, "hi": hi}
+                                    "lo": lo, "root": root, "hi": hi,
+                                    "lo_vel": lo_vel, "hi_vel": hi_vel}
+                if shared > 1:
+                    seen[samp.name]["vel_locked"] = (
+                        f"This sample shares a voice with {shared - 1} other(s), "
+                        f"and a voice has a single velocity window -- changing "
+                        f"it here would move them too. Velocity is editable "
+                        f"only where a voice holds one sample.")
                 order.append(samp.name)
         return [seen[n] for n in order]
 
     def _zone_ranges(self, bank, preset) -> dict:
-        """{sample index: (lo, root, hi)} AS A READER RESOLVES IT.
+        """{sample index: (lo, root, hi, lo_vel, hi_vel, voice_start)} AS A
+        READER RESOLVES IT.
 
-        The voice clamp is applied here too -- `max(voice_lo, zone_lo)` and
-        `min(voice_hi, zone_hi)` -- because that is what the instrument plays
-        and therefore what the dialog must show. Reading the zone entry raw
-        would display a range the hardware never uses."""
+        The key range has the voice clamp applied -- `max(voice_lo, zone_lo)`
+        and `min(voice_hi, zone_hi)` -- because that is what the instrument
+        plays and therefore what the dialog must show. Reading the zone entry
+        raw would display a range the hardware never uses.
+
+        VELOCITY is read from the voice and nowhere else. The zone entry has
+        velocity bytes and they are (0, 127) on every real bank measured here;
+        the layering lives at `vpar[18]`/`vpar[21]`. `voice_start` comes back
+        with it so the caller can tell whether two samples share a voice --
+        which decides whether their velocity can be edited apart."""
         out: dict = {}
         body = getattr(preset, "body", None)
         if not body or self._format != "E4B":
@@ -836,6 +894,8 @@ class BankPane(QWidget):
         for v_start, table_start, n in e4b._walk_voices(body, preset.num_voices):
             vlo = body[v_start + e4b.VOICE_LO_KEY]
             vhi = body[v_start + e4b.VOICE_HI_KEY]
+            vlov = body[v_start + e4b.VOICE_LO_VEL]
+            vhiv = body[v_start + e4b.VOICE_HI_VEL]
             for k in range(n):
                 eo = table_start + k * e4b.ZONE_ENTRY
                 if eo + e4b.ZONE_ENTRY > len(body):
@@ -845,8 +905,28 @@ class BankPane(QWidget):
                     continue
                 out[idx] = (max(vlo, body[eo + e4b.ZONE_LO_KEY]),
                             body[eo + e4b.ZONE_ROOT_KEY],
-                            min(vhi, body[eo + e4b.ZONE_HI_KEY]))
+                            min(vhi, body[eo + e4b.ZONE_HI_KEY]),
+                            vlov, vhiv, v_start)
         return out
+
+    def _voice_sharers(self, items) -> dict:
+        """{(preset id, voice_start): number of distinct samples in it}.
+
+        A voice has ONE velocity window, so every sample in it shares that
+        window and there is nowhere to put a per-sample one. A voice holding
+        several samples therefore cannot have its velocity edited for one of
+        them -- the pane says so and disables the field, rather than moving a
+        neighbour's sample and calling it success.
+
+        This is not a rare shape: mpc2emu's own writer emits ONE voice holding
+        every zone, so a bank built by the sample-folder import is entirely
+        this case, while hand-authored E4Bs tend to one zone per voice."""
+        counts: dict = {}
+        for bank, preset, _label in items:
+            for idx, info in self._zone_ranges(bank, preset).items():
+                key = (id(preset), info[5])
+                counts.setdefault(key, set()).add(idx)
+        return {k: len(v) for k, v in counts.items()}
 
     def _adjust_placement(self) -> None:
         items = self._selected_presets()
@@ -857,6 +937,8 @@ class BankPane(QWidget):
         for r in rows:                       # show edits already made
             if r["orig"] in self._zone_placement:
                 r["lo"], r["root"], r["hi"] = self._zone_placement[r["orig"]]
+            if r["orig"] in self._voice_velocity:
+                r["lo_vel"], r["hi_vel"] = self._voice_velocity[r["orig"]]
 
         # Everything the dialog hands back is keyed by the name it DISPLAYED,
         # which is the renamed one; every map we store is keyed by the source
@@ -865,7 +947,7 @@ class BankPane(QWidget):
         to_orig = {r["name"]: r["orig"] for r in rows}
 
         dialog = SamplePlacementDialog(rows, octave_offset=_RENAME_OCTAVE,
-                                        parent=self)
+                                        parent=self, show_velocity=True)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         # `overrides()` returns EVERY row, not the edited ones, and the values
@@ -876,12 +958,24 @@ class BankPane(QWidget):
         # OK would silently re-place the whole preset. Only real changes are
         # kept.
         before = {r["orig"]: (r["lo"], r["root"], r["hi"]) for r in rows}
+        before_vel = {r["orig"]: (r["lo_vel"], r["hi_vel"]) for r in rows}
         self._zone_placement = {k: v for k, v in self._zone_placement.items()
                                  if k not in before}
         for shown_name, moved in dialog.overrides().items():
             orig = to_orig.get(shown_name)
             if orig is not None and moved != before.get(orig):
                 self._zone_placement[orig] = moved
+
+        # Same rule as placement: only rows that actually differ. A voice's
+        # velocity window is shared by every zone in it, so writing back an
+        # unchanged value is not the no-op it looks like once a preset has
+        # several voices reading the same sample.
+        self._voice_velocity = {k: v for k, v in self._voice_velocity.items()
+                                 if k not in before_vel}
+        for shown_name, vel in dialog.velocity_overrides().items():
+            orig = to_orig.get(shown_name)
+            if orig is not None and vel != before_vel.get(orig):
+                self._voice_velocity[orig] = vel
 
         # The dialog's Sample column is editable and returns typed names. It
         # feeds the same rename map the Rename Samples dialog fills, rather
@@ -951,6 +1045,8 @@ class BankPane(QWidget):
         # and Send to Image all assemble identical bytes.
         if self._zone_placement and self._format in self._PLACEABLE:
             fn = functools.partial(fn, zone_placement=dict(self._zone_placement))
+        if self._voice_velocity and self._format in self._PLACEABLE:
+            fn = functools.partial(fn, voice_velocity=dict(self._voice_velocity))
         return fn
 
     def _apply_size(self, gen: int, data: bytes) -> None:

@@ -244,6 +244,10 @@ failing.
 | audio and sample numbering untouched | ✅ | n/a | n/a |
 | the placement reaches the IMAGE, not just Save as… | `manual_placement_reaches_image` | n/a | n/a |
 | the round trip Pending → New Bank keeps it | ✅ | n/a | n/a |
+| the VELOCITY window is shown and editable | `manual_e4b_velocity` ¹² | n/a ⁸ | n/a ⁸ |
+| a shared voice is LOCKED, not silently edited | ✅ ¹² | n/a | n/a |
+| an empty velocity map is a byte-identical no-op | ✅ | n/a | n/a |
+| "Plays" shows a window only where it distinguishes | ✅ ¹² | n/a | n/a |
 | the button is enabled, or disabled WITH A REASON | ✅ enabled | ✅ disabled + tooltip | ✅ disabled + tooltip |
 | a RENAMED sample is listed under its new name | `manual_rename_placement_agree` ¹¹ | n/a | n/a |
 | a MOVED sample shows its new root in "Plays" | ✅ ¹¹ | n/a | n/a |
@@ -272,6 +276,22 @@ span of all zones sharing the sample. Stored verbatim, pressing OK without
 touching anything re-places the whole preset. The pane keeps only rows that
 differ from what it displayed; the test opens the dialog, accepts it
 untouched, and requires the bank back byte-identical.
+
+¹² Velocity lives on the **voice** (`vpar[18]`/`vpar[21]`), not the zone. The
+zone's own velocity bytes exist and read `(0, 127)` on every real bank here,
+so measuring layering there gives **0.4%** of presets and measuring the voice
+gives **36.4% of 1604** — the first number is what a present, plausible, inert
+field buys you. The offsets were confirmed against mpc2emu's parser over 40
+voices of a bank where `hi_vel` actually varies (65 vs 127); in a bank where
+every `hi_vel` is 127, nine different offsets "match" and picking one would
+have been a coin toss dressed as a measurement.
+
+A voice has ONE window, so where a voice holds several samples the field is
+disabled with the reason in the dialog — not merely in a tooltip, because
+every bank the sample-folder import builds is that case (mpc2emu's writer puts
+every zone in one voice) and a silently grey control reads as broken.
+`manual_e4b_velocity` fails if the lock is removed, and separately if the edit
+never reaches a built bank.
 
 ¹¹ **Found in the GUI, not by a test:** after renaming 37 samples, Adjust
 Placement… listed every one under its ORIGINAL name — the two windows

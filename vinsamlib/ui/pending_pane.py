@@ -78,6 +78,9 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         placement = entry.get("zone_placement") or {}
         if placement and fmt == "E4B":
             kwargs["zone_placement"] = placement
+        velocity = entry.get("voice_velocity") or {}
+        if velocity and fmt == "E4B":
+            kwargs["voice_velocity"] = velocity
         data = fn(selections, **kwargs)
         ext = _FORMAT_EXT[fmt]
         # Session-scoped: the returned paths go to the image builders, which
@@ -95,7 +98,7 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
 
 class PendingBanksPane(QWidget):
     statusMessage = Signal(str)
-    moveToNewBankRequested = Signal(str, str, list, dict, dict)   # (+ zone_placement)
+    moveToNewBankRequested = Signal(str, str, list, dict, dict, dict)   # (+ voice_velocity)
     buildRequested = Signal(list, str)                # (temp_file_paths, format)
 
     def __init__(self, parent=None):
@@ -226,7 +229,8 @@ class PendingBanksPane(QWidget):
 
     def add_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
                      sample_renames: Optional[dict] = None,
-                     zone_placement: Optional[dict] = None) -> bool:
+                     zone_placement: Optional[dict] = None,
+                     voice_velocity: Optional[dict] = None) -> bool:
         if not items:
             return False
         if self._format is not None and fmt != self._format:
@@ -238,7 +242,8 @@ class PendingBanksPane(QWidget):
         self._pending.append({"name": name or "NewBank", "format": fmt, "items": list(items),
                                "convert_opts": None,
                                "sample_renames": dict(sample_renames or {}),
-                               "zone_placement": dict(zone_placement or {})})
+                               "zone_placement": dict(zone_placement or {}),
+                               "voice_velocity": dict(voice_velocity or {})})
         self._refresh()
         self._list.setCurrentRow(len(self._pending) - 1)
         self.statusMessage.emit(f'Added "{name}" to the pending queue')
@@ -402,7 +407,8 @@ class PendingBanksPane(QWidget):
         # is meant to be editable, not lossy.
         self.moveToNewBankRequested.emit(entry["name"], entry["format"], entry["items"],
                                           dict(entry.get("sample_renames") or {}),
-                                          dict(entry.get("zone_placement") or {}))
+                                          dict(entry.get("zone_placement") or {}),
+                                          dict(entry.get("voice_velocity") or {}))
 
     def _clear(self) -> None:
         self._pending = []

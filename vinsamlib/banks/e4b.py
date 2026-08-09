@@ -74,6 +74,18 @@ ZONE_LO_KEY, ZONE_HI_KEY, ZONE_ROOT_KEY = 2, 5, 14
 #: is not optional bookkeeping, it is what makes the edit take effect.
 VOICE_LO_KEY, VOICE_HI_KEY = 14, 17
 
+#: A voice's VELOCITY window, same stride as the key window above. This is
+#: where velocity layering lives in an E4B -- NOT in the zone entry, whose own
+#: velocity bytes read (0, 127) on every real bank measured here. Reading the
+#: zone said 0.4% of presets are velocity-layered; reading the voice says
+#: 36.4% of 1604, up to nine windows in one preset.
+#:
+#: Confirmed against mpc2emu's parser over 40 voices of a bank where hi_vel
+#: actually VARIES (65 vs 127). That detail is the whole verification: in a
+#: bank where every hi_vel is 127, nine different offsets "match" it, and
+#: picking one of those would have been a coin toss dressed as a measurement.
+VOICE_LO_VEL, VOICE_HI_VEL = 18, 21
+
 # Bank limits from writers/bank_splitter.py (_MAX_SAMPLES_PER_BANK / _MAX_PRESETS_PER_BANK)
 MAX_PRESETS = 1000
 MAX_SAMPLES = 1000
@@ -414,9 +426,23 @@ def parse(path: str) -> E4BFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
+def _apply_velocity(body: bytearray, voice_start: int,
+                     lo_vel: int, hi_vel: int) -> None:
+    """Set the VOICE's velocity window. Unlike a key move there is no zone
+    half to this: the zone entry carries no usable velocity range, so the
+    voice is the whole edit."""
+    lo_vel = max(0, min(127, lo_vel))
+    hi_vel = max(0, min(127, hi_vel))
+    if lo_vel > hi_vel:
+        lo_vel, hi_vel = hi_vel, lo_vel
+    body[voice_start + VOICE_LO_VEL] = lo_vel
+    body[voice_start + VOICE_HI_VEL] = hi_vel
+
+
 def assemble(selections: list[tuple[E4BFile, E4BPreset]],
               sample_names: Optional[dict] = None,
-              zone_placement: Optional[dict] = None) -> bytes:
+              zone_placement: Optional[dict] = None,
+              voice_velocity: Optional[dict] = None) -> bytes:
     """Build a new E4B FORM from selected (source_bank, preset) pairs.
 
     Each preset's original chunk bytes are copied verbatim; only the 2-byte
@@ -462,7 +488,7 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
         # that voice's own key window. Built once per preset rather than
         # searched per zone.
         owner: dict[int, int] = {}
-        if zone_placement:
+        if zone_placement or voice_velocity:
             for v_start, table_start, n in _walk_voices(preset.body,
                                                          preset.num_voices):
                 for k in range(n):
@@ -486,6 +512,15 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
             move = (zone_placement or {}).get(samp.name)
             if move is not None and zone_off in owner:
                 _apply_placement(body, owner[zone_off], zone_off, *move)
+            # Velocity belongs to the VOICE, so this patches whatever voice
+            # owns the zone -- and every other zone in that voice moves with
+            # it. That is not a shortcut: a voice has ONE velocity window and
+            # there is nowhere else to put a per-zone one. The pane refuses to
+            # offer the edit when a voice is shared, rather than silently
+            # dragging a neighbour's sample along.
+            vel = (voice_velocity or {}).get(samp.name)
+            if vel is not None and zone_off in owner:
+                _apply_velocity(body, owner[zone_off], *vel)
             key = (samp.name, samp.body)
             new_idx = dedupe_key_to_new_idx.get(key)
             if new_idx is None:
