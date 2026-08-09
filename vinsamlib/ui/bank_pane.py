@@ -95,6 +95,10 @@ def _sanitize_bank_name(name: str) -> str:
 class BankPane(QWidget):
     statusMessage = Signal(str)
     sendToPendingRequested = Signal(str, str, list, dict, dict, dict)   # (+ voice_velocity)
+    #: A soundfont-style source was dropped here: list of import-request
+    #: dicts (see ui/dnd.build_import_mime_data). MainWindow converts them
+    #: and calls back into add_presets() with what they became.
+    importRequested = Signal(list)
 
     def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
@@ -315,6 +319,19 @@ class BankPane(QWidget):
 
     def dropEvent(self, event) -> None:
         mime = event.mimeData()
+        if dnd.has_import_request(mime):
+            requests = dnd.import_requests_from(mime)
+            if not requests:
+                event.ignore()
+                return
+            # Accept now, deliver later: converting is MainWindow's job (it
+            # owns the Convert Options dialog, the Config and the worker
+            # queue), and it cannot finish inside a drop handler anyway. The
+            # presets appear when the conversion does, exactly as they do for
+            # the same file imported from the Explorer's context menu.
+            event.acceptProposedAction()
+            self.importRequested.emit(requests)
+            return
         if not self._acceptable(mime):
             event.ignore()
             return
@@ -329,6 +346,11 @@ class BankPane(QWidget):
                 f"Already in New Bank, skipped: {', '.join(dupes)}")
 
     def _acceptable(self, mime) -> bool:
+        if dnd.has_import_request(mime):
+            # An import source carries no format of its own -- the target
+            # format is chosen in the dialog the drop opens, and the pane's
+            # own lock is handed to that dialog rather than checked here.
+            return bool(dnd.import_requests_from(mime))
         descriptor = dnd.descriptor_from(mime)
         payload = dnd.payload_from(mime)
         if not descriptor or len(descriptor) != len(payload):
@@ -338,9 +360,31 @@ class BankPane(QWidget):
             self.statusMessage.emit("Can't drop a mix of formats into one bank")
             return False
         fmt = formats.pop()
+        if self._rejects_format(fmt):
+            return False
         if self._format is not None and fmt != self._format:
             self.statusMessage.emit(f"This bank is already {self._format} — can't add a {fmt} preset")
             return False
+        return True
+
+    def _rejects_format(self, fmt: str) -> bool:
+        """True (having said why) when *fmt* is not one this pane can build.
+
+        New Bank assembles E4B, KRZ and EIII and nothing else, but until now
+        it only ever checked that a format string was non-empty -- so an
+        unlocked pane would accept any label at all, set `self._format` to
+        it, and only fall over later in `_assemble_fn()` with a bare KeyError
+        on `_ASSEMBLE_FNS`. Nothing produced such a label before; the
+        soundfont-style import sources (SF2, SFZ, EXS24, TAL, GIG) are the
+        first formats in this project that can be read and never written, so
+        the rule is worth stating where it can be enforced rather than left
+        as something no caller happens to violate. Import sources reach New
+        Bank only *after* conversion, as the E4B/KRZ/EIII they became."""
+        if fmt in _ASSEMBLE_FNS:
+            return False
+        self.statusMessage.emit(
+            f"New Bank builds {', '.join(sorted(_ASSEMBLE_FNS))} banks — "
+            f"{fmt} is an import source, not an output format")
         return True
 
     def unique_name(self, base: str) -> str:
@@ -377,6 +421,8 @@ class BankPane(QWidget):
             self.statusMessage.emit("Can't add a mix of formats to one bank")
             return False
         fmt = formats.pop()
+        if self._rejects_format(fmt):
+            return False
         if self._format is not None and fmt != self._format:
             self.statusMessage.emit(f"This bank is already {self._format} — can't add a {fmt} preset")
             return False
