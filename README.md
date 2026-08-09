@@ -1055,7 +1055,15 @@ just text until something decides which octave numbering wrote it.
 
 **Adjust Sample Placement…** opens the editor described below; the label
 beside it reads *Auto-computed placement (default)* until you accept an
-override, then *Custom placement set for N sample(s)*. Stereo Samples'
+override, then *Custom placement set for N sample(s)*.
+
+The editor grows **Vel lo / Vel hi** columns when — and only when — the folder
+actually carries velocity layers, which it does when the filenames name one
+(`Piano-C3-v40`, `…-v90`, or dynamics like `pp`/`mf`/`ff`). Two layers of one
+note are then stacked by velocity instead of spread across neighbouring keys,
+and the columns let you move the split. Where no filename names a velocity
+every zone is full-range, so the columns are hidden rather than offered as two
+identical numbers per row. Stereo Samples'
 **Test** button works here too, checking the actual WAVs for stereo
 content. Both re-read the folder using whatever **Middle C is:** is
 selected at that moment, not whatever it was when the dialog opened.
@@ -1153,12 +1161,10 @@ gone.
 (2026-08-09), which stacks a collided group by velocity only when **every**
 member names one and no two name the same — a drum kit still spreads.
 
-> ⚠️ **E4B targets still lose the layering**, for a different reason and it
-> is not yet fixed: in an E4B the velocity window belongs to the *voice*, and
-> mpc2emu's E4B writer puts every zone of an imported folder in one voice, so
-> the four zones' differing windows collapse to one. KRZ and EIII targets keep
-> it. Reported upstream; until it lands, import a layered folder as KRZ or
-> EIII if the layering matters.
+All three target formats keep the layering. In an E4B the velocity window
+belongs to the *voice* rather than the zone, so the writer splits a layered
+folder into one voice per window; KRZ carries it on the program layer,
+quantised to the machine's eight dynamic marks; EIII keeps it per zone.
 
 ### If you built KRZ banks from velocity-layered programs before 2026-08-09, rebuild them
 

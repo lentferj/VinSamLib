@@ -133,6 +133,10 @@ because they rewrite audio or mapping rather than passing it through:
 | start / tail trim | `manual_ui_smoke_convert` |
 | sample naming scheme, per-row names | `manual_ui_smoke_sample_names` ², `manual_names_e2e` |
 | placement overrides (key range / root) | `manual_ui_smoke_stereo`, `manual_names_e2e` |
+| velocity layers detected from filenames | `manual_sampledir_velocity` ¹³ |
+| the Vel columns appear only when layered | `manual_sampledir_velocity` |
+| a velocity override reaches the written bank | `manual_sampledir_velocity` |
+| all three targets keep the layering | `manual_sampledir_velocity` ¹⁴ |
 
 ² lives on the `feat/sample-names-*` branches.
 
@@ -415,6 +419,29 @@ remembering when reading a guard's stated limits: they are a list of the
 faults it will let through, not a disclaimer.
 
 ---
+
+¹³ The velocity columns were originally left OUT of the import editor, on
+the reasoning that "a folder being imported has no velocity information to
+show — the sampledir parser writes 0-127 on every zone". True when written,
+and wrong from mpc2emu `50114de` onward. **Nothing failed when it stopped
+being true**: the import could detect layering while the editor still could
+not show it, and no test noticed, because the test suite asserted what the
+code did rather than what the format now offered. A comment stating a fact
+about someone else's code is a claim with a shelf life.
+
+¹⁴ E4B keeps velocity on the VOICE, so a writer that puts a layered folder's
+zones in one voice collapses both windows into one spanning both. Reported
+upstream and fixed in mpc2emu `e3bd751`, which emits one voice per distinct
+window; **68 of 2 560 voices across 2 067 `.sfz` files** were affected, so the
+damage long predates the folder work.
+
+The check reads the written `vpar` bytes rather than round-tripping through
+mpc2emu's parser, and that is the transferable part: their parser intersects
+the voice window with the zone entry's velocity bytes their writer also emits,
+so a round trip **rebuilds a distinction the hardware would have lost** and
+passes either way. Their own first reproduction passed for exactly that
+reason. A round trip through one project's own reader cannot see a fault its
+own writer compensates for.
 
 ## Matrix G — the control is REACHABLE, not merely correct
 

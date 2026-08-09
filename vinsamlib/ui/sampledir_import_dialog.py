@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QMessage
 
 from .format_convert_dialog import FormatConvertDialog
 from .sample_names_widget import SampleNamesWidget
-from .sample_placement_dialog import SamplePlacementDialog
+from .sample_placement_dialog import SamplePlacementDialog, vel_window
 from ..build.convert import ConversionOptions
 from ..build.sample_names import names_from_base
 
@@ -70,6 +70,7 @@ class SampleDirImportDialog(FormatConvertDialog):
 
         self._placement_loader = placement_loader
         self._zone_overrides: Optional[dict] = None
+        self._velocity_overrides: Optional[dict] = None
         self._name_overrides: dict = {}
 
         octave_row = QWidget()
@@ -133,6 +134,11 @@ class SampleDirImportDialog(FormatConvertDialog):
     def zone_overrides(self) -> Optional[dict]:
         return self._zone_overrides
 
+    def velocity_overrides(self) -> Optional[dict]:
+        """{sample_name: (lo_vel, hi_vel)}, or None if the folder carried no
+        layering or the editor was never accepted."""
+        return self._velocity_overrides
+
     def sample_name_base(self) -> str:
         """Base name for `<base>-<key>` sample names, or "" to keep the names
         the conversion produced."""
@@ -160,8 +166,20 @@ class SampleDirImportDialog(FormatConvertDialog):
             self._placement_button.setEnabled(True)
 
         zones = bank.presets[0].voices[0].zones
-        rows = [{"name": z.sample_name, "lo": z.lo_key, "root": z.root_key, "hi": z.hi_key}
+        rows = [{"name": z.sample_name, "lo": z.lo_key, "root": z.root_key,
+                 "hi": z.hi_key, "lo_vel": z.lo_vel, "hi_vel": z.hi_vel}
                 for z in zones]
+
+        # Velocity columns only when the folder actually HAS layers. mpc2emu's
+        # parser reads a velocity token in the filename (`-v40`, `-ff`) and
+        # stacks a collided root by velocity instead of spreading it across
+        # keys; where no filename says so, every zone is 0-127 and the columns
+        # would be two identical numbers per row inviting an edit that means
+        # nothing. This comment used to say the parser ALWAYS writes 0-127 --
+        # true when the columns were first left out, wrong since mpc2emu
+        # 50114de, and the reason the import could detect layering while the
+        # editor still could not show it.
+        layered = len({vel_window((z.lo_vel, z.hi_vel)) for z in zones}) > 1
 
         # Show the names the IMPORT will produce, not the ones the parse
         # produced. Same call the import itself makes (sampledir_import /
@@ -191,9 +209,14 @@ class SampleDirImportDialog(FormatConvertDialog):
         display_octave = self.octave_offset()
         if display_octave is None:
             display_octave = _DISPLAY_OCTAVE_OFFSET_FALLBACK
-        dialog = SamplePlacementDialog(rows, octave_offset=display_octave, parent=self)
+        dialog = SamplePlacementDialog(rows, octave_offset=display_octave,
+                                        parent=self, show_velocity=layered)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._zone_overrides = dialog.overrides()
+            before = {r["name"]: (r["lo_vel"], r["hi_vel"]) for r in rows}
+            moved = {n: v for n, v in dialog.velocity_overrides().items()
+                     if v != before.get(n)}
+            self._velocity_overrides = moved or None
             self._name_overrides = dialog.name_overrides()
             self._placement_status.setText(
                 f"Custom placement set for {len(self._zone_overrides)} sample(s)")
@@ -223,7 +246,7 @@ class SampleDirImportDialog(FormatConvertDialog):
                                         sample_loader=sample_loader, placement_loader=placement_loader,
                                         source_text=source_text)
         if dialog.exec() != QDialog.DialogCode.Accepted:
-            return None, None, None, ("", True, {})
+            return None, None, None, ("", True, {}), None
         return (dialog._to_options(), dialog.octave_offset(), dialog.zone_overrides(),
                 (dialog.sample_name_base(), dialog.sample_name_with_key(),
-                 dialog.sample_name_overrides()))
+                 dialog.sample_name_overrides()), dialog.velocity_overrides())

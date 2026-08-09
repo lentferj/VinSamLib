@@ -496,7 +496,8 @@ class MainWindow(QMainWindow):
         SEPARATE argument from `path` on purpose: for a hand-picked selection
         `path` is the staging directory, so showing it would name a temp
         directory the user has never seen instead of the files they chose."""
-        opts, octave_offset, zone_overrides, naming = SampleDirImportDialog.get_import_options(
+        (opts, octave_offset, zone_overrides, naming,
+         velocity_overrides) = SampleDirImportDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
             sample_loader=lambda octave: sampledir_import.load_samples_for_test(path, octave),
             placement_loader=lambda octave: sampledir_import.parse_preview(path, octave),
@@ -516,9 +517,17 @@ class MainWindow(QMainWindow):
         # octave for the generated names: the picker's own choice, or the
         # display fallback when it is on Auto-detect (nothing else knows yet).
         name_octave = octave_offset if octave_offset is not None else 2
+        # Keywords past `octave_offset`: this call grew a parameter in the
+        # middle and the positional form silently slid `risks` into
+        # `velocity_overrides`, which type-checks and quietly does the wrong
+        # thing at runtime.
         w = workers.Worker(sampledir_import.import_sample_dir, path, opts,
-                           octave_offset, zone_overrides, risks, label,
-                           naming[0], name_octave, naming[1], naming[2])
+                           octave_offset,
+                           zone_overrides=zone_overrides,
+                           velocity_overrides=velocity_overrides,
+                           risks_out=risks, bank_name=label,
+                           name_base=naming[0], name_octave=name_octave,
+                           name_with_key=naming[1], name_overrides=naming[2])
         w.signals.finished.connect(
             lambda tmp_path, p=path, n=label, r=risks:
                 self._on_sample_dir_imported(tmp_path, p, opts, r, n))

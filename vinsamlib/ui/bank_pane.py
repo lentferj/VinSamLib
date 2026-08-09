@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QFrame, 
 
 from . import dnd, workers
 from .detail_pane import _escape, zone_stats_lines
-from .sample_placement_dialog import SamplePlacementDialog
+from .sample_placement_dialog import SamplePlacementDialog, vel_window
 from .sample_rename_dialog import SampleRenameDialog
 from ..banks import e4b, eiii, krz, summary
 from ..filenames import safe_filename
@@ -76,16 +76,6 @@ _EIII_KEY_OFFSET = 21
 #: import path's own name_octave fallback, so a bank named here and one
 #: named at import agree instead of sitting an octave apart.
 _RENAME_OCTAVE = 2
-
-
-def _vel_window(vel):
-    """(lo, hi) for a velocity window worth reporting, or None for one that
-    covers everything. `lo <= 1` because 0 and 1 both mean "from the softest
-    playable note" -- a K2000/E4XT never sends velocity 0 as a note-on."""
-    if vel is None:
-        return None
-    lo, hi = int(vel[0]), int(vel[1])
-    return None if lo <= 1 and hi >= 127 else (lo, hi)
 
 
 def _sanitize_bank_name(name: str) -> str:
@@ -678,7 +668,7 @@ class BankPane(QWidget):
         # the first. Both normalise to None, so a preset that is really one
         # layer shows nothing and a genuinely layered one shows only the rows
         # that differ.
-        vel_by_name = {n: _vel_window(v) for n, v in vel_by_name.items()}
+        vel_by_name = {n: vel_window(v) for n, v in vel_by_name.items()}
         vel_informative = len(set(vel_by_name.values())) > 1
 
         rows: list[dict] = []

@@ -123,6 +123,7 @@ def parse_preview(dir_path: str, octave_offset: Optional[int] = None) -> Any:
 def import_sample_dir(dir_path: str, opts: ConversionOptions,
                        octave_offset: Optional[int] = None,
                        zone_overrides: Optional[dict] = None,
+                       velocity_overrides: Optional[dict] = None,
                        risks_out: Optional[list] = None,
                        bank_name: Optional[str] = None,
                        name_base: str = "", name_octave: int = 2,
@@ -140,6 +141,12 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
     number). None lets mpc2emu auto-detect it from a majority vote across
     the folder's own filenames (its own CLI default).
 
+    velocity_overrides: {sample_name: (lo_vel, hi_vel)} from the same dialog,
+    applied to the same zone. Only offered when the folder's filenames
+    actually named velocities -- mpc2emu's parser detects a token like `-v40`
+    and stacks a collided root by velocity rather than spreading it across
+    keys, and where nothing names one every zone is 0-127.
+
     zone_overrides: {sample_name: (lo_key, root_key, hi_key)} from the
     Sample Placement dialog's manual review, applied to the matching
     zone right after THIS SAME parse -- parse_sample_dir() is a pure
@@ -154,12 +161,21 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
     cleanly ends up stacking voices on one note."""
     bank = _run_captured(sampledir_parser.parse_sample_dir, dir_path,
                           octave_offset=octave_offset)
-    if zone_overrides:
+    if zone_overrides or velocity_overrides:
         for voice in bank.presets[0].voices:
             for zone in voice.zones:
-                override = zone_overrides.get(zone.sample_name)
+                override = (zone_overrides or {}).get(zone.sample_name)
                 if override is not None:
                     zone.lo_key, zone.root_key, zone.hi_key = override
+                # Velocity is per ZONE here, unlike a staged E4B bank where it
+                # belongs to the voice: this Bank has not been written yet, so
+                # each writer still gets to decide how to express it -- and
+                # e4b_writer splits a VoiceLayer into one voice per distinct
+                # window when it does.
+                vel = (velocity_overrides or {}).get(zone.sample_name)
+                if vel is not None:
+                    lo, hi = (max(0, min(127, int(v))) for v in vel)
+                    zone.lo_vel, zone.hi_vel = (lo, hi) if lo <= hi else (hi, lo)
     # bank_name: what the preset is called. The folder's name is right for a
     # folder import and meaningless for a staged selection, whose directory is
     # a temp path -- see stage_files().

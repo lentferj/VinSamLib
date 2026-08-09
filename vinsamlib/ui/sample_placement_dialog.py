@@ -83,6 +83,25 @@ def _shown_name(row: dict) -> str:
     return row.get("new_name") or _baseline_name(row)
 
 
+def vel_window(vel):
+    """(lo, hi) for a velocity window worth reporting, or None for one that
+    covers everything.
+
+    `lo <= 1` counts as full range because 0 and 1 both mean "from the
+    softest playable note" -- no sampler sends velocity 0 as a note-on, and
+    authored banks use the two interchangeably. Treating them as different
+    windows made an unlayered preset sprout "v1-127" on every row but the
+    first, which qualifies the note by burying it.
+
+    Shared by the two callers that decide whether velocity is worth showing
+    at all: New Bank's Rename/Placement dialogs and the sample-folder import.
+    """
+    if vel is None:
+        return None
+    lo, hi = int(vel[0]), int(vel[1])
+    return None if lo <= 1 and hi >= 127 else (lo, hi)
+
+
 class NoteSpinBox(QSpinBox):
     """A QSpinBox whose displayed text is a note name (e.g. "C3", "F#4")
     over the real MIDI value, using the SAME octave-offset convention as
