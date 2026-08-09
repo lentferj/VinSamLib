@@ -174,7 +174,7 @@ the name differently enough that they are genuinely three implementations.
 | rename leaves preset/program bodies untouched | ✅ | ✅ | ✅ |
 | an empty rename map is a byte-identical no-op | ✅ | ✅ | ✅ |
 | every name length 1–16 round-trips | — | ✅ (block regrows) | — |
-| the rename reaches the IMAGE, not just Save as… | `manual_rename_reaches_image` | ⚠ untested ⁵ | ⚠ untested ⁵ |
+| the rename reaches the IMAGE, not just Save as… ⁵ | ✅ | ✅ | ✅ |
 | key-suffixed bulk rename `<base>-<key>` | ✅ root from zone byte 14 | ✅ root from Soundfilehead byte 0 | ✅ root from zone byte 0 (+21) |
 | name length capped to the format's 16 | ✅ fixed field | ✅ enforced ⁶ | ✅ fixed field |
 | colliding `<base>-<key>` names disambiguated | ✅ | ✅ | ✅ |
@@ -211,9 +211,13 @@ set `NoEditTriggers` — its per-row rename had never been usable since the day
 it shipped. **A UI feature needs a test that drives the UI**; asserting on the
 model underneath will pass against a control the user cannot reach.
 
-⁵ `manual_rename_reaches_image` drives E4B through Pending → build → re-read.
-The other two share that code path and their format layers are separately
-tested, but the combination has not been run.
+⁵ **Was:** "drives E4B through Pending → build → re-read; the other two share
+that code path." They did not. `_assemble_all` gated the rename on
+`fmt in ("E4B", "EIII")` — written when KRZ could not rename and never
+revisited when it could — so a KRZ rename reached the meter and Save as… and
+vanished on the way to an image. `manual_rename_reaches_image` now runs the
+walk **per format** and all three pass. A shared code path is an argument, not
+a measurement, and this is what the argument was worth.
 
 **KRZ is the only one that changes a block's LENGTH**, and the only one with a
 self-check: `assemble()` re-reads any bank it resized and refuses one that
@@ -222,6 +226,68 @@ measured to the 2-byte-aligned end while `blocksize` is computed after a
 4-byte pad, so `size += delta` is right and `blocksize += delta` is wrong
 about half the time. `manual_krz_sample_rename` builds the wrong version
 deliberately and requires it to fail — it breaks 4 of 4.
+
+### Moving a sample's PLACEMENT inside an assembled bank
+
+Shipped 2026-08-09, the sibling of the rename above and the same shape of
+edit: a patch into preset bodies that `assemble()` otherwise copies verbatim.
+**E4B only** — see the last row for why the others are absent rather than
+failing.
+
+| what | E4B | KRZ | EIII |
+|---|---|---|---|
+| lo / root / hi patched in the zone entry | `manual_e4b_placement` (8 banks) | n/a ⁸ | n/a ⁸ |
+| the owning VOICE's key window widened with it | ✅ ⁹ | n/a | n/a |
+| an empty placement map is a byte-identical no-op | ✅ | n/a | n/a |
+| **OK with nothing edited** is a byte-identical no-op | `manual_placement_reaches_image` ¹⁰ | n/a | n/a |
+| a sample used by several zones moves in ALL of them | ✅ (asserted against the zone count) | n/a | n/a |
+| audio and sample numbering untouched | ✅ | n/a | n/a |
+| the placement reaches the IMAGE, not just Save as… | `manual_placement_reaches_image` | n/a | n/a |
+| the round trip Pending → New Bank keeps it | ✅ | n/a | n/a |
+| the button is enabled, or disabled WITH A REASON | ✅ enabled | ✅ disabled + tooltip | ✅ disabled + tooltip |
+| a RENAMED sample is listed under its new name | `manual_rename_placement_agree` ¹¹ | n/a | n/a |
+| a MOVED sample shows its new root in "Plays" | ✅ ¹¹ | n/a | n/a |
+| both edits on one sample reach the built bank | ✅ ¹¹ | n/a | n/a |
+
+⁸ Not "untested" and not a gap — neither format stores a per-zone key range to
+patch. A KRZ program reaches its samples through **keymaps**; an EIII preset
+has no zone range at all, but an 88-entry note-zone table mapping each key to
+one zone. Placement for either means rewriting a different structure, so the
+button is disabled and its tooltip says so. **A cell reading n/a because the
+control is deliberately absent is a different claim from one reading ⚠
+untested**, and the difference is worth keeping in the table.
+
+⁹ **The one that would have shipped looking correct.** A reader resolves a
+zone as `max(voice_lo, zone_lo) .. min(voice_hi, zone_hi)`, so a zone moved
+outside its voice's window is clamped straight back: the bytes change, every
+assertion about the zone entry passes, and the instrument plays what it played
+before. `_apply_placement` widens the voice window too. Disabling that
+widening makes `manual_e4b_placement` fail in **13 zones across 8 banks**
+(`zone 63 became (65, 24, 36), asked for (12, 24, 36)`) — the test can
+actually fail, which is the only reason its pass means anything.
+
+¹⁰ `SamplePlacementDialog.overrides()` returns **every** row, not the edited
+ones, and the pane feeds it the RESOLVED range — voice-clamped, widened to the
+span of all zones sharing the sample. Stored verbatim, pressing OK without
+touching anything re-places the whole preset. The pane keeps only rows that
+differ from what it displayed; the test opens the dialog, accepts it
+untouched, and requires the bank back byte-identical.
+
+¹¹ **Found in the GUI, not by a test:** after renaming 37 samples, Adjust
+Placement… listed every one under its ORIGINAL name — the two windows
+describing one preset differently, which reads as the wrong preset being
+shown. Both editors work on the same staged bank at the same step, so an edit
+in either has to be visible in the other. (Not the Samples-pane rule: that
+pane is *upstream* and correctly shows the source untouched.)
+
+**The obvious fix breaks the working half, which is why this has three rows
+rather than one.** `assemble()` looks up `sample_names` *and* `zone_placement`
+against the SOURCE sample's name — the bank has not been rewritten yet — while
+the dialog keys everything it returns by the name it DISPLAYED. Show the new
+name without translating back and the move returns under a key that matches
+nothing, silently dropped. Rows therefore carry both: `name` to show, `orig`
+to key by. `manual_rename_placement_agree` fails against all three broken
+variants, including the display-only one that looks right in the window.
 
 ³ mpc2emu's `parsers/e4b_parser._decode_name` reads the 16-byte field as
 ASCII with `errors='replace'`, so 0xA5 becomes U+FFFD before the Bank model
@@ -348,6 +414,8 @@ cannot reach.**
 | the "New name" cell accepts typing | ✅ | ✅ | ✅ | `manual_ui_reachability` |
 | the original-name column stays read-only | ✅ | ✅ | ✅ | `manual_ui_reachability` |
 | the placement dialog's Sample column accepts typing | ✅ (format-independent) | | | `manual_ui_reachability` |
+| **Adjust Placement…** enabled, or disabled with a reason | ✅ enabled | ✅ disabled + tooltip | ✅ disabled + tooltip | `manual_placement_reaches_image` |
+| it opens on the bank's REAL ranges, not defaults | ✅ | n/a | n/a | `manual_placement_reaches_image` |
 
 **Three measurements that lie**, all learned by being fooled by them here, and
 all worth knowing before writing the next UI test:
@@ -412,7 +480,11 @@ Point it somewhere nothing else lives — never at a folder holding corpus or
 fixtures.
 
 Run every `tests/manual_ui_smoke_*.py`, then the format-specific suites
-(`manual_akai_*`, `manual_bank_sample_rename`, `manual_hw_convert_matrix`).
+(`manual_akai_*`, `manual_bank_sample_rename`, `manual_hw_convert_matrix`),
+then the two that follow an edit all the way to a built image —
+`manual_rename_reaches_image` and `manual_placement_reaches_image` — and
+`manual_ui_reachability`, which is the only one that asks whether a user can
+reach any of it.
 A suite that prints `SKIPPED` because its material is not on the machine is
 **not** a pass — note it and find the material, or the matrix cell stays
 uncovered.

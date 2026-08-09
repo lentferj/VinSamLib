@@ -574,9 +574,8 @@ typed name is a decision and the field is a convenience. Names that would
 collide are numbered apart (`-C2`, `-C2-2`) rather than left for the writer's
 own uniquifier to rename behind your back.
 
-The **Plays** column is read-only. Where a sample sits on the keyboard came
-with the material and is not edited here — that belongs to the sample-folder
-import, where the mapping is being decided in the first place.
+The **Plays** column is read-only; it is **Adjust Placement…** below that
+moves a sample on the keyboard.
 
 *Italic* rows are samples another staged preset also uses. A rename follows
 the sample, so those presets show the new name too, and confirming names them
@@ -589,6 +588,41 @@ bank.
 > object block physically grows to fit a longer name — the least verified
 > thing in this program. See
 > [Known Limitations](#️-renaming-samples-inside-a-bank--experimental-not-hardware-confirmed).
+
+**Adjust Placement…** ⚠️ *experimental* moves where the samples in the bank
+play — low key, root note, high key — using the same editor the sample-folder
+import uses, described under [Sample Placement](#sample-placement). The audio
+is not touched; only the key range each sample answers to.
+
+![Adjust Placement dialog over a staged bank: five demo samples as Sample / Low / Root / High rows, each in its own colour, above an 88-key piano showing every sample's range and root in the matching colour](docs/screenshots/12_bank_placement.png)
+
+It opens on the ranges the bank actually has, under whatever names the samples
+currently carry — rename a sample and the placement list shows the new name,
+move a sample and the rename dialog's **Plays** column shows the new root. The
+two windows edit one staged bank at one step, so they always agree. (The
+Samples pane is a different matter: it sits *upstream* of New Bank and keeps
+showing the source untouched, which is correct.)
+
+A sample used by **several zones** — velocity layers, a drum sound repeated across keys — appears once and moves in all of them. That is deliberate: moving one zone of a stacked
+pair would split a layer that was built to sound together. The row shows the
+widest span of the zones sharing the sample.
+
+Only rows you actually change are applied. Pressing **OK** without editing
+anything leaves the bank byte-for-byte identical, which matters more than it
+sounds: what the dialog displays is the *resolved* range, and writing all of
+it back would quietly re-place every sample in the preset.
+
+**E4B only.** The button is disabled for the other two and the tooltip says
+why, rather than opening an editor that cannot apply what you type: a KRZ
+program reaches its samples through keymaps, and an EIII preset has no
+per-zone range at all — it carries an 88-entry table mapping each key to one
+zone. Both are their own piece of work.
+
+> ⚠️ **No sampler has yet loaded a bank re-placed this way.** A moved zone
+> also has to widen its **voice's** own key window, or the instrument clamps
+> the zone back and the edit silently does nothing — that widening is applied
+> here and verified against the corpus, but not on hardware. See
+> [Known Limitations](#️-moving-a-samples-placement-inside-a-bank--experimental-not-hardware-confirmed).
 
 **Save as…** writes the exact assembled bytes to a file you choose.
 **Send to Image Column** hands the current (bank, preset list, name)
@@ -1235,6 +1269,29 @@ with their fixed field; KRZ has no such limit and would happily carry more,
 but 16 is the longest authored name across 9 700 real K2000 objects and the
 width of the machine's own display.
 
+### ⚠️ Moving a sample's placement inside a bank — EXPERIMENTAL, not hardware-confirmed
+
+New Bank can also move where a sample plays (**Adjust Placement…**), patching
+the low key, root note and high key in the zone entries of a preset body that
+is otherwise copied verbatim. **E4B only** — the button is disabled elsewhere,
+with the reason in its tooltip. As with renaming, it is exercised against real
+banks (audio byte-identical, sample numbering unchanged, an untouched dialog a
+byte-for-byte no-op) but **no sampler has yet loaded a bank re-placed this
+way.**
+
+**The trap worth knowing about, because it makes a wrong edit look right.** A
+zone's key range is not the whole story: the **voice** that owns it carries a
+key window of its own, and a reader resolves the zone as
+`max(voice_lo, zone_lo) .. min(voice_hi, zone_hi)`. Move a zone outside its
+voice's window and the bytes change, every assertion about the zone entry
+passes, and the instrument plays exactly what it played before. So the voice
+window is widened along with the zone — not bookkeeping, but the part that
+makes the edit take effect. Disabling that widening reproduces the fault in 13
+zones across the 8-bank corpus test, which is how it is kept honest.
+
+A sample used by several zones moves in **all** of them; see [New
+Bank](#new-bank) for why that is per-sample rather than per-zone.
+
 ### EIII / ESI-32
 
 | Feature | Status |
@@ -1335,8 +1392,10 @@ vinsamlib/
     └── settings_dialog.py        # mpc2emu path configuration
 
 tools/
-└── check_krz_banks.py          # Scans built KRZ banks for the two silent defects
-                                 # described under "If you built KRZ banks before…"
+├── check_krz_banks.py          # Scans built KRZ banks for the two silent defects
+│                                # described under "If you built KRZ banks before…"
+└── make_screenshots.py         # Regenerates the README screenshots from a synthetic
+                                 # demo library — no real (or commercial) content
 ```
 
 ---

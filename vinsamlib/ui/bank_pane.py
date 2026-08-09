@@ -29,18 +29,20 @@ from __future__ import annotations
 
 import functools
 import re
+import struct
 from pathlib import Path
 from typing import Any, Optional
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QFrame, QHBoxLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QFrame, QHBoxLayout,
                              QGridLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                              QMenu,
                              QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import dnd, workers
 from .detail_pane import _escape, zone_stats_lines
+from .sample_placement_dialog import SamplePlacementDialog
 from .sample_rename_dialog import SampleRenameDialog
 from ..banks import e4b, eiii, krz, summary
 from ..filenames import safe_filename
@@ -92,7 +94,7 @@ def _sanitize_bank_name(name: str) -> str:
 
 class BankPane(QWidget):
     statusMessage = Signal(str)
-    sendToPendingRequested = Signal(str, str, list, dict)   # (name, format, items, sample_renames)
+    sendToPendingRequested = Signal(str, str, list, dict, dict)   # (name, format, items, renames, placement)
 
     def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
@@ -105,6 +107,9 @@ class BankPane(QWidget):
         #: Cleared with the bank -- a rename belongs to the material that
         #: was staged, not to the pane.
         self._sample_renames: dict = {}
+        #: {original sample name: (lo, root, hi)} from Adjust Placement.
+        #: Cleared with the bank, exactly like the renames.
+        self._zone_placement: dict = {}
         self._dedupe_enabled = True
         self._prompt_on_duplicate = True
         self._last_bytes: Optional[bytes] = None
@@ -212,6 +217,9 @@ class BankPane(QWidget):
         self._rename_btn = QPushButton("Rename Samples…")
         self._rename_btn.clicked.connect(self._rename_samples)
         buttons.addWidget(self._rename_btn, 1, 0)
+        self._placement_btn = QPushButton("Adjust Placement…")
+        self._placement_btn.clicked.connect(self._adjust_placement)
+        buttons.addWidget(self._placement_btn, 1, 1)
         # Second cell left empty rather than filled with the status: a label
         # there would be the only thing in the grid that is not a button, and
         # it was what knocked the row out of line in the first place.
@@ -248,7 +256,8 @@ class BankPane(QWidget):
         # the image -- the meter and Save as... would show one bank and the
         # media would hold another.
         self.sendToPendingRequested.emit(name, self._format, list(self._items),
-                                          dict(self._sample_renames))
+                                          dict(self._sample_renames),
+                                          dict(self._zone_placement))
 
     @property
     def format(self) -> Optional[str]:
@@ -276,12 +285,14 @@ class BankPane(QWidget):
         self._prompt_on_duplicate = enabled
 
     def load_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
-                      sample_renames: Optional[dict] = None) -> None:
+                      sample_renames: Optional[dict] = None,
+                      zone_placement: Optional[dict] = None) -> None:
         """Public entry point for the Pending column's double-click "send
         back to New Bank" — replaces whatever's currently staged here with
         the given recipe, exactly as if it had been assembled from scratch."""
         self._items = list(items)
         self._sample_renames = dict(sample_renames or {})
+        self._zone_placement = dict(zone_placement or {})
         self._format = fmt
         self._name_edit.setText(name)
         self._head.setText(f"New Bank  [{fmt}]")
@@ -481,6 +492,7 @@ class BankPane(QWidget):
     def _clear(self) -> None:
         self._items = []
         self._sample_renames = {}
+        self._zone_placement = {}
         self._reset_format_lock()
         self._name_edit.clear()
         self._refresh()
@@ -515,6 +527,7 @@ class BankPane(QWidget):
         # Clear, or a bank loaded back from Pending), and the button has to
         # follow it or it would offer a rename for a format that cannot.
         self._sync_rename_button()
+        self._sync_placement_button()
         if self._items:
             self._meter_label.setText("Calculating…")
             self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
@@ -641,6 +654,16 @@ class BankPane(QWidget):
                 if name in known:
                     continue
                 known.add(name)
+                # A pending move wins over the zone bytes. Both dialogs edit
+                # the SAME staged bank, so "Plays" showing the old note after
+                # Adjust Placement… moved the sample is the mirror image of the
+                # placement list showing old names after a rename -- one edit
+                # invisible to the other window. (This is not the Samples pane
+                # rule: that pane is UPSTREAM of New Bank and correctly shows
+                # the source untouched. These two are the same step.)
+                moved = self._zone_placement.get(name)
+                if moved is not None:
+                    root = moved[1]
                 rows.append({"name": name, "root": root,
                              "shared_with": sorted(elsewhere.get(name, ()))})
         return rows
@@ -731,6 +754,148 @@ class BankPane(QWidget):
         n = len(self._sample_renames)
         self._rename_status.setText(f"{n} sample(s) renamed" if n else "")
 
+    #: Formats whose zones carry their own key range, so a placement edit is a
+    #: patch in place. EIII is absent and it is not an oversight: an EIII
+    #: preset has NO per-zone range at all -- it carries an 88-entry note-zone
+    #: table mapping each key to one zone, so moving a sample there means
+    #: rewriting that table. KRZ reaches its samples through keymaps, which is
+    #: a third shape again. Both are their own piece of work.
+    _PLACEABLE = ("E4B",)
+
+    def _sync_placement_button(self) -> None:
+        ok = bool(self._items) and self._format in self._PLACEABLE
+        self._placement_btn.setEnabled(ok)
+        if self._format and self._format not in self._PLACEABLE:
+            self._placement_btn.setToolTip(
+                f"{self._format} does not store a key range per zone, so a "
+                f"sample cannot be moved by patching one. Not offered rather "
+                f"than half-offered.")
+        else:
+            self._placement_btn.setToolTip(
+                "Move where the samples in this bank play. The audio is "
+                "untouched.\n⚠ Experimental — not confirmed on hardware.")
+
+    def _placement_rows(self, items) -> list[dict]:
+        """[{"name","orig","lo","root","hi"}] for the staged presets, read from
+        the zone bytes so the dialog opens on what the bank actually says.
+
+        A sample used by several zones appears ONCE, carrying the widest span
+        of them -- moving it moves all of them, which is the decision behind
+        this feature, so showing it twice would imply a control that does not
+        exist.
+
+        TWO NAMES PER ROW, and the distinction is the whole point. "name" is
+        what the user should SEE: a sample already renamed in this session must
+        appear under its new name, or the two dialogs describe the same bank
+        differently and the placement list looks like it belongs to another
+        preset. "orig" is what everything is KEYED by, because `assemble()`
+        looks up both `sample_names` and `zone_placement` against the SOURCE
+        sample's name -- the bank on disk has not been rewritten yet, so a map
+        keyed by the new name matches nothing and the move is silently lost.
+        """
+        seen: dict = {}
+        order: list = []
+        used: dict = {}
+        for bank, preset, _label in items:
+            for idx, (lo, root, hi) in self._zone_ranges(bank, preset).items():
+                samp = bank.samples.get(idx)
+                if samp is None:
+                    continue
+                # Deduped by ORIGINAL name: that is the sample's identity here,
+                # and two samples can carry the same pending new name.
+                if samp.name in seen:
+                    prev = seen[samp.name]
+                    prev["lo"] = min(prev["lo"], lo)
+                    prev["hi"] = max(prev["hi"], hi)
+                    continue
+                shown = self._sample_renames.get(samp.name, samp.name)
+                # The dialog keys its result by the displayed name and matches
+                # rows with `next(r for r in rows if r["name"] == name)`, so two
+                # rows sharing one would edit each other. Defensive, since both
+                # rename paths already disambiguate: fall back to the original,
+                # which is unique by construction.
+                if shown in used:
+                    shown = samp.name
+                used[shown] = samp.name
+                seen[samp.name] = {"name": shown, "orig": samp.name,
+                                    "lo": lo, "root": root, "hi": hi}
+                order.append(samp.name)
+        return [seen[n] for n in order]
+
+    def _zone_ranges(self, bank, preset) -> dict:
+        """{sample index: (lo, root, hi)} AS A READER RESOLVES IT.
+
+        The voice clamp is applied here too -- `max(voice_lo, zone_lo)` and
+        `min(voice_hi, zone_hi)` -- because that is what the instrument plays
+        and therefore what the dialog must show. Reading the zone entry raw
+        would display a range the hardware never uses."""
+        out: dict = {}
+        body = getattr(preset, "body", None)
+        if not body or self._format != "E4B":
+            return out
+        for v_start, table_start, n in e4b._walk_voices(body, preset.num_voices):
+            vlo = body[v_start + e4b.VOICE_LO_KEY]
+            vhi = body[v_start + e4b.VOICE_HI_KEY]
+            for k in range(n):
+                eo = table_start + k * e4b.ZONE_ENTRY
+                if eo + e4b.ZONE_ENTRY > len(body):
+                    break
+                idx = struct.unpack_from(">H", body, eo + 10)[0]
+                if idx in out or idx not in bank.samples:
+                    continue
+                out[idx] = (max(vlo, body[eo + e4b.ZONE_LO_KEY]),
+                            body[eo + e4b.ZONE_ROOT_KEY],
+                            min(vhi, body[eo + e4b.ZONE_HI_KEY]))
+        return out
+
+    def _adjust_placement(self) -> None:
+        items = self._selected_presets()
+        rows = self._placement_rows(items)
+        if not rows:
+            self.statusMessage.emit("No samples to place yet")
+            return
+        for r in rows:                       # show edits already made
+            if r["orig"] in self._zone_placement:
+                r["lo"], r["root"], r["hi"] = self._zone_placement[r["orig"]]
+
+        # Everything the dialog hands back is keyed by the name it DISPLAYED,
+        # which is the renamed one; every map we store is keyed by the source
+        # sample's own name, because that is what assemble() looks up. This is
+        # the only place the two meet.
+        to_orig = {r["name"]: r["orig"] for r in rows}
+
+        dialog = SamplePlacementDialog(rows, octave_offset=_RENAME_OCTAVE,
+                                        parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        # `overrides()` returns EVERY row, not the edited ones, and the values
+        # it hands back are the ones we displayed: voice-CLAMPED, and widened
+        # to the span of all zones sharing the sample. Storing those verbatim
+        # would rewrite the zone bytes of samples nobody touched -- narrowing
+        # some, widening others -- so a user who opened the dialog and pressed
+        # OK would silently re-place the whole preset. Only real changes are
+        # kept.
+        before = {r["orig"]: (r["lo"], r["root"], r["hi"]) for r in rows}
+        self._zone_placement = {k: v for k, v in self._zone_placement.items()
+                                 if k not in before}
+        for shown_name, moved in dialog.overrides().items():
+            orig = to_orig.get(shown_name)
+            if orig is not None and moved != before.get(orig):
+                self._zone_placement[orig] = moved
+
+        # The dialog's Sample column is editable and returns typed names. It
+        # feeds the same rename map the Rename Samples dialog fills, rather
+        # than a second one -- two maps for one field is how a rename gets
+        # applied by one path and dropped by the other.
+        for shown_name, typed in dialog.name_overrides().items():
+            orig = to_orig.get(shown_name)
+            if orig is not None and typed and typed != orig:
+                self._sample_renames[orig] = typed
+
+        self._sync_placement_button()
+        self._sync_rename_button()
+        self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
+
     def _rename_samples(self, selected_only: bool = False) -> None:
         # Always follows the selection, from the button and the context menu
         # alike. They used to differ -- button bank-wide, right-click scoped --
@@ -782,6 +947,10 @@ class BankPane(QWidget):
         # does not take would be a TypeError rather than a no-op.
         if self._sample_renames and self._format in self._RENAMEABLE:
             fn = functools.partial(fn, sample_names=dict(self._sample_renames))
+        # Same binding rule as the renames: bound here so the meter, Save as…
+        # and Send to Image all assemble identical bytes.
+        if self._zone_placement and self._format in self._PLACEABLE:
+            fn = functools.partial(fn, zone_placement=dict(self._zone_placement))
         return fn
 
     def _apply_size(self, gen: int, data: bytes) -> None:

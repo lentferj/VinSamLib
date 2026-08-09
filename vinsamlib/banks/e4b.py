@@ -62,6 +62,18 @@ PRES_HDR = 82
 VOICE_FIXED = 284
 ZONE_ENTRY = 22
 
+#: Byte offsets inside a 22-byte zone entry, confirmed against mpc2emu's
+#: e4b_writer (`entry[2]/[5]/[14] = lo/hi/root`) and verified by reading 40
+#: zones of a real preset back through its parser -- identical, including the
+#: voice clamp below.
+ZONE_LO_KEY, ZONE_HI_KEY, ZONE_ROOT_KEY = 2, 5, 14
+
+#: A VOICE carries its own key window at these vpar offsets, and the reader
+#: takes `max(voice_lo, zone_lo)` / `min(voice_hi, zone_hi)`. So a zone moved
+#: outside its voice's window is silently clamped back -- widening the voice
+#: is not optional bookkeeping, it is what makes the edit take effect.
+VOICE_LO_KEY, VOICE_HI_KEY = 14, 17
+
 # Bank limits from writers/bank_splitter.py (_MAX_SAMPLES_PER_BANK / _MAX_PRESETS_PER_BANK)
 MAX_PRESETS = 1000
 MAX_SAMPLES = 1000
@@ -113,6 +125,26 @@ class E4BFile:
     e4ma_body: bytes
     emst_body: bytes
     warnings: list[str] = field(default_factory=list)
+
+
+def _apply_placement(body: bytearray, voice_start: int, zone_off: int,
+                      lo: int, root: int, hi: int) -> None:
+    """Move one zone, widening its voice's window to match.
+
+    The voice clamp is the whole subtlety. A reader resolves a zone as
+    `max(voice_lo, zone_lo) .. min(voice_hi, zone_hi)`, so patching only the
+    zone entry leaves any move BEYOND the voice's existing window with no
+    effect at all -- the bytes change and nothing plays differently, which is
+    the worst kind of silent failure for an editing feature.
+    """
+    lo, root, hi = (max(0, min(127, v)) for v in (lo, root, hi))
+    body[zone_off + ZONE_LO_KEY] = lo
+    body[zone_off + ZONE_HI_KEY] = hi
+    body[zone_off + ZONE_ROOT_KEY] = root
+    if lo < body[voice_start + VOICE_LO_KEY]:
+        body[voice_start + VOICE_LO_KEY] = lo
+    if hi > body[voice_start + VOICE_HI_KEY]:
+        body[voice_start + VOICE_HI_KEY] = hi
 
 
 def _name16(s: str) -> bytes:
@@ -383,7 +415,8 @@ def parse(path: str) -> E4BFile:
 # ── assembly ─────────────────────────────────────────────────────────────────
 
 def assemble(selections: list[tuple[E4BFile, E4BPreset]],
-              sample_names: Optional[dict] = None) -> bytes:
+              sample_names: Optional[dict] = None,
+              zone_placement: Optional[dict] = None) -> bytes:
     """Build a new E4B FORM from selected (source_bank, preset) pairs.
 
     Each preset's original chunk bytes are copied verbatim; only the 2-byte
@@ -425,6 +458,15 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
 
     for src, preset in selections:
         body = bytearray(preset.body)
+        # zone offset -> the voice that owns it, so a placement edit can widen
+        # that voice's own key window. Built once per preset rather than
+        # searched per zone.
+        owner: dict[int, int] = {}
+        if zone_placement:
+            for v_start, table_start, n in _walk_voices(preset.body,
+                                                         preset.num_voices):
+                for k in range(n):
+                    owner[table_start + k * ZONE_ENTRY] = v_start
         for zone_off, old_idx in preset.zone_refs:
             samp = src.samples.get(old_idx)
             if samp is None:
@@ -437,6 +479,13 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
                 # sentinels (3FFFh/3FFEh), which resolve to no sample here
                 # and must survive into the new bank unrewritten.
                 continue
+            # Placement is keyed by SAMPLE NAME, the shape
+            # SamplePlacementDialog returns, and applied before the dedupe
+            # decision is even consulted -- it rewrites zone bytes in this
+            # preset's own body and cannot affect which samples are distinct.
+            move = (zone_placement or {}).get(samp.name)
+            if move is not None and zone_off in owner:
+                _apply_placement(body, owner[zone_off], zone_off, *move)
             key = (samp.name, samp.body)
             new_idx = dedupe_key_to_new_idx.get(key)
             if new_idx is None:
