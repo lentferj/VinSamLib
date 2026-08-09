@@ -158,7 +158,7 @@ was shown.
 | a per-row typed name beats the scheme, in the file | `manual_names_e2e` | `manual_names_e2e` | `manual_names_e2e` |
 | the written bank is still VALID — re-parses, sample count and zones intact | `manual_names_e2e` | `manual_names_e2e` | `manual_names_e2e` |
 | a name byte above 0x7E survives assemble() | `manual_e4b_name_bytes` | n/a ⁴ | n/a ⁴ |
-| a name byte above 0x7E survives CONVERSION | ⛔ known loss ³ | ⛔ known loss ³ | ⛔ known loss ³ |
+| a name byte above 0x7E survives CONVERSION | ✅ ³ | ✅ ³ | ✅ ³ |
 | a bank NAME with such a byte reaching an image | ⚠ untested | ⚠ untested | ⚠ untested |
 
 ### Renaming a sample INSIDE an assembled bank
@@ -309,12 +309,19 @@ nothing, silently dropped. Rows therefore carry both: `name` to show, `orig`
 to key by. `manual_rename_placement_agree` fails against all three broken
 variants, including the display-only one that looks right in the window.
 
-³ mpc2emu's `parsers/e4b_parser._decode_name` reads the 16-byte field as
-ASCII with `errors='replace'`, so 0xA5 becomes U+FFFD before the Bank model
-ever sees it and whatever is written afterwards carries the damage. Reported
-in that project's handoff with the patch; deliberately NOT worked around
-here. The row stays ⛔ rather than being deleted: a known loss that nobody
-can point at becomes a surprise again.
+³ **Was ⛔ known loss; FIXED upstream and re-measured here 2026-08-09.**
+mpc2emu's `parsers/e4b_parser._decode_name` read the 16-byte field as ASCII
+with `errors='replace'`, so 0xA5 became U+FFFD before the Bank model ever saw
+it and whatever was written afterwards carried the damage. Reported in that
+project's handoff with the patch, and deliberately not worked around here --
+a correction written against someone else's bug outlives its fault and starts
+doing damage of its own.
+
+Fixed upstream in `57a909b`. Verified against this library rather than taken
+on trust: three banks carrying **138 high-byte sample names between them**
+now parse with **zero** U+FFFD. Kept as a row rather than deleted, because
+the measurement is what makes the ✅ mean anything -- and because the same
+byte is still the reason `banks/krz.py` reads latin-1 (see ⁴).
 
 **What the ⚠ rows mean.** Not "probably fine". They are cells nobody has
 walked, listed so the next person decides rather than assumes — which is the
