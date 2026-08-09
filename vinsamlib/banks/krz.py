@@ -65,6 +65,9 @@ KEYMAP_HDR_FIXED = 12   # `>6h`: sampleId, method, basePitch, centsPerEntry,
                         # entriesPerVel, entrySize
 KEYMAP_LEVELS_OFF = 12  # velocity-level table: 2-byte signed offset each,
                         # relative to its own position
+#: K2000 velocity slots (ppp..fff). A keymap holds one entry table per
+#: DISTINCT `Level[]` address, so between 1 and 8 of them -- see band_starts().
+NUM_VELO_LEVELS = 8
 
 #: The K2000 sounds keymap entry `i` at MIDI key `i + 12`, so entries cover
 #: keys 12..139 and keys 0..11 cannot be addressed. Hardware-confirmed by
@@ -111,6 +114,21 @@ class KeymapLayout:
     table: int          # body offset of the first velocity level's entry table
     stride: int
     id_off: int | None  # offset of the sample id within an entry, or None
+    #: Body offset of EVERY velocity band's entry table, `table` included and
+    #: first. A keymap is not one table but up to eight -- see `band_starts()`
+    #: for the arithmetic. Reading only `table` reads only the softest band.
+    bands: tuple[int, ...] = ()
+
+    def entry_offsets(self):
+        """Body offset of every entry's SAMPLE ID, across every band.
+
+        The one place the band walk lives, so the reference walk and the
+        id patcher cannot drift apart -- they did, and both read band 0."""
+        if self.id_off is None:
+            return
+        for base in (self.bands or (self.table,)):
+            for k in range(self.num_keys):
+                yield base + k * self.stride + self.id_off
 
 
 def keymap_layout(body: bytes) -> KeymapLayout | None:
@@ -144,9 +162,61 @@ def keymap_layout(body: bytes) -> KeymapLayout | None:
                                                    KEYMAP_LEVELS_OFF)[0]
     if table < 0 or table > len(body):
         return None
+    num_keys = entries_per_vel + 1
     return KeymapLayout(header_sid=header_sid & 0xFFFF, method=method,
-                        num_keys=entries_per_vel + 1, table=table,
-                        stride=stride, id_off=id_off)
+                        num_keys=num_keys, table=table,
+                        stride=stride, id_off=id_off,
+                        bands=band_starts(body, num_keys, stride))
+
+
+def band_starts(body: bytes, num_keys: int, stride: int) -> tuple[int, ...]:
+    """Body offset of every velocity band's entry table, lowest first.
+
+    A Keymap is a 28-byte header followed by up to EIGHT bands of
+    `num_keys` entries each, one per velocity slot (ppp..fff). Which slot
+    uses which band is encoded entirely in the header's `Level[8]` table at
+    `KEYMAP_LEVELS_OFF`, as `Level[j] = (8-j)*2 + band(j) * band_size` --
+    the arithmetic is `KKeymap.write()`'s, by way of kurzfiler-ng's
+    `krz/keymap_bands.py`, which derived it from that source and confirmed
+    it against two real multi-band keymaps.
+
+    Each `Level[j]` is a signed offset **relative to its own position** in the
+    table -- exactly what `KEYMAP_LEVELS_OFF`'s comment has always said -- so
+    slot `j`'s band begins at `KEYMAP_LEVELS_OFF + 2*j + Level[j]`. Distinct
+    values are the distinct bands. This is the form
+    `krz_parser._parse_keymap_object()` uses, and this function exists to put
+    us back in step with it: mpc2emu has read all eight slots since it was
+    written, and only this project's container layer read one.
+
+    THE MISREADING, kept because it is the natural one and survives almost
+    every file: dropping the `2*j` and taking `KEYMAP_LEVELS_OFF + Level[j]`.
+    For `j = 0` those agree, so a single-band keymap -- 10 463 of the 10 650
+    here -- decodes perfectly either way. On a real 2-band keymap carrying
+    `[16,14,12,10,8,6,388,386]` the correct reading gives bands at 28 and 412;
+    the naive one puts the two loudest slots at 398 and 400, inside band 0's
+    own entries, where they decode to tuning bytes read as sample ids.
+
+    Returns `(table,)` -- one band, exactly the behaviour this had before --
+    whenever the slots resolve to a single address or anything looks wrong.
+    A keymap that was already read correctly must keep assembling
+    byte-for-byte identically; that is the property worth more than the fix.
+    """
+    single = (KEYMAP_LEVELS_OFF
+              + struct.unpack_from(">h", body, KEYMAP_LEVELS_OFF)[0],)
+    if len(body) < KEYMAP_LEVELS_OFF + 2 * NUM_VELO_LEVELS:
+        return single
+    levels = struct.unpack_from(f">{NUM_VELO_LEVELS}h", body, KEYMAP_LEVELS_OFF)
+    starts = sorted({KEYMAP_LEVELS_OFF + 2 * j + lv
+                     for j, lv in enumerate(levels)})
+    if len(starts) <= 1:
+        return single
+    span = num_keys * stride
+    # Every band must lie inside the object's own body. A band that would be
+    # walked past the end is not a band we can read, and reading it anyway
+    # pulls neighbouring objects' bytes in as sample ids.
+    if starts[0] < 0 or starts[-1] + span > len(body):
+        return single
+    return tuple(starts)
 
 
 def _decode_hash(hash_val: int) -> tuple[int, int]:
@@ -271,10 +341,15 @@ class KrzFile:
         lay = keymap_layout(body)
         if lay is None or lay.id_off is None:
             return out
-        for k in range(lay.num_keys):
-            eo = lay.table + k * lay.stride + lay.id_off
+        # EVERY velocity band, not just the softest. Walking only `table`
+        # dropped the samples of bands 2..8 -- and since assemble() picks the
+        # samples to write from this list, they were dropped from the built
+        # bank while the keymap went on referencing them. 136 keymaps in this
+        # library lose ids that way; one dual-layer bass program wants 10 samples and
+        # was built with 5.
+        for eo in lay.entry_offsets():
             if eo + 2 > len(body):
-                break
+                continue
             sid = struct.unpack_from(">H", body, eo)[0]
             if sid:
                 out.append(sid)
@@ -693,8 +768,8 @@ def _repatch_keymap_samples(km: KrzObject, src_key: tuple[int, int],
     if lay is None or lay.id_off is None:
         return bytes(block)
 
-    for k in range(lay.num_keys):
-        eo = body_start + lay.table + k * lay.stride + lay.id_off
+    for rel in lay.entry_offsets():
+        eo = body_start + rel
         if eo + 2 > len(block):
             break
         old_sid = struct.unpack_from(">H", block, eo)[0]
