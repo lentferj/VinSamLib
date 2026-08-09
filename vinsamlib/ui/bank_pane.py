@@ -582,6 +582,16 @@ class BankPane(QWidget):
         if self._items:
             self._meter_label.setText("Calculating…")
             self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
+        else:
+            # An empty bank cannot be over the limit, and saying so here is
+            # what RE-ARMS the warning. The popup is rising-edge only, and
+            # _recompute() returns early with no items, so nothing else ever
+            # told it the bank had come back under: after Keep Anyway, Clear,
+            # and adding another oversized preset, the meter turned red and
+            # no dialog appeared. Every path that empties the bank -- Clear,
+            # removing the last preset, undoing an add that was the first --
+            # arrives here.
+            self._maybe_warn_over_limit(False, "")
 
     def _on_rows_moved(self, *_args) -> None:
         """Fires once Qt's InternalMove drag-drop finishes reordering rows
