@@ -246,7 +246,26 @@ def shot_placement(app, win) -> None:
     dialog.close()
 
 
-ALL = {"02_new_bank": shot_new_bank, "12_bank_placement": shot_placement}
+def shot_favourites(app, win) -> None:
+    """13_favourites -- a pasted list of hardware preset numbers."""
+    from vinsamlib.ui.favourites_dialog import FavouritesDialog
+
+    _stage(win)
+    # Synthetic bank and names, like everything else here: the real lists name
+    # commercial CD content, and a screenshot is a tracked file.
+    names = [f"Demo Patch {i:02d}" for i in range(40)]
+    dialog = FavouritesDialog("DemoBank [E4B]", "E4B", names)
+    dialog._text.setPlainText(
+        "DemoBank 128\nP002\nP005\nP008\nP013\nP021\nP034")
+    dialog.resize(660, 540)
+    dialog.show()
+    _settle(app)
+    _grab(dialog, "13_favourites")
+    dialog.close()
+
+
+ALL = {"02_new_bank": shot_new_bank, "12_bank_placement": shot_placement,
+       "13_favourites": shot_favourites}
 
 
 def main(argv: list[str]) -> int:

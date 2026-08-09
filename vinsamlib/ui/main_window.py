@@ -19,7 +19,8 @@ from typing import Optional
 
 from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtGui import QAction, QGuiApplication
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMainWindow, QMessageBox, QSplitter
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QInputDialog, QMainWindow,
+                                QMessageBox, QSplitter)
 
 from . import workers
 from .bank_pane import BankPane
@@ -30,6 +31,8 @@ from .models import LibraryTreeModel
 from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
 from .sampledir_import_dialog import SampleDirImportDialog
+from . import models
+from .favourites_dialog import FavouritesDialog
 from .settings_dialog import SettingsDialog
 from ..banks import e4b, eiii, krz
 from ..build import convert, foreign_import, sampledir_import, xpm_import
@@ -48,7 +51,11 @@ class MainWindow(QMainWindow):
         # CLAMPED to the screen, because a fixed size larger than the display
         # gives a window whose buttons sit off the bottom edge and cannot be
         # reached -- availableGeometry() already excludes panels and docks.
-        want_w, want_h = 1500, 940
+        # The size this window was last closed at, or the default on a fresh
+        # install. Size only, not position -- a window restored onto a monitor
+        # that is no longer attached cannot be reached.
+        want_w = config.window_width or 1500
+        want_h = config.window_height or 940
         screen = QGuiApplication.primaryScreen()
         if screen is not None:
             avail = screen.availableGeometry()
@@ -66,6 +73,7 @@ class MainWindow(QMainWindow):
         # Accumulated across a whole queue, reported once when it drains --
         # converting 20 presets at once must not mean 20 modal warnings.
         self._preset_convert_risks: list = []
+        self._favourites_worker: workers.Worker | None = None
         # The convert-first import queue: soundfont-style sources and MPC
         # containers, whichever route they arrived by.
         self._import_worker: workers.Worker | None = None
@@ -90,6 +98,7 @@ class MainWindow(QMainWindow):
         self._bank_pane = BankPane(self._config)
         self._bank_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
         self._explorer.addToBankRequested.connect(self._add_node_to_bank)
+        self._explorer.addFavouritesRequested.connect(self._add_favourites)
         self._explorer.importXpmRequested.connect(self._import_xpm)
         self._explorer.convertPresetRequested.connect(self._convert_preset_via_mpc2emu)
         self._explorer.importForeignRequested.connect(self._import_requests)
@@ -150,8 +159,34 @@ class MainWindow(QMainWindow):
         # tolerated the same race silently). Bounded rather than unbounded
         # so quitting never hangs on a slow scan.
         QThreadPool.globalInstance().waitForDone(3000)
+        self._remember_window_size()
         self._index_db.close()
         super().closeEvent(event)
+
+    def _remember_window_size(self) -> None:
+        """Persist the size so the next start matches this one.
+
+        WRAPPED, and that is not defensive habit. Config.save() writes the
+        file that also holds `library_roots`, which this project has lost
+        twice to an incidental save -- so save() refuses to write an empty
+        library unless told to, and a refusal here must not stop the window
+        closing. The screenshot tool replaces save() with something that
+        RAISES, precisely to prove it is never called; that tool also closes
+        the window, so an unguarded call would break it.
+
+        Not saved while maximised or full-screen: storing 3440x1414 would
+        make the next ordinary start fill the screen, which is not what the
+        user chose -- normalGeometry() keeps the restored size instead.
+        """
+        try:
+            size = self.normalGeometry().size()
+            if size.width() < 400 or size.height() < 300:
+                return          # a size nobody could have meant
+            self._config.window_width = size.width()
+            self._config.window_height = size.height()
+            self._config.save()
+        except Exception:
+            pass                # never let remembering a size block a quit
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -930,6 +965,71 @@ class MainWindow(QMainWindow):
             fmt = node.parent.format_label if node.parent else ""
             items.append((bank, preset_obj, fmt, node.label))
         self._bank_pane.add_presets(items)
+
+    def _add_favourites(self, node) -> None:
+        """Explorer right-click on a BANK row: paste the numbers noted on the
+        hardware and add exactly those presets.
+
+        The bank is chosen by the click rather than matched by name, which is
+        deliberate -- the spreadsheet heading and the bank on the media do not
+        have to agree, and in the case that prompted this they did not.
+        """
+        if node.handle is not None:
+            self._open_favourites(node)
+            return
+        # OFF THE UI THREAD. A collapsed row has not been read yet, and the
+        # first version parsed it inline behind a wait cursor. On its own that
+        # is about half a second -- but the read competes with the background
+        # library scan for the same disk, and inline it froze the window for
+        # minutes showing nothing but "Reading ..." in the status bar. Every
+        # other bank read in this program goes through a worker for exactly
+        # this reason; this one had no business being the exception.
+        if self._favourites_worker is not None:
+            self.statusBar().showMessage("Still reading the last bank…", 4000)
+            return
+        self.statusBar().showMessage(f"Reading {node.label}…")
+        w = workers.Worker(models.parse_bank_node, node)
+        w.signals.finished.connect(lambda _ok, n=node: self._on_favourites_read(n))
+        w.signals.error.connect(
+            lambda msg, n=node: self._on_favourites_error(n, msg))
+        self._favourites_worker = w
+        workers.run(w)
+
+    def _on_favourites_read(self, node) -> None:
+        self._favourites_worker = None
+        self.statusBar().clearMessage()
+        self._open_favourites(node)
+
+    def _on_favourites_error(self, node, message: str) -> None:
+        self._favourites_worker = None
+        last = workers.last_error_line(message)
+        self.statusBar().showMessage(f"Could not read {node.label}: {last}", 8000)
+        QMessageBox.warning(self, "Add Favourites",
+                             f"Could not read \"{node.label}\":\n\n{last}")
+
+    def _open_favourites(self, node) -> None:
+        bank = node.handle
+        # models.bank_presets, never `bank.presets`: a KRZ keeps its programs
+        # in a dict and has no `presets` at all, so the attribute lookup came
+        # back empty and the action quietly did nothing on the very format
+        # these lists are mostly written for.
+        presets = models.bank_presets(bank) if bank is not None else []
+        if not presets:
+            QMessageBox.warning(
+                self, "Add Favourites",
+                f"Could not read any presets from \"{node.label}\"."
+                + (f"\n\n{node.error}" if node.error else ""))
+            return
+        fmt = node.format_label or ""
+        names = [(getattr(p, "name", "") or "").strip() or f"preset {i}"
+                 for i, p in enumerate(presets)]
+        dialog = FavouritesDialog(node.label, fmt, names, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        items = [(bank, presets[i], fmt, names[i]) for i in dialog.positions()]
+        if self._bank_pane.add_presets(items):
+            self.statusBar().showMessage(
+                f"Added {len(items)} favourite(s) from {node.label}", 6000)
 
     def _show_about(self) -> None:
         QMessageBox.about(

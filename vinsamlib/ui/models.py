@@ -547,14 +547,47 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
             return []
 
     bank = node.handle
-    out: list[TreeNode] = []
+    return [TreeNode("preset", (p.name.strip() or "(untitled)"), node, (bank, p))
+            for p in bank_presets(bank)]
+    # preset order preserved — it reflects the bank's own numbering
+
+
+def parse_bank_node(node) -> bool:
+    """Read a bank node's file if the tree has not already done so.
+
+    A bank row is only parsed when it is EXPANDED, so anything acting on a
+    collapsed one finds `handle` empty. The favourites action first treated
+    that as a refusal -- "expand it first", in the status bar -- which made it
+    look broken: the menu entry is there, you click it, and nothing opens.
+    Clicking the row is how you say which bank you mean; having to expand it
+    as well is a step with no purpose.
+    """
+    if node.kind != "bank":
+        return False
+    if node.handle is None:
+        _fetch_bank(node)
+    return node.handle is not None
+
+
+def bank_presets(bank) -> list:
+    """The bank's presets in its own order, whatever the format calls them.
+
+    E4B and EIII keep a `presets` list; a KRZ keeps `programs`, a dict keyed
+    by object id. Anything that needs "the Nth preset of this bank" has to
+    know that, and the two callers that do -- the Explorer tree and the
+    favourites-list handler -- must agree, because a favourites list refers to
+    presets BY POSITION.
+
+    Public and shared for that reason. The handler first grew its own
+    `getattr(bank, "presets", [])`, which is empty for a KRZ, so the action
+    silently did nothing on exactly the format those notes are mostly written
+    for. That is the second time a KRZ has been missed by code reaching for an
+    attribute only E4B has -- see `_samples_of` in bank_pane.py, where the
+    rename dialog opened with zero rows for the same reason.
+    """
     if isinstance(bank, e4b.E4BFile) or isinstance(bank, eiii.EIIIFile):
-        for p in bank.presets:
-            out.append(TreeNode("preset", p.name.strip() or "(untitled)", node, (bank, p)))
-    else:
-        for prog in bank.programs.values():
-            out.append(TreeNode("preset", prog.name.strip() or "(untitled)", node, (bank, prog)))
-    return out   # preset order preserved — it reflects the bank's own numbering
+        return list(bank.presets)
+    return list(bank.programs.values())
 
 
 # ── the Qt model ─────────────────────────────────────────────────────────────

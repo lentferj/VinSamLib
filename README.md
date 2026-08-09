@@ -675,6 +675,41 @@ zone. Both are their own piece of work.
 recipe to **Pending for Image** — the recipe stays editable there, it
 isn't a frozen copy.
 
+### Favourites from a hardware list
+
+If you audition a CD on the machine and note the preset numbers worth
+keeping — a column in a spreadsheet, one per bank — this turns that column
+into a bank without counting rows. Right-click the **bank** in the Explorer
+and choose **Add favourites from a list to New Bank…**.
+
+![Add Favourites dialog: a pasted list headed "DemoBank 128" followed by P002, P005, P008, P013, P021, P034; a greyed "Bank was loaded starting at preset" field showing 0; the line "Reading as E4B preset numbers from 0: 6 of 6 entries matched"; and a preview listing each resolved preset by number and name](docs/screenshots/13_favourites.png)
+
+Paste the numbers and the dialog shows **which presets they resolve to, by
+name**, before anything is added. That preview is the point: the numbers are
+positions, and a list aimed at the wrong bank still resolves to *something*,
+so seeing the names is what tells you it is right.
+
+**`P002` and `002` are both accepted**, in either format. A line that is not
+purely numbers is ignored, so a column heading and blank rows can stay in the
+paste — and that matters more than it sounds, because a heading like
+`Big Bank 64` has a number in it. Anything past the end of the bank is
+listed as unmatched rather than clamped onto a nearby preset.
+
+**The numbers are positions after loading, not stored ids.** An E4B loaded
+into an empty machine numbers its presets from 0, so `P002` is the third
+preset in bank order. On a **K2000 you choose the destination bank when you
+load**, so the same program reads 205 loaded at 200 and 405 loaded at 400 —
+only the offset from that load point means anything. The dialog guesses the
+load point from the lowest number you pasted and shows it; correct it there
+if the guess is wrong, and the preview will follow.
+
+That is a subtraction, not the last two digits. A K2000 bank is not capped at
+a hundred programs: load 150 starting at 400 and they run to 549.
+
+You pick the bank by clicking it, so nothing has to match its name — the
+sheet that prompted this says `Big Bank 64` where the disc says
+`Big Bank 64k`.
+
 ### Pending for Image
 
 ![Pending for Image column showing one queued bank and its contents](docs/screenshots/03_pending_for_image.png)
@@ -1700,6 +1735,47 @@ tools/
 ```
 
 ---
+
+## What needs mpc2emu, at a glance
+
+The prose version is [above](#what-it-is-and-what-needs-mpc2emu); this is the
+lookup table. **Settings ▸ shows which of these is unavailable and why**, so
+the last column names the check that reports it rather than leaving you to
+guess from a greyed-out menu.
+
+Without mpc2emu, VinSamLib is still a complete E4B/KRZ bank builder and
+library browser — the whole left half of this table is its own code.
+
+| Feature | Needs mpc2emu | What for |
+|---|---|---|
+| Browse loose `.e4b` / `.KRZ` / EIII banks | **no** | `banks/*.py` are self-contained readers |
+| Browse EMU3 discs & HD images, ISO 9660, FAT12/16/32 | **no** | `vfs/` reads all of them from scratch |
+| Index & search the library | **no** | |
+| New Bank: assemble E4B or KRZ, **Save as…** | **no** | |
+| Rename samples inside a bank | **no** | patched in our own container layer |
+| Adjust Placement… — key range, root, velocity | **no** | same |
+| Add favourites from a hardware list | **no** | positions into a bank we already parsed |
+| KRZ Detail pane | **no** | KRZ's detail view is self-contained |
+| **E4B / EIII Detail pane** — zones, velocity, bit depth | **yes** | `parsers.e4b_parser`, `parsers.eiii_parser` |
+| **Building an EIII bank at all** | **yes** | `writers.eiii_writer`'s empty-bank skeleton |
+| An E4B whose source lacked its `E4MA`/`EMST` chunks | **yes** | `e4b_writer`'s defaults, for a few real commercial banks |
+| **Creating or appending to any disk image** | **yes** | every image writer lives there — `iso_builder`, `hda_builder`, `fat12/16/32` |
+| **Import via mpc2emu…** — preset → E4B/KRZ/EIII | **yes** | `check_conversion_support` |
+| Vintage Resample, Reduce Zones / Velocity Layers | **yes** | `check_conversion_support` |
+| Trim Start / Trim Tail | **yes** | `check_trim_support` |
+| MPC import — `.xpm`, `.xty`, `.xpj` | **yes** | `check_xpm_import_support` |
+| Import Sample Folder… | **yes** | `check_sample_dir_import_support` |
+| **SF2 / SFZ / EXS24 / TAL / GIG** — browse, index, search, import | **yes** | `check_foreign_import_support` — without it these rows are absent from the Explorer entirely, rather than present and broken |
+
+Two entries are easy to misread, so they are spelled out:
+
+**EIII is split.** Reading an EIII/ESI bank needs nothing; *building* one
+needs mpc2emu. `banks/eiii.py` reuses an empty-bank skeleton from
+`eiii_writer` rather than synthesising a container it cannot fully verify.
+
+**The soft-sampler formats vanish rather than fail.** Without mpc2emu there is
+no reader for them at all, so the rows, the index entries and the five format
+filters are all absent — a row that cannot be opened is worse than no row.
 
 ## License and Third-Party Sources
 

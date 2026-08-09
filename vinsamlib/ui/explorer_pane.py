@@ -84,6 +84,7 @@ _SEARCH_DEBOUNCE_MS = 200
 class ExplorerPane(QWidget):
     selectionChanged = Signal(object)   # TreeNode | None
     addToBankRequested = Signal(list)   # list[TreeNode] (always kind == "preset")
+    addFavouritesRequested = Signal(object)   # a single TreeNode, kind == "bank"
     # (absolute path to an MPC .xpm/.xty/.xpj file, program index or None).
     # None means "everything the file holds" -- one program for a .xpm or
     # .xty, every keygroup track for a project.
@@ -324,13 +325,14 @@ class ExplorerPane(QWidget):
         # only those are individually tracked in Config.library_roots and
         # thus removable; a plain subdirectory isn't its own library entry.
         roots = [n for n in nodes if n is not None and n.kind == "directory" and n.parent is None]
+        banks = [n for n in nodes if n is not None and n.kind == "bank"]
         # A row that already declared itself unimportable offers no import
         # action -- it stays visible and searchable, and says why in the
         # Detail pane, which is the whole point of showing it.
         foreigns = [n for n in nodes if n is not None
                     and n.kind in _FOREIGN_KINDS and not n.empty_reason]
         if not presets and not xpms and not programs and not projects \
-                and not roots and not foreigns:
+                and not roots and not foreigns and not banks:
             return
         menu = QMenu(self)
         add_action = None
@@ -384,12 +386,22 @@ class ExplorerPane(QWidget):
             else:
                 label = f"Import {len(foreigns)} instruments…"
             foreign_action = menu.addAction(label)
+        fav_action = None
+        if len(banks) == 1:
+            # On the BANK row, not a preset: the numbers are positions within
+            # one bank, so the bank is the thing being named. Picking it here
+            # also means no name matching -- the list in the spreadsheet says
+            # "Big Bank 64" where the image says "Big Bank 64k".
+            fav_action = menu.addAction(
+                f'Add favourites from a list to New Bank…')
         if len(roots) == 1:
             # Multi-root removal isn't offered either -- same reasoning,
             # keep the one-item-at-a-time pattern consistent.
             remove_action = menu.addAction(f'Remove "{roots[0].label}" from Library…')
         chosen = menu.exec(global_pos)
-        if add_action is not None and chosen == add_action:
+        if fav_action is not None and chosen == fav_action:
+            self.addFavouritesRequested.emit(banks[0])
+        elif add_action is not None and chosen == add_action:
             self.addToBankRequested.emit(presets)
         elif convert_action is not None and chosen == convert_action:
             self.convertPresetRequested.emit(convertible)
