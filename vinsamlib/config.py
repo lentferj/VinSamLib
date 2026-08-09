@@ -73,6 +73,13 @@ class Config:
     # usually well under the format's own absolute maximum.
     e4b_bank_limit_mb: int = 64
     krz_bank_limit_mb: int = 32
+    # Main-window size, remembered on close. None until the first quit, so a
+    # fresh install still gets the built-in default rather than a 0x0 window.
+    # Size only, deliberately not position: a window restored onto a monitor
+    # that is no longer attached is unreachable, and the fix for that is
+    # fiddlier than the feature is worth.
+    window_width: Optional[int] = None
+    window_height: Optional[int] = None
 
     CONFIG_FILE = "config.toml"
 
@@ -99,7 +106,9 @@ class Config:
         return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
                     last_image_dir=last_image_dir, last_library_dir=last_library_dir,
                     last_sample_dir=last_sample_dir, last_program_dir=last_program_dir,
-                    e4b_bank_limit_mb=e4b_bank_limit_mb, krz_bank_limit_mb=krz_bank_limit_mb)
+                    e4b_bank_limit_mb=e4b_bank_limit_mb, krz_bank_limit_mb=krz_bank_limit_mb,
+                    window_width=data.get("window_width"),
+                    window_height=data.get("window_height"))
 
     def save(self, path: Path | None = None, allow_empty_library: bool = False) -> None:
         """Writes the config file. Refuses to blank a non-empty library.
@@ -138,6 +147,9 @@ class Config:
             lines.append(f'last_program_dir = "{self.last_program_dir.as_posix()}"')
         lines.append(f"e4b_bank_limit_mb = {self.e4b_bank_limit_mb}")
         lines.append(f"krz_bank_limit_mb = {self.krz_bank_limit_mb}")
+        if self.window_width and self.window_height:
+            lines.append(f"window_width = {int(self.window_width)}")
+            lines.append(f"window_height = {int(self.window_height)}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def validate_mpc2emu_path(self) -> None:

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QThreadPool, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMainWindow, QMessageBox, QSplitter
 
 from . import workers
@@ -43,7 +43,18 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._config = config
         self.setWindowTitle("VinSamLib")
-        self.resize(1280, 800)
+        # 1500x940 rather than the old 1280x800 (+17%): five columns, and the
+        # placement editor's piano, were arriving cramped on a first run.
+        # CLAMPED to the screen, because a fixed size larger than the display
+        # gives a window whose buttons sit off the bottom edge and cannot be
+        # reached -- availableGeometry() already excludes panels and docks.
+        want_w, want_h = 1500, 940
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            want_w = min(want_w, max(900, avail.width() - 40))
+            want_h = min(want_h, max(600, avail.height() - 40))
+        self.resize(want_w, want_h)
 
         self._index_db = IndexDB(user_data_dir() / "index.db")
         self._scan_worker: workers.Worker | None = None
