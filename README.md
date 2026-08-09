@@ -38,11 +38,13 @@ for the honest account. Always keep an untouched copy of anything
 irreplaceable, and test unfamiliar images on a spare SD card / floppy
 before touching real hardware.
 
-**Three fixed defects produced files that are wrong and do not look it**
-— two kinds of `.KRZ` bank and any large MPC multisample imported before
-2026-08-04. All three are fixed, none can be repaired in place, and
-nothing warns you about a file you already have: see [Fixed defects —
-check what you built earlier](#fixed-defects--check-what-you-built-earlier).
+**Several fixed defects produced files that are wrong and do not look
+it** — velocity-layered `.KRZ` banks built before 2026-08-09, two older
+kinds of `.KRZ` bank, anything converted with a Vintage Resample profile
+from stereo, and any large MPC multisample imported before 2026-08-04.
+All are fixed, none can be repaired in place, and nothing warns you
+about a file you already have: see [Fixed defects — check what you built
+earlier](#fixed-defects--check-what-you-built-earlier).
 
 ---
 
@@ -1131,6 +1133,99 @@ material with a current mpc2emu and VinSamLib.
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
 
+### If you imported a velocity-layered sample folder before 2026-08-09, re-import it
+
+**Affects:** anything built through **Import Sample Folder…** from a folder
+whose filenames name a velocity (`Piano-C3-v40`, `…-v90`, or dynamics like
+`pp`/`mf`/`ff`). Any target format.
+
+**What went wrong:** nothing read the velocity. Two layers of one note
+therefore looked like two samples that had both landed on the same root, and
+the importer's collided-root handling — which is right, and exists so a
+folder of drum one-shots is not silently reduced to its first and last
+sample — spread them onto **consecutive keys** instead of stacking them by
+velocity. The root moved with the key, so the audio is not pitch-shifted; the
+keyboard is simply wrong. Four files gave `C3-v40` on keys 0–60, `C3-v90` on
+61–62 rooted at C#3, and so on: pressing C#3 sounds a C3, and the layering is
+gone.
+
+**What to do:** re-import the folder. Fixed upstream in mpc2emu `50114de`
+(2026-08-09), which stacks a collided group by velocity only when **every**
+member names one and no two name the same — a drum kit still spreads.
+
+> ⚠️ **E4B targets still lose the layering**, for a different reason and it
+> is not yet fixed: in an E4B the velocity window belongs to the *voice*, and
+> mpc2emu's E4B writer puts every zone of an imported folder in one voice, so
+> the four zones' differing windows collapse to one. KRZ and EIII targets keep
+> it. Reported upstream; until it lands, import a layered folder as KRZ or
+> EIII if the layering matters.
+
+### If you built KRZ banks from velocity-layered programs before 2026-08-09, rebuild them
+
+**Affects:** any `.KRZ` bank this program assembled from a source program
+whose keymaps use more than one **velocity band**. 187 of the 10 650
+keymaps in this author's library are multi-band, so it is uncommon but
+not rare — and a layered program is exactly the kind worth keeping.
+
+**What went wrong:** a K2000 keymap is not one entry table. It carries one
+per velocity slot (ppp…fff), addressed by the header's `Level[8]`. This
+program resolved a single table — the **softest** band — everywhere,
+including in the walk that decides which samples to write. So every louder
+layer's samples were left out of the bank.
+
+**Why it is worse than a missing sample, and invisible to every check:**
+the bands that were not written still have their entries, and those
+entries kept their *original* sample ids. After the surviving samples are
+renumbered, those stale ids usually land on samples that **do** exist.
+Measured on a real bank: band 0 held the soft layer at ids 205–209 and
+band 1 held the hard-struck layer at 200–204; the built bank kept only the
+first set, renumbered to 200–204, and band 1's untouched ids then pointed
+straight at them. Nothing dangles, nothing is silent, the key splits are
+identical. Playing hard simply sounds the soft sample, and the hard-struck layer
+is gone.
+
+**How to find them:** `tools/check_krz_banks.py` gained a `VELOCITY-LOSS`
+check for exactly this, and it needs the source bank:
+
+```bash
+python3 tools/check_krz_banks.py --against SOURCE.krz ~/path/to/built
+```
+
+It compares, per keymap, the sample **names** its counterpart in the
+source references against the names the built bank actually contains —
+names rather than ids, because renumbering is legitimate and expected.
+Verified both ways: it flags a bank built with the old code, and raises
+**zero** false positives across 261 correctly built banks. Without
+`--against` there is nothing to compare and it cannot help; the key
+splits are untouched, so `SOURCE-DRIFT` and `KEYMAP-SHIFT` both pass an
+affected bank.
+
+**What to do:** rebuild from the source program. Fixed in VinSamLib
+2026-08-09; mpc2emu's own reader always handled all eight bands, so only
+banks this program assembled are affected.
+
+### If you wrote EIII banks whose zones share a key before 2026-08-08, rebuild them
+
+**Affects:** `.E3`/EIII banks written from a source where two zones cover the
+same key — including any folder import whose filenames carry no note names,
+since every zone then spans the whole keyboard.
+
+**What went wrong:** an EIII preset maps each key to exactly **one** zone —
+a real format limit, not an oversight — so the writer resolved overlaps the
+way the sampler's own panel does, later wins, and dropped whatever was left
+holding no keys. Measured here: a folder of 13 WAVs wrote all 13 samples and
+exactly **one** zone, so twelve of them could never sound. The bank parses,
+the samples are all present, and only the zone count says otherwise.
+
+**Note the trigger, because the intuitive version is wrong.** It is two zones
+sharing a KEY — *not* the "many zones in one voice" shape, which is fine. A
+40-voice bank would have lost zones too, had any two overlapped.
+
+**What to do:** rebuild. Fixed upstream in mpc2emu `4b0dcde` (2026-08-08).
+VinSamLib now reads back every bank it writes and warns when the written zone
+count falls short of what the source held, so this cannot reach you again
+unnoticed.
+
 ### If you used a Vintage Resample profile on stereo content before 2026-08-08, reconvert
 
 **Affects:** any bank you produced with Convert Options → **Vintage
@@ -1237,6 +1332,13 @@ catches damage that isn't a clean 12-semitone shift. It is how this
 project's own hardware-confirmation batch was verified after the fix, and
 it caught the pre-fix version of the same banks, which had silently lost
 a zone.
+
+`--against` also runs the **`VELOCITY-LOSS`** check, which compares — per
+keymap — the sample *names* the source counterpart references against the
+names the built bank contains. That is the only way to see a bank built
+before 2026-08-09 from a velocity-layered program: the split points are
+untouched, so every other check passes it. Names rather than ids, because
+renumbering is expected and says nothing.
 
 Either source format works: the `.krz` of a KRZ→KRZ conversion, or the
 `.e4b` an E4B→KRZ one started from (that form needs mpc2emu configured).

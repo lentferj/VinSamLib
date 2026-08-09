@@ -22,6 +22,14 @@ bank from its source, which is why this only reports.
                 subSample bytes instead. Fixed in this project's
                 `685179f`.
 
+  VELOCITY-LOSS Only with `--against`. Sample names the source's keymaps
+                reference and the built bank does not contain -- the
+                signature of a bank assembled before 2026-08-09, when only
+                the softest velocity band of each keymap was read. Invisible
+                to every other check here: the key splits are untouched and
+                the surviving ids resolve, so the louder layers simply sound
+                the softer sample.
+
   SOURCE-DRIFT  Only with `--against`. Compares each keymap against the
                 bank it was built from. A conversion may renumber
                 samples, rename objects and re-encode PCM, but it must
@@ -440,6 +448,68 @@ def load_source(path: Path):
     return "krz", krz.parse(str(path))
 
 
+def check_velocity_loss(bank: krz.KrzFile,
+                        source: krz.KrzFile) -> list[str]:
+    """Sample NAMES the source's keymaps reference that the built bank does
+    not contain. Only with `--against`, and only meaningful against the real
+    source.
+
+    THE DEFECT IT LOOKS FOR, which none of the checks above can see. Until
+    2026-08-09 this project's KRZ assembler resolved a single entry table per
+    keymap -- the softest velocity band -- so a bank built from a
+    velocity-layered program was written without the samples of every louder
+    band.
+
+    Why the other checks miss it, and why it is worse than a missing sample:
+    the entry BOUNDARIES are untouched, so SOURCE-DRIFT sees nothing, and the
+    unpatched bands keep their source ids, which after renumbering usually
+    land on samples that DO exist. Measured on a real bank: band 0 held
+    the soft layer at ids 205-209 and band 1 held the hard-struck layer at 200-204;
+    the built bank kept only the first, renumbered to 200-204, and band 1's
+    untouched ids then pointed straight at them. Nothing dangles. Playing
+    hard just sounds the soft sample, and the hard-struck layer is gone.
+
+    Compared by NAME rather than id, because renumbering is legitimate and
+    expected -- the ids say nothing, the names are what survived or did not.
+    """
+    def refs(b, km):
+        out = set()
+        for sid in b.keymap_sample_refs(km):
+            samp = b.samples.get(sid)
+            if samp is not None:
+                out.add(_norm(samp.name))
+        return out
+
+    # Matched PER KEYMAP, by name, the way check_against_source does. The
+    # first version of this compared the built bank against every sample the
+    # SOURCE FILE's keymaps referenced, and flagged 202 of 261 correctly built
+    # banks: a source holds many programs, and building one of them is
+    # supposed to leave the others' samples behind. The claim is only ever
+    # "this keymap lost samples its own counterpart had".
+    by_name: dict[str, list] = {}
+    for km in source.keymaps.values():
+        by_name.setdefault(_norm(km.name), []).append(km)
+
+    findings: list[str] = []
+    for kid, km in bank.keymaps.items():
+        candidates = by_name.get(_norm(km.name), [])
+        if not candidates and len(source.keymaps) == 1:
+            candidates = list(source.keymaps.values())
+        if not candidates:
+            continue                      # no counterpart: not a finding
+        have = refs(bank, km)
+        # Best counterpart = the one it matches most closely; a source with
+        # two same-named keymaps must not produce a finding by picking wrong.
+        missing = min((refs(source, c) - have for c in candidates), key=len)
+        if missing:
+            findings.append(
+                f"keymap {kid} ({km.name.strip()!r}): {len(missing)} sample(s) "
+                f"its source counterpart references are absent: "
+                f"{', '.join(sorted(missing)[:4])}"
+                + (" …" if len(missing) > 4 else ""))
+    return findings
+
+
 def scan_bytes(data: bytes, label: str, source=None,
                source_kind: str = "krz") -> tuple[bool, bool]:
     """Returns (flagged, had_unverified_keymaps)."""
@@ -457,8 +527,10 @@ def scan_bytes(data: bytes, label: str, source=None,
         drift, unverified = check_against_e4b(bank, source)
     else:
         drift, unverified = check_against_source(bank, source)
+    velloss = check_velocity_loss(bank, source) if source is not None \
+        and source_kind != "e4b" else []
 
-    if shift or scribble or drift:
+    if shift or scribble or drift or velloss:
         print(f"  ⚠  {label}")
         for f in shift:
             print(f"       KEYMAP-SHIFT   {f}")
@@ -466,6 +538,8 @@ def scan_bytes(data: bytes, label: str, source=None,
             print(f"       ENTRY-SCRIBBLE {f}")
         for f in drift:
             print(f"       SOURCE-DRIFT   {f}")
+        for f in velloss:
+            print(f"       VELOCITY-LOSS  {f}")
         return True, bool(unverified)
 
     if unverified:
@@ -560,7 +634,7 @@ def main(argv: list[str]) -> int:
               f"checked by the other two detectors only — pass each source "
               f"with its own --against run to compare those too.")
     if flagged:
-        print("Neither defect can be repaired in place: rebuild an affected "
+        print("None of these can be repaired in place: rebuild an affected "
               "bank from its source material with a current mpc2emu and "
               "VinSamLib.\nENTRY-SCRIBBLE is a byte pattern only the old "
               "assembler produced, and SOURCE-DRIFT is an exact comparison. "
