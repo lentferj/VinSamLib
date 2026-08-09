@@ -73,6 +73,14 @@ start_trim = _Lazy("processors.start_trim")
 tail_trim = _Lazy("processors.tail_trim")
 xpm_parser = _Lazy("parsers.xpm_parser")
 sampledir_parser = _Lazy("parsers.sampledir_parser")
+# The non-hardware source formats (SF2, SFZ, EXS24, TAL-Sampler, GIG) come in
+# through mpc2emu's own input-format table rather than five separate parser
+# imports: parsers/registry.py already normalises their differing signatures
+# (parse_sf2 takes max_presets and no wav_dir, parse_exs24 takes a *list* of
+# sample dirs, parse_gig takes max_instruments/max_samples) to one
+# `callable(path, wav_dir, **kw) -> Bank` shape, and calls itself "the one
+# source of truth" for it. Re-exporting the table keeps that true here too.
+parser_registry = _Lazy("parsers.registry")
 info_cmd = _Lazy("info_cmd")
 iso_builder = _Lazy("writers.iso_builder")
 hda_builder = _Lazy("writers.hda_builder")

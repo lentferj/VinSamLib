@@ -222,3 +222,25 @@ class Config:
         if not marker.exists():
             return False, f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}"
         return True, "Sample folder import is available"
+
+    def check_foreign_import_support(self) -> tuple[bool, str]:
+        """The non-hardware source formats (build/foreign_import.py) need
+        mpc2emu's input-format registry and all five of its soft-sampler
+        parsers -- own check, same reasoning as check_xpm_import_support().
+
+        All-or-nothing rather than one check per format, because that is what
+        the code actually does: parsers/registry.py imports every parser at
+        module import, so a checkout missing any one of them cannot supply any
+        of the others either. Nothing is gained by pretending otherwise, and a
+        partial answer would put rows in the Explorer that cannot be
+        imported."""
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        required = [Path("parsers") / name for name in (
+            "registry.py", "sf2_parser.py", "sfz_parser.py",
+            "exs24_parser.py", "talsmpl_parser.py", "gig_parser.py")]
+        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        if missing:
+            return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
+        return True, "Soundfont/SFZ/EXS/TAL/GIG import is available"
