@@ -32,7 +32,7 @@ from .samples_pane import SamplesPane
 from .sampledir_import_dialog import SampleDirImportDialog
 from .settings_dialog import SettingsDialog
 from ..banks import e4b, eiii, krz
-from ..build import convert, sampledir_import, xpm_import
+from ..build import convert, foreign_import, sampledir_import, xpm_import
 from ..config import Config, user_data_dir
 from ..index.db import IndexDB
 from ..index.scanner import scan
@@ -55,8 +55,21 @@ class MainWindow(QMainWindow):
         # Accumulated across a whole queue, reported once when it drains --
         # converting 20 presets at once must not mean 20 modal warnings.
         self._preset_convert_risks: list = []
+        # The convert-first import queue: soundfont-style sources and MPC
+        # containers, whichever route they arrived by.
+        self._import_worker: workers.Worker | None = None
+        self._import_queue: list = []
+        self._import_opts: Optional[convert.ConversionOptions] = None
+        self._import_risks: list = []
+
+        # Before the tree model and the Explorer exist, and before any scan:
+        # both decide whether the soundfont-style formats are rows at all,
+        # from worker threads that have no Config of their own.
+        foreign_import.set_available(config.check_foreign_import_support()[0])
 
         self._model = LibraryTreeModel(list(config.library_roots))
+        self._model.statusMessage.connect(
+            lambda msg: self.statusBar().showMessage(msg, 6000))
 
         self._explorer = ExplorerPane(self._model, self._index_db)
         self._samples = SamplesPane()
@@ -68,6 +81,8 @@ class MainWindow(QMainWindow):
         self._explorer.addToBankRequested.connect(self._add_node_to_bank)
         self._explorer.importXpmRequested.connect(self._import_xpm)
         self._explorer.convertPresetRequested.connect(self._convert_preset_via_mpc2emu)
+        self._explorer.importForeignRequested.connect(self._import_requests)
+        self._bank_pane.importRequested.connect(self._import_requests)
         self._explorer.removeLibraryRootRequested.connect(self._remove_library_root)
 
         self._pending_pane = PendingBanksPane()
@@ -170,6 +185,16 @@ class MainWindow(QMainWindow):
             "Pick individual sample files — for a folder that holds more than "
             "one instrument" if sd_ok else f"Unavailable: {sd_reason}")
         file_menu.addAction(import_samples_action)
+
+        import_foreign_action = QAction("Import Instrument…", self)
+        import_foreign_action.triggered.connect(self._import_foreign_file)
+        fi_ok, fi_reason = self._config.check_foreign_import_support()
+        import_foreign_action.setEnabled(fi_ok)
+        import_foreign_action.setToolTip(
+            "SoundFont, SFZ, EXS24, TAL-Sampler or GigaSampler — read and "
+            "converted to a hardware bank, never written back"
+            if fi_ok else f"Unavailable: {fi_reason}")
+        file_menu.addAction(import_foreign_action)
 
         file_menu.addSeparator()
 
@@ -303,8 +328,11 @@ class MainWindow(QMainWindow):
         preset_index: one program out of a project (.xpj), or None for
         everything the file holds -- which for a .xpm or .xty is its single
         program anyway, and for a project is all of them at once."""
-        if self._xpm_import_worker is not None:
-            self.statusBar().showMessage("An MPC import is already running")
+        if self._xpm_import_worker is not None or self._import_worker is not None:
+            # Both, since an MPC program now also reaches the shared
+            # convert-first queue (a drag onto New Bank) -- two importers
+            # writing into New Bank at once would interleave their presets.
+            self.statusBar().showMessage("An import is already running")
             return
         if not path:
             path, _filter = QFileDialog.getOpenFileName(
@@ -601,6 +629,164 @@ class MainWindow(QMainWindow):
         return pairs[0] if pairs else None
 
     # -- convert an existing E4B preset via mpc2emu --------------------------------
+
+    # ── soundfont-style import sources (SF2, SFZ, EXS24, TAL, GIG) ─────────
+
+    def _import_foreign_file(self) -> None:
+        """File ▸ Import Instrument… — the picker route into _import_foreign.
+
+        A file chosen here is imported whole: picking one preset out of a
+        multi-preset SoundFont is what the Explorer's rows are for, and this
+        dialog has no way to show them.
+        """
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Import Instrument", self._start_dir("last_instrument_dir"),
+            "Sampler instruments (*.sf2 *.sfz *.exs *.talsmpl *.gig)",
+            options=QFileDialog.Option.DontUseNativeDialog)
+        if not path:
+            return
+        self._remember_dir("last_instrument_dir", path)
+        verdict = foreign_import.inspect(path)
+        if verdict is not None and verdict.empty_reason:
+            # The Explorer greys such a row; a file picker has no row to grey,
+            # so say it here rather than starting an import that cannot work.
+            self.statusBar().showMessage(
+                f"{Path(path).name}: {verdict.empty_reason}", 10000)
+            return
+        self._import_requests([{"path": path,
+                                "format": foreign_import.format_for(path) or "",
+                                "ordinal": None, "name": Path(path).stem}])
+
+    @staticmethod
+    def _is_mpc_request(request: dict) -> bool:
+        return Path(request["path"]).suffix.lower() in xpm_import.MPC_EXT_FORMAT
+
+    def _import_requests(self, requests: list) -> None:
+        """Import one or more convert-first sources into New Bank.
+
+        Everything that has to be CONVERTED before it can be a preset comes
+        through here -- the soundfont-style formats and the MPC's
+        `.xpm`/`.xty`/`.xpj` containers alike -- reached by double-click, by
+        the Explorer's right-click "Import…", or by dragging the row onto New
+        Bank. All three routes produce the same list of request dicts (see
+        ui/dnd.py), so there is one handler rather than one per route.
+
+        The two families keep their own importer and their own naming rules
+        (see _run_next_import): a dragged `.xpm` must land exactly as the
+        same `.xpm` imported from its context menu does, or the two routes
+        would quietly disagree about what a preset is called.
+
+        One shared Convert Options dialog covers the whole batch, exactly as
+        a multi-preset "Import via mpc2emu…" does, and the conversions run
+        one at a time afterwards: parsing a soundfont holds every one of its
+        samples in memory, and doing several at once is how a 1 GB SoundFont
+        becomes an out-of-memory kill rather than a slow import.
+        """
+        if self._import_worker is not None or self._xpm_import_worker is not None:
+            self.statusBar().showMessage("An import is already running")
+            return
+        requests = [r for r in requests if r.get("path")]
+        if not requests:
+            return
+        first = requests[0]
+        all_mpc = all(self._is_mpc_request(r) for r in requests)
+        noun = "program" if all_mpc else "instrument"
+        source_text = (first["path"] if len(requests) == 1
+                       else f"{len(requests)} {noun}s")
+        title = (f"Import {noun}" if len(requests) == 1
+                 else f"Import {len(requests)} {noun}s")
+        opts = FormatConvertDialog.get_import_options(
+            self, title=title,
+            warning_text=None if all_mpc else (
+                "These formats are import sources only — VinSamLib reads "
+                "them and writes the hardware bank you choose here, never "
+                "the other way round."),
+            # The pane's own lock is enforced by greying the picker, the way
+            # every other import dialog here does it, rather than by
+            # rejecting the drop after the fact.
+            locked_format=self._bank_pane.format,
+            bank_loader=lambda r=first: (
+                xpm_import.load_samples_for_test(r["path"], None, r.get("ordinal"))
+                if self._is_mpc_request(r)
+                else foreign_import.load_samples_for_test(r["path"], r.get("ordinal"))),
+            source_text=source_text)
+        if opts is None:
+            return
+        self._import_queue = list(requests)
+        self._import_opts = opts
+        self._import_risks = []
+        self._run_next_import()
+
+    def _run_next_import(self) -> None:
+        if not self._import_queue:
+            risks, self._import_risks = self._import_risks, []
+            self._warn_polyphony(risks, "Import")
+            return
+        request = self._import_queue.pop(0)
+        opts = self._import_opts
+        path, ordinal = request["path"], request.get("ordinal")
+        self.statusBar().showMessage(f"Importing {request.get('name') or Path(path).name}…")
+        if self._is_mpc_request(request):
+            # Deliberately the SAME importer and the same completion handler
+            # the MPC context menu uses, not a parallel one: naming an
+            # imported program is fiddly (filename for a lone .xpm, program
+            # names for a project's rows -- see _on_xpm_imported) and a
+            # dragged row must land identically to a right-clicked one.
+            w = workers.Worker(xpm_import.import_xpm, path, opts, None,
+                               self._import_risks, ordinal)
+            w.signals.finished.connect(
+                lambda tmp_path, p=path, o=opts, i=ordinal:
+                    self._on_xpm_imported(tmp_path, p, o, None, i))
+            w.signals.error.connect(self._on_xpm_import_error)
+        else:
+            w = workers.Worker(foreign_import.import_foreign, path, opts, ordinal,
+                               None, self._import_risks)
+            w.signals.finished.connect(
+                lambda tmp_path, r=request, o=opts:
+                    self._on_foreign_imported(tmp_path, r, o))
+            w.signals.error.connect(self._on_foreign_import_error)
+        w.signals.finished.connect(lambda *_: self._advance_import())
+        w.signals.error.connect(lambda *_: self._advance_import())
+        self._import_worker = w
+        workers.run(w)
+
+    def _advance_import(self) -> None:
+        self._import_worker = None
+        self._run_next_import()
+
+    def _on_foreign_imported(self, tmp_path: str, request: dict,
+                             opts: convert.ConversionOptions) -> None:
+        path, ordinal = request["path"], request.get("ordinal")
+        # The `#ordinal` suffix is load-bearing, not cosmetic. Importing one
+        # preset of a SoundFont writes a ONE-preset bank, so every preset of
+        # the same file comes back as index 0 of the same path -- and
+        # BankPane's duplicate check keys on (format, bank.path, index).
+        # Without this, importing a second instrument out of one .sf2 would
+        # be silently swallowed as a duplicate of the first. Same fix, same
+        # reason as the per-program MPC project import above.
+        label_path = path if ordinal is None else f"{path}#{ordinal}"
+        pairs = self._read_back_converted_presets(tmp_path, opts, label_path=label_path)
+        if not pairs:
+            return
+        stem = Path(path).stem
+        if len(pairs) == 1:
+            # The row's own label beats the written preset name: the latter
+            # is already cut to the 16 characters a hardware name field
+            # holds, while the row shows what the instrument is really
+            # called.
+            names = [request.get("name") or stem or "Imported instrument"]
+        else:
+            # A whole multi-preset file, or an SFZ that split into one preset
+            # per keyswitch articulation -- the file name is shared by all of
+            # them, so their own names are what tell them apart.
+            names = [preset.name.strip() or f"{stem} {i + 1}"
+                     for i, (_bank, preset) in enumerate(pairs)]
+        self._bank_pane.add_presets(
+            [(bank, preset, opts.target_format, name)
+             for (bank, preset), name in zip(pairs, names)])
+
+    def _on_foreign_import_error(self, message: str) -> None:
+        self.statusBar().showMessage(workers.last_error_line(message))
 
     def _convert_preset_via_mpc2emu(self, nodes: list) -> None:
         """Explorer's right-click "Import via mpc2emu..." on one or more
