@@ -1009,6 +1009,28 @@ in the Explorer with one row each. A `.sfz`, `.exs` or `.talsmpl` holds one
 and is a single row. (An SFZ using keyswitches is still one row, but may
 import as several presets — mpc2emu splits it one preset per articulation.)
 
+> ⚠️ **A GIG whose regions use dimensions imports as ONE sample.** Check it
+> in Adjust Placement… before building. GigaSampler stores a *dimension
+> region* per combination of velocity layer and stereo channel, each with its
+> own sample and root note; mpc2emu's reader takes the first of them, which in
+> real files is often a stale leftover. One marimba here has **147 samples and
+> 392 dimension regions** and imports as **49 zones all playing a single
+> sample** at a root of C3, its four velocity layers gone.
+>
+> **How to spot it in two seconds:** open **Adjust Placement…**. If every row
+> is red — root outside its own key range — that is this. An instrument whose
+> regions have a single dimension region (no velocity layers, mono) is
+> unaffected and looks normal: a mandolin here gives 39 zones and 39 distinct
+> samples.
+>
+> There is deliberately **no automatic warning**, because no honest one is
+> available from this side. The obvious test — root outside its own key
+> range — fires on **48.6% of zones in perfectly good KRZ banks**, since that
+> is exactly how a keymap transposes one sample across the keyboard. And the
+> samples that went missing cannot be counted here: the reader never emits
+> them, so nothing downstream knows they existed. Reported upstream with the
+> per-region evidence; until it is fixed, the red rows are the check.
+
 **Expanding does not parse.** Unlike an MPC project, these name their
 instruments in a header that sits nowhere near the audio, so expanding even
 a 1 GB SoundFont is a header read — measured at 1.6 ms for a 985 MB `.gig`.
