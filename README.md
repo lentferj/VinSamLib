@@ -39,7 +39,7 @@ irreplaceable, and test unfamiliar images on a spare SD card / floppy
 before touching real hardware.
 
 **Several fixed defects produced files that are wrong and do not look
-it** — anything converted from an E4B between 28 July and 9 August,
+it** — KRZ banks whose programs use ROM sounds, anything converted from an E4B between 28 July and 9 August,
 velocity-layered `.KRZ` banks built before 2026-08-09, two older
 kinds of `.KRZ` bank, anything converted with a Vintage Resample profile
 from stereo, and any large MPC multisample imported before 2026-08-04.
@@ -1283,6 +1283,29 @@ material with a current mpc2emu and VinSamLib.
 
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
+
+### If you built a KRZ bank whose programs use ROM sounds before 2026-08-09, rebuild it
+
+**Affects:** any `.KRZ` this program assembled from a source whose programs
+reference a sample or keymap the K2000 supplies from **ROM** rather than from
+the bank. Common: 433 banks in this author's library hold programs and *no*
+sample objects at all, and 162 of 400 test builds carried at least one such
+reference.
+
+**What went wrong:** assembling renumbers every object it copies. Anything it
+did *not* copy — a ROM id, which is simply an id absent from the bank — was
+rewritten to **0**, meaning "no sample". On the K2000 that is a silent key or
+a missing layer.
+
+**Why it looked correct:** a bank full of ROM references is invisible to every
+integrity check, including this project's own. Nothing dangles, because the
+reference was replaced rather than broken, and the bank has all the samples it
+claims to have. Measured on one real build: three of thirty programs lost
+their reference to ROM sample 168 with nothing to show for it.
+
+**What to do:** rebuild. Fixed 2026-08-09 — an id absent from the bank is now
+written through unchanged, for keymaps as well as samples. A bank you built
+that uses only its own samples is unaffected.
 
 ### If you converted anything FROM an E4B between 2026-07-28 and 2026-08-09, reconvert it
 

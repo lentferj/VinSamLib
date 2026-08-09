@@ -752,9 +752,31 @@ def _repatch_keymap_samples(km: KrzObject, src_key: tuple[int, int],
     src_id = src_key[0]
 
     def _remap(old_sid: int) -> int:
+        """New id for a sample we carried over; the id UNCHANGED for one we
+        did not.
+
+        An id absent from the bank is a ROM id, and the K2000 resolves it
+        against the machine. Returning 0 -- "no sample" -- silenced it.
+
+        That is not a corner case. **433 banks in this library hold programs
+        and ZERO sample objects**, one of them 229 programs; they are shipping
+        products whose every reference is to ROM. mpc2emu reverse-engineered
+        its KRZ writer against one of them (100 programs, no samples AND no
+        keymaps). Under the old rule every program in all 433 would be
+        silent.
+
+        Measured on a real build before the fix: three programs of a
+        30-program bank lost their reference to ROM sample 168.
+
+        The counter-evidence that made this look settled the other way --
+        mpc2emu's note about a bank measuring silent below key 60 -- turned
+        out to be a bank referencing a ROM sample absent from THAT MACHINE's
+        ROM. Silent because nothing resolved it, not because an out-of-bank
+        id is invalid.
+        """
         if not old_sid:
             return 0
-        return sample_key_to_new_id.get((src_id, old_sid), 0)
+        return sample_key_to_new_id.get((src_id, old_sid), old_sid)
 
     default_sid = struct.unpack_from(">H", block, body_start)[0]
     struct.pack_into(">H", block, body_start, _remap(default_sid))
@@ -789,7 +811,10 @@ def _repatch_program_keymaps(prog: KrzObject, src_id: int, keymap_new_id: dict) 
             old_kid = struct.unpack_from(">H", data, off)[0]
             if not old_kid:
                 continue
-            new_kid = keymap_new_id.get((src_id, old_kid), 0)
+            # Same rule as sample ids, and it matters here too: a program
+            # can reference a ROM KEYMAP. The bank the KRZ writer was built
+            # against has no keymap objects at all.
+            new_kid = keymap_new_id.get((src_id, old_kid), old_kid)
             struct.pack_into(">H", block, abs_data_start + off, new_kid)
     return bytes(block)
 
