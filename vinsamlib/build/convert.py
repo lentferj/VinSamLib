@@ -551,32 +551,51 @@ def _zone_loss_risk(bank: Any, out_path: Path, opts: ConversionOptions) -> Optio
     receive it without being told, which is what happened until this ran.
     Returns a risk dict for the same list polyphony findings use, or None.
     """
+    from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
-    # EIII ONLY, deliberately, and this is the part that was got wrong first.
+    # E4B and EIII. It was EIII-only for a day because E4B reported "140 of
+    # 141" on ordinary conversions and nobody had explained it.
     #
-    # The check originally ran for E4B too, and on ordinary real-bank
-    # conversions it reported "140 of 141 zones" -- an off-by-one nobody has
-    # explained. It is not the empty-zone artefact it looks like: our reader's
-    # _parse_zone_refs counts every entry including sample index 0, so the
-    # two sides really do disagree by one somewhere. That is worth chasing,
-    # and it is NOT worth a modal warning in the meantime: a guard that cries
-    # about one zone in 141 on every conversion trains the user to dismiss it,
-    # and the next time it means something they will dismiss that too.
+    # THE EXPLANATION, and it is mundane: a zone whose sample index is 0 is an
+    # UNASSIGNED zone -- index 0 is not a sample, it means "nothing here". The
+    # writer correctly omits such a zone; this check counted it. 813 of 26 979
+    # zone entries across 40 real banks are unassigned, so an "Untitled Preset"
+    # holding one empty zone reads as one lost zone every time.
     #
-    # So this warns only where the loss is measured, understood and severe:
-    # EIII drops all but the first zone of a multi-zone voice, which for a
-    # folder of 13 WAVs is 1 of 13. KRZ is excluded for a different reason --
-    # it reaches samples through keymaps rather than zone entries, so a
-    # like-for-like count needs the keymap walk and is not guessed at here.
-    if opts.target_format != "EIII":
+    # I twice asserted this was NOT the empty-zone artefact, reasoning that
+    # _parse_zone_refs counts index 0. That is exactly WHY it happens: we count
+    # it, the writer drops it. mpc2emu's own diagnosis -- that our voice walk
+    # lands short on the last voice's trailer -- did not hold either; the
+    # written file's vpar[2:4] and vpar[4] both say zero zones for that preset,
+    # so nothing is being misread.
+    #
+    # Counting only zones that reference a REAL sample makes both sides
+    # like-for-like, which is what the comparison needed all along. KRZ stays
+    # out for the original reason: it reaches samples through keymaps, so an
+    # equivalent count needs the keymap walk and is not guessed at here.
+    if opts.target_format not in ("E4B", "EIII"):
         return None
-    wanted = sum(len(v.zones) for p in bank.presets for v in p.voices)
+    # Only zones that actually RESOLVE to a sample, matching what a writer
+    # emits. A ZoneMapping refers to its sample by NAME -- there is no
+    # sample_index on it, and asking for one returned None for every zone,
+    # which drove `wanted` to zero and silently switched this whole check off.
+    # It read as "the false positive is fixed" and was caught only because
+    # manual_names_e2e asserts the EIII loss must still be reported.
+    have = {s.name for s in bank.samples}
+    wanted = sum(1 for p in bank.presets for v in p.voices for z in v.zones
+                 if getattr(z, "sample_name", None) in have)
     if not wanted:
         return None
     try:
         data = out_path.read_bytes()
-        got = sum(len(p.zone_refs) for p in
-                   vs_eiii.parse_bytes(data, out_path.name).presets)
+        if opts.target_format == "E4B":
+            parsed = vs_e4b.parse_bytes(data, out_path.name)
+            got = sum(1 for p in parsed.presets for _off, idx in p.zone_refs
+                      if idx and idx in parsed.samples)
+        else:
+            parsed = vs_eiii.parse_bytes(data, out_path.name)
+            got = sum(1 for p in parsed.presets for _off, raw in p.zone_refs
+                      if (raw & 0x3FFF) and (raw & 0x3FFF) in parsed.samples)
     except Exception:
         return None
     if got >= wanted:

@@ -281,24 +281,35 @@ case would have lost zones too, had any two overlapped. Any bank previously
 cleared as "converted fine because it came from another sampler" is not
 cleared by that reasoning.
 
-**Why the check is EIII-only, and the E4B bug it exposed.** Run for E4B it
-reported "140 of 141 zones" on ordinary conversions — not the empty-zone
-artefact it resembles, since `_parse_zone_refs` counts index 0 too. mpc2emu
-identified the cause 2026-08-08 and it is **ours**: E4B voices pack
-back-to-back with no terminator, and only the LAST voice in a preset carries
-a trailer, two bytes of `00 00`. A walk that expects a terminator per voice,
-or reads those two bytes as the head of a zone entry, lands one short exactly
-once — which is what "140 of 141" is. The count is arithmetic, not a scan:
+**The "140 of 141" on E4B — explained, and it was nobody's bug.** The check
+ran for E4B for a day and reported one lost zone on ordinary conversions. The
+cause is mundane: **a zone whose sample index is 0 is UNASSIGNED** — index 0
+is not a sample, it means "nothing here". A writer correctly omits such a
+zone; the check counted it. Across 40 real banks, **813 of 26 979** zone
+entries reference no sample, so an "Untitled Preset" carrying one empty zone
+reads as one lost zone every time.
 
-```
-n_zones(voice) = (be16(vpar[2:4]) - 284) / 22      # VOICE_FIXED, ZONE_ENTRY
-next_voice     = this_voice_start + be16(vpar[2:4])
-```
+Two diagnoses were offered before that one, and both were wrong:
 
-**Still unfixed here** — `banks/e4b.py`'s `_walk_voices` needs it, and the
-zone check can widen to E4B once it lands. Recorded rather than left as an
-open mystery, because a guard that cries about one zone in 141 on every
-conversion trains a user to dismiss it.
+* mine — "not the empty-zone artefact, because `_parse_zone_refs` counts
+  index 0". That is exactly *why* it happens: we count it, the writer drops
+  it. The inference was backwards, and I asserted it twice.
+* mpc2emu's — that our voice walk lands short on the last voice's trailer.
+  It does not: in the written file `vpar[2:4]` and `vpar[4]` **both** report
+  zero zones for that preset, so nothing is being misread. `_walk_voices`
+  already uses their arithmetic.
+
+The comparison now counts only zones that **resolve to a real sample** on both
+sides, which is like-for-like, and the check covers **E4B and EIII**. KRZ
+stays out for the original reason: it reaches samples through keymaps, so an
+equivalent count needs the keymap walk.
+
+> A `ZoneMapping` refers to its sample **by name** — it has no
+> `sample_index`. Asking for one returns `None` for every zone, which drove
+> the count to zero and silently switched the entire check off while looking
+> like the fix. It was caught only because `manual_names_e2e` asserts the
+> known EIII loss must **still** be reported. **An assertion that a known bug
+> is still detected is what stops a guard being disabled by its own repair.**
 
 VinSamLib **warns and does not refuse**: `_zone_loss_risk` re-reads every
 written bank and reports through the same risk list polyphony findings use.
@@ -311,6 +322,48 @@ remembering when reading a guard's stated limits: they are a list of the
 faults it will let through, not a disclaimer.
 
 ---
+
+## Matrix G — the control is REACHABLE, not merely correct
+
+Added 2026-08-09, after three features shipped correct underneath and
+impossible to use, every one of them passing its own tests throughout:
+
+* the Rename Samples button was enabled for KRZ while its dialog opened with
+  **zero rows** — the row walk used an attribute `KrzObject` does not have;
+* that dialog's "New name" column was **read-only** — `NoSelection` stops an
+  item becoming current, and an item that cannot be current cannot be edited,
+  while its flags still said `ItemIsEditable`;
+* the placement dialog's per-row rename had **never** been editable since the
+  day it shipped — that table sets `NoEditTriggers` outright.
+
+The common cause is not carelessness, it is a testing habit: every test of
+those features called `setText()`, which writes to the model and bypasses the
+view. **Asserting on the model underneath passes against a control the user
+cannot reach.**
+
+| what | E4B | KRZ | EIII | covered by |
+|---|---|---|---|---|
+| the button is enabled for a staged bank | ✅ | ✅ | ✅ | `manual_ui_reachability` |
+| the dialog opens with rows, not empty | ✅ 77 | ✅ | ✅ 14 | `manual_ui_reachability` |
+| the "New name" cell accepts typing | ✅ | ✅ | ✅ | `manual_ui_reachability` |
+| the original-name column stays read-only | ✅ | ✅ | ✅ | `manual_ui_reachability` |
+| the placement dialog's Sample column accepts typing | ✅ (format-independent) | | | `manual_ui_reachability` |
+
+**Three measurements that lie**, all learned by being fooled by them here, and
+all worth knowing before writing the next UI test:
+
+1. `QAbstractItemView.edit(index)` **forces** an editor open regardless of
+   triggers. It returned `True` for both dialogs while both were read-only.
+2. A synthetic `QTest.mouseDClick` returns `False` even against a *working*
+   table, because offscreen hit-testing does not land where `visualRect` says.
+3. `setCurrentCell()` then F2 proves the ITEM is editable — but it hands the
+   test the current cell that `NoSelection` denies a real user. The first
+   version of `manual_ui_reachability` did exactly this and passed against
+   the bug it was written for.
+
+So the check asserts all three of: selection is possible, some edit trigger is
+enabled, and F2 opens an editor. Reverting either original bug now produces a
+named failure.
 
 ## Gaps closed 2026-08-07 — `manual_matrix_gaps`
 
