@@ -634,12 +634,13 @@ program reaches its samples through keymaps, and an EIII preset has no
 per-zone range at all — it carries an 88-entry table mapping each key to one
 zone. Both are their own piece of work.
 
-> ⚠️ **No sampler has yet loaded a bank re-placed or re-layered this way.**
-> A moved zone
+> ⚠️ **No sampler has yet loaded a bank whose placement or velocity was
+> edited this way**, and a velocity edit additionally rebuilds the preset's
+> voices (see the link below). A moved zone
 > also has to widen its **voice's** own key window, or the instrument clamps
 > the zone back and the edit silently does nothing — that widening is applied
 > here and verified against the corpus, but not on hardware. See
-> [Known Limitations](#️-moving-a-samples-placement-inside-a-bank--experimental-not-hardware-confirmed).
+> [Known Limitations](#️-editing-where-a-sample-plays--placement-and-velocity--experimental-not-hardware-confirmed).
 
 **Save as…** writes the exact assembled bytes to a file you choose.
 **Send to Image Column** hands the current (bank, preset list, name)
@@ -1392,15 +1393,23 @@ with their fixed field; KRZ has no such limit and would happily carry more,
 but 16 is the longest authored name across 9 700 real K2000 objects and the
 width of the machine's own display.
 
-### ⚠️ Moving a sample's placement inside a bank — EXPERIMENTAL, not hardware-confirmed
+### ⚠️ Editing where a sample plays — placement AND velocity — EXPERIMENTAL, not hardware-confirmed
 
-New Bank can also move where a sample plays (**Adjust Placement…**), patching
-the low key, root note and high key in the zone entries of a preset body that
-is otherwise copied verbatim. **E4B only** — the button is disabled elsewhere,
-with the reason in its tooltip. As with renaming, it is exercised against real
-banks (audio byte-identical, sample numbering unchanged, an untouched dialog a
-byte-for-byte no-op) but **no sampler has yet loaded a bank re-placed this
-way.**
+New Bank can also change **where a sample plays** — its key range and root
+(**Adjust Placement…**), and the velocity window it answers to (**Vel lo /
+Vel hi** in the same dialog). Both patch a preset body that is otherwise
+copied verbatim. **E4B only** — the button is disabled elsewhere, with the
+reason in its tooltip.
+
+**One warning covers both, because they carry the same risk.** Each is
+exercised against real banks — audio byte-identical, sample numbering
+unchanged, an untouched dialog a byte-for-byte no-op — but **no sampler has
+yet loaded a bank whose placement or velocity was edited this way.** Treat the
+output as unverified and keep the original file.
+
+Velocity is the more invasive of the two and deserves saying plainly: it can
+change the **shape** of a preset, not just its bytes. See the voice-splitting
+note below.
 
 **The trap worth knowing about, because it makes a wrong edit look right.** A
 zone's key range is not the whole story: the **voice** that owns it carries a
@@ -1415,15 +1424,31 @@ zones across the 8-bank corpus test, which is how it is kept honest.
 A sample used by several zones moves in **all** of them; see [New
 Bank](#new-bank) for why that is per-sample rather than per-zone.
 
-**Velocity** is the same feature and the same warning, with one structural
-difference worth stating: in an E4B the velocity window lives on the
-**voice** (`vpar[18]`/`vpar[21]`), not on the zone. The zone entry *has*
-velocity bytes and they read `(0, 127)` on every real bank measured here —
-present, plausible and inert. Reading them said 0.4% of presets are
-velocity-layered; reading the voice says **36.4% of 1604**, up to nine
-windows in one preset. Because a voice has exactly one window, the field is
-offered only where a voice holds a single sample, and greyed with the reason
-everywhere else.
+#### Velocity, and why it splits voices
+
+In an E4B the velocity window lives on the **voice** (`vpar[18]`/`vpar[21]`),
+not on the zone. The zone entry *has* velocity bytes and they read `(0, 127)`
+on every real bank measured here — present, plausible and inert. Reading them
+said 0.4% of presets are velocity-layered; reading the voice says **36.4% of
+1604**, up to nine windows in one preset.
+
+Because a voice carries exactly one window, giving a single sample its own
+means **moving its zone into a new voice**. That is what happens on write: the
+preset is rebuilt with one voice per distinct window, zones wanting the same
+window sharing a voice. Everything else about the voice is cloned, the zone
+order is preserved, and a preset nobody re-placed comes back unchanged.
+
+**This is the only edit here that changes a preset's shape** — its body grows
+and its voice count rises — rather than patching bytes in place. It is
+verified across the corpus (zone count, sample count and audio all unchanged,
+neighbouring samples keeping their own windows) and it is still the least
+settled thing in this program after KRZ block growth.
+
+**The alternative was worse.** The field used to be greyed wherever a voice
+held more than one sample, which is correct about the format and useless in
+practice: mpc2emu's writer emits one voice per window, so an imported folder
+is a *single* voice holding every zone — 156 of them in one measured case —
+and every row was locked. The control worked only on hand-authored banks.
 
 ### EIII / ESI-32
 

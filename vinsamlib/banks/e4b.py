@@ -439,6 +439,66 @@ def _apply_velocity(body: bytearray, voice_start: int,
     body[voice_start + VOICE_HI_VEL] = hi_vel
 
 
+def _split_voices_by_velocity(body: bytearray, num_voices: int,
+                               wants: dict) -> bytearray:
+    """Rebuild a preset body so every distinct velocity window gets its own
+    VOICE. `wants` maps a zone's offset in `body` to the (lo_vel, hi_vel) it
+    should answer to; a zone not mentioned keeps whatever its current voice
+    says.
+
+    WHY THIS HAS TO EXIST. E4B stores the velocity window on the voice, not
+    the zone, so "give this one sample its own window" is not a byte patch --
+    the sample has to be moved into a voice of its own. Without it the feature
+    is unusable on exactly the banks a user builds: mpc2emu's writer emits one
+    voice per distinct window, so an imported folder is ONE voice holding
+    every zone (156 of them, measured) and every row is locked. Hand-authored
+    banks tend to one zone per voice and were the only place it worked.
+
+    Zones wanting the SAME window share the new voice rather than getting one
+    each -- that is what the format means by a velocity layer, and it keeps
+    the voice count down.
+
+    This is the first edit here that changes a preset body's LENGTH. It is
+    safe to do so because chunk sizes and TOC entries are computed from
+    `len(body)` further down, never carried over from the source.
+    """
+    header = bytearray(body[:PRES_HDR])
+    rebuilt: list = []
+    for v_start, table_start, n in _walk_voices(body, num_voices):
+        vpar = bytearray(body[v_start:v_start + VOICE_FIXED])
+        current = (vpar[VOICE_LO_VEL], vpar[VOICE_HI_VEL])
+        groups: dict = {}
+        order: list = []
+        for k in range(n):
+            off = table_start + k * ZONE_ENTRY
+            zone = bytes(body[off:off + ZONE_ENTRY])
+            win = wants.get(off, current)
+            if win not in groups:
+                groups[win] = []
+                order.append(win)
+            groups[win].append(zone)
+        # Order preserved so a bank nobody re-placed comes back unchanged.
+        for win in order:
+            clone = bytearray(vpar)
+            clone[VOICE_LO_VEL], clone[VOICE_HI_VEL] = win
+            rebuilt.append((clone, groups[win]))
+
+    out = bytearray(header)
+    for vpar, zones in rebuilt:
+        nz = len(zones)
+        # BOTH places the zone count lives, or the walk and the reader
+        # disagree: vpar[2:4] is the offset to the voice's end, and vpar[4]
+        # repeats the count. Verified equal across 20 810 real voices.
+        struct.pack_into(">H", vpar, 2, VOICE_FIXED + nz * ZONE_ENTRY)
+        vpar[4] = min(0xFF, nz)
+        out += vpar
+        for zone in zones:
+            out += zone
+    out += b"\x00\x00"        # the single trailer, after the LAST voice only
+    struct.pack_into(">H", out, 20, len(rebuilt) & 0xFFFF)
+    return out
+
+
 def assemble(selections: list[tuple[E4BFile, E4BPreset]],
               sample_names: Optional[dict] = None,
               zone_placement: Optional[dict] = None,
@@ -487,6 +547,7 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
         # zone offset -> the voice that owns it, so a placement edit can widen
         # that voice's own key window. Built once per preset rather than
         # searched per zone.
+        vel_wanted: dict = {}
         owner: dict[int, int] = {}
         if zone_placement or voice_velocity:
             for v_start, table_start, n in _walk_voices(preset.body,
@@ -518,9 +579,18 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
             # there is nowhere else to put a per-zone one. The pane refuses to
             # offer the edit when a voice is shared, rather than silently
             # dragging a neighbour's sample along.
+            # Collected rather than applied here. A voice holding several
+            # samples has ONE window, so writing it in place would drag the
+            # neighbours along; the split pass below gives this zone a voice
+            # of its own instead. Applied in place only when the voice already
+            # holds nothing else, which the split pass also handles -- it
+            # simply produces one group.
             vel = (voice_velocity or {}).get(samp.name)
             if vel is not None and zone_off in owner:
-                _apply_velocity(body, owner[zone_off], *vel)
+                lo_v, hi_v = (max(0, min(127, int(v))) for v in vel)
+                if lo_v > hi_v:
+                    lo_v, hi_v = hi_v, lo_v
+                vel_wanted[zone_off] = (lo_v, hi_v)
             key = (samp.name, samp.body)
             new_idx = dedupe_key_to_new_idx.get(key)
             if new_idx is None:
@@ -545,6 +615,10 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
                 new_sample_names.append(final_name)
                 dedupe_key_to_new_idx[key] = new_idx
             struct.pack_into(">H", body, zone_off + 10, new_idx & 0xFFFF)
+        # LAST, because it renumbers every zone offset in the body: the
+        # patches above address zones by their offset in the original layout.
+        if vel_wanted:
+            body = _split_voices_by_velocity(body, preset.num_voices, vel_wanted)
         struct.pack_into(">H", body, 0, len(new_preset_bodies) & 0xFFFF)
         new_preset_bodies.append(bytes(body))
         new_preset_names.append(preset.name)

@@ -249,7 +249,9 @@ failing.
 | the placement reaches the IMAGE, not just Save as… | `manual_placement_reaches_image` | n/a | n/a |
 | the round trip Pending → New Bank keeps it | ✅ | n/a | n/a |
 | the VELOCITY window is shown and editable | `manual_e4b_velocity` ¹² | n/a ⁸ | n/a ⁸ |
-| a shared voice is LOCKED, not silently edited | ✅ ¹² | n/a | n/a |
+| a sample sharing a voice is SPLIT out, not refused | ✅ ¹² | n/a | n/a |
+| the split preserves zones, samples and audio | `manual_e4b_velocity` (12 presets) | n/a | n/a |
+| neighbouring samples keep their own window | ✅ | n/a | n/a |
 | an empty velocity map is a byte-identical no-op | ✅ | n/a | n/a |
 | "Plays" shows a window only where it distinguishes | ✅ ¹² | n/a | n/a |
 | the button is enabled, or disabled WITH A REASON | ✅ enabled | ✅ disabled + tooltip | ✅ disabled + tooltip |
@@ -290,12 +292,28 @@ voices of a bank where `hi_vel` actually varies (65 vs 127); in a bank where
 every `hi_vel` is 127, nine different offsets "match" and picking one would
 have been a coin toss dressed as a measurement.
 
-A voice has ONE window, so where a voice holds several samples the field is
-disabled with the reason in the dialog — not merely in a tooltip, because
-every bank the sample-folder import builds is that case (mpc2emu's writer puts
-every zone in one voice) and a silently grey control reads as broken.
-`manual_e4b_velocity` fails if the lock is removed, and separately if the edit
-never reaches a built bank.
+A voice has ONE window, so giving a single sample its own means MOVING ITS
+ZONE INTO A NEW VOICE. The preset is rebuilt on write with one voice per
+distinct window; zones wanting the same window share one.
+
+**The first version disabled the field instead**, wherever a voice held more
+than one sample. Correct about the format, useless as a product: mpc2emu's
+writer emits one voice per window, so an imported folder is a single voice
+holding every zone — 156 in one measured case — and every row was locked. The
+control worked only on hand-authored banks, which is not where anyone is
+editing. Reported from the GUI as "they are still greyed out", which is the
+only reason it was found: no test asserted that the field was *usable* on a
+bank the program itself had built.
+
+This is the only edit here that changes a preset's SHAPE rather than patching
+bytes, so it is checked for breadth: 12 presets across the corpus, asserting
+zone count, sample count, audio and that neighbouring samples keep their own
+windows. `manual_e4b_velocity` also fails if the edit never reaches a built
+bank.
+
+One assertion in it was wrong at first and the corpus said so: it required
+exactly one new voice, and a preset where the sample sat in TWO voices split
+out of both — which is the per-sample rule working, not a fault.
 
 ¹¹ **Found in the GUI, not by a test:** after renaming 37 samples, Adjust
 Placement… listed every one under its ORIGINAL name — the two windows

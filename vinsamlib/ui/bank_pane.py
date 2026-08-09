@@ -803,8 +803,12 @@ class BankPane(QWidget):
                 f"than half-offered.")
         else:
             self._placement_btn.setToolTip(
-                "Move where the samples in this bank play. The audio is "
-                "untouched.\n⚠ Experimental — not confirmed on hardware.")
+                "Move where the samples in this bank play: key range, root "
+                "note, and the velocity window they answer to. The audio is "
+                "untouched.\n⚠ Experimental — neither placement nor velocity "
+                "has been confirmed on hardware. A velocity change also "
+                "rebuilds the preset's voices, since an E4B keeps that window "
+                "on the voice rather than the zone.")
 
     def _placement_rows(self, items) -> list[dict]:
         """[{"name","orig","lo","root","hi"}] for the staged presets, read from
@@ -827,7 +831,6 @@ class BankPane(QWidget):
         seen: dict = {}
         order: list = []
         used: dict = {}
-        sharers = self._voice_sharers(items)
         for bank, preset, _label in items:
             for idx, (lo, root, hi, lo_vel, hi_vel, v_start) in \
                     self._zone_ranges(bank, preset).items():
@@ -850,16 +853,17 @@ class BankPane(QWidget):
                 if shown in used:
                     shown = samp.name
                 used[shown] = samp.name
-                shared = sharers.get((id(preset), v_start), 1)
+                # No lock any more. A sample sharing a voice used to have its
+                # velocity field disabled, because a voice carries ONE window
+                # and editing it in place would drag the neighbours along --
+                # which made the field dead on every bank built here, since
+                # mpc2emu's writer emits one voice per window and an imported
+                # folder is a single voice holding every zone (156 of them,
+                # measured). assemble() now splits the voice instead, so the
+                # window shown is a starting value rather than a shared fate.
                 seen[samp.name] = {"name": shown, "orig": samp.name,
                                     "lo": lo, "root": root, "hi": hi,
                                     "lo_vel": lo_vel, "hi_vel": hi_vel}
-                if shared > 1:
-                    seen[samp.name]["vel_locked"] = (
-                        f"This sample shares a voice with {shared - 1} other(s), "
-                        f"and a voice has a single velocity window -- changing "
-                        f"it here would move them too. Velocity is editable "
-                        f"only where a voice holds one sample.")
                 order.append(samp.name)
         return [seen[n] for n in order]
 
@@ -898,25 +902,6 @@ class BankPane(QWidget):
                             min(vhi, body[eo + e4b.ZONE_HI_KEY]),
                             vlov, vhiv, v_start)
         return out
-
-    def _voice_sharers(self, items) -> dict:
-        """{(preset id, voice_start): number of distinct samples in it}.
-
-        A voice has ONE velocity window, so every sample in it shares that
-        window and there is nowhere to put a per-sample one. A voice holding
-        several samples therefore cannot have its velocity edited for one of
-        them -- the pane says so and disables the field, rather than moving a
-        neighbour's sample and calling it success.
-
-        This is not a rare shape: mpc2emu's own writer emits ONE voice holding
-        every zone, so a bank built by the sample-folder import is entirely
-        this case, while hand-authored E4Bs tend to one zone per voice."""
-        counts: dict = {}
-        for bank, preset, _label in items:
-            for idx, info in self._zone_ranges(bank, preset).items():
-                key = (id(preset), info[5])
-                counts.setdefault(key, set()).add(idx)
-        return {k: len(v) for k, v in counts.items()}
 
     def _adjust_placement(self) -> None:
         items = self._selected_presets()

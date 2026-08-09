@@ -228,12 +228,16 @@ class SamplePlacementDialog(QDialog):
             # every bank built by the sample-folder import is this case --
             # mpc2emu's writer puts every zone in one voice.
             text += ("\nVel lo / Vel hi are the velocity window the sample "
-                     "answers to. These belong to the VOICE, not the zone, so "
-                     "they are greyed where one voice holds several samples: "
-                     "there is a single window and changing it would move the "
-                     "others too. Overlapping key ranges are normal once "
+                     "answers to. Overlapping key ranges are normal once "
                      "samples are separated by velocity — that is what "
-                     "layering is.")
+                     "layering is, so the overlap warning stays a warning. "
+                     "Samples currently sharing one window show it as their "
+                     "starting value; giving one its own splits it out on "
+                     "write, leaving the others where they were."
+                     "\n⚠ Experimental: neither the key ranges nor the "
+                     "velocity windows edited here have been confirmed on "
+                     "hardware, and a velocity change rebuilds the preset's "
+                     "voices. Keep the original file.")
         info = QLabel(text)
         info.setWordWrap(True)
         info.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
