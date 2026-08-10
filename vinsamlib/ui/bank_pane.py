@@ -828,9 +828,18 @@ class BankPane(QWidget):
         return out
 
     def _sync_rename_button(self) -> None:
-        ok = bool(self._items) and self._format in self._RENAMEABLE
+        # `self._items` is the staged PRESETS, which is not the same question:
+        # an all-ROM KRZ bank has presets and no samples at all -- 433 of them
+        # in this author's library -- so the button lit up and then could only
+        # answer "No samples to rename yet". Ask about samples.
+        has_samples = bool(self._sample_rows_in_bank()) if self._items else False
+        ok = has_samples and self._format in self._RENAMEABLE
         self._rename_btn.setEnabled(ok)
-        if self._format and self._format not in self._RENAMEABLE:
+        if self._items and self._format in self._RENAMEABLE and not has_samples:
+            self._rename_btn.setToolTip(
+                "These presets use only sounds from the sampler's own ROM, so "
+                "the bank holds no samples to rename.")
+        elif self._format and self._format not in self._RENAMEABLE:
             self._rename_btn.setToolTip(
                 f"{self._format} stores a sample name in a slot sized exactly "
                 f"to the name already there, so renaming means rebuilding the "

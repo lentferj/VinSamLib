@@ -39,10 +39,11 @@ irreplaceable, and test unfamiliar images on a spare SD card / floppy
 before touching real hardware.
 
 **Several fixed defects produced files that are wrong and do not look
-it** — KRZ banks whose programs use ROM sounds, anything converted from an E4B between 28 July and 9 August,
-velocity-layered `.KRZ` banks built before 2026-08-09, two older
-kinds of `.KRZ` bank, anything converted with a Vintage Resample profile
-from stereo, and any large MPC multisample imported before 2026-08-04.
+it** — KRZ banks whose programs use ROM sounds, anything converted from an
+E4B between 28 July and 9 August, velocity-layered `.KRZ` banks built
+before 2026-08-09, two older kinds of `.KRZ` bank, anything converted with
+a Vintage Resample profile from stereo, and any large MPC multisample
+imported before 2026-08-04.
 All are fixed, none can be repaired in place, and nothing warns you
 about a file you already have: see [Fixed defects — check what you built
 earlier](#fixed-defects--check-what-you-built-earlier).

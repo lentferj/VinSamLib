@@ -93,6 +93,20 @@ CAL_KEYMAP_OFF_2 = 11   # 2 bytes, BE u16 — secondary keymap slot ("CAL[7,8] i
 
 MAX_PRESETS = 1000      # K2000 hardware limit on user object ids per type (id space 200-999-ish)
 
+# The id space a program/keymap/sample hash can actually address. _encode_hash
+# packs those three types as `(type << 10) | (id & 0x3FF)`, so 1023 is the
+# largest id that survives the round trip -- while both reference writers emit
+# the id as a full u16. Past this, a reference names an id no object owns and
+# two objects collide onto one hash.
+#
+# MAX_PRESETS does NOT bound this: it caps the number of PROGRAMS staged,
+# and assemble() mints from one shared counter across all three types. 781
+# programs -- comfortably inside the cap -- once produced 2829 objects, ids
+# wrapping into 0..1023 and 1536 program keymap references pointing at
+# keymaps that no longer existed. banks/e4b.py caps its samples separately
+# (MAX_SAMPLES); this is the KRZ equivalent it never had.
+MAX_OBJECT_ID = 0x3FF
+
 
 class KrzFormatError(ValueError):
     pass
@@ -313,7 +327,15 @@ def _walk_segments(body: bytes):
             return
         length = _seg_len(tag)
         data_start = pos + 1
-        yield tag, data_start, body[data_start:data_start + length]
+        seg = body[data_start:data_start + length]
+        # A truncated final segment yields fewer bytes than the tag promises,
+        # and every caller unpacks at a fixed offset -- which raised
+        # struct.error out of assemble() AND out of the browse path, so one
+        # damaged program made a whole bank unopenable. Stop instead: what
+        # follows cannot be walked either.
+        if len(seg) < length:
+            return
+        yield tag, data_start, seg
         pos = data_start + length
 
 
@@ -346,6 +368,10 @@ class KrzFile:
     samples: dict[int, KrzObject]
     other_objects: list[KrzObject]
     pcm: bytes              # raw big-endian 16-bit PCM region (== data[osize:])
+    #: (type, id, name) of any object a later object with the SAME id hid.
+    #: Empty for all but 3 banks here; surfaced so a duplicate cannot pass as
+    #: a bank that simply held fewer objects.
+    shadowed_ids: tuple = ()
     _length_cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     # ── reference extraction (used by both summary display and assemble) ──
@@ -440,7 +466,12 @@ class KrzFile:
                 break
             if body[ho + 1] & 0x40:
                 starts.append(struct.unpack_from(">i", body, ho + 8)[0])
-        return min(starts) if starts else 0
+        # Clamped at 0: a negative sampleStart would make assemble()'s
+        # `src.pcm[old_start * 2:...]` slice from the END of the PCM buffer
+        # and copy unrelated audio without any error. None of the 2237 banks
+        # here carries one, but a plain slice turning a bad number into
+        # plausible-looking audio is the wrong failure mode to leave open.
+        return max(0, min(starts)) if starts else 0
 
     def _sample_exact_words(self, samp: KrzObject) -> int | None:
         """The SPAN covered by every ONE-SHOT (non-looped) local-data header
@@ -607,6 +638,7 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
     keymaps: dict[int, KrzObject] = {}
     samples: dict[int, KrzObject] = {}
     other_objects: list[KrzObject] = []
+    shadowed: list = []
 
     pos = 32
     while True:
@@ -629,10 +661,18 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
         type_code, obj_id = _decode_hash(hash_val)
 
         name_start = pos + 10
+        # The name field is MAX_NAME bytes; searching to the END OF THE BLOCK
+        # for a terminator reads whatever field follows it whenever those 16
+        # bytes are full. 486 objects here parsed a longer name that way, and
+        # 6 picked up unprintable bytes with it -- 'General MIDI kit\x9d\xdb',
+        # exactly the shape mpc2emu's KRZ_FORMAT.md warns about. _rename_block
+        # already truncates to MAX_NAME when WRITING, so reading past it also
+        # made a name that could not survive a round trip.
+        name_limit = min(next_pos, name_start + MAX_NAME)
         try:
-            name_end = data.index(b"\x00", name_start, next_pos)
+            name_end = data.index(b"\x00", name_start, name_limit)
         except ValueError:
-            name_end = next_pos
+            name_end = name_limit
         # latin-1, not ASCII: a real K2000 bank puts bytes above 0x7E in
         # here. Measured over 2 237 banks INCLUDING those inside disc
         # images -- 157 carry one, 0x7F alone appearing 4 036 times as a
@@ -643,14 +683,17 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
         name = data[name_start:name_end].decode("latin-1")
 
         obj = KrzObject(type=type_code, id=obj_id, name=name, block=data[pos:next_pos])
-        if type_code == T_PROGRAM:
-            programs[obj_id] = obj
-        elif type_code == T_KEYMAP:
-            keymaps[obj_id] = obj
-        elif type_code == T_SAMPLE:
-            samples[obj_id] = obj
-        else:
+        # A duplicate id overwrites, and the object that was there is gone
+        # with no trace -- 3 in this library. Keep the FIRST, which is the one
+        # every id reference in the file was written against, and record the
+        # loss rather than pretending the bank held one object all along.
+        table = {T_PROGRAM: programs, T_KEYMAP: keymaps, T_SAMPLE: samples}.get(type_code)
+        if table is None:
             other_objects.append(obj)
+        elif obj_id in table:
+            shadowed.append((type_code, obj_id, obj.name))
+        else:
+            table[obj_id] = obj
         pos = next_pos
 
     if osize < pos or osize > len(data):
@@ -659,7 +702,8 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
     pcm = data[osize:]
 
     return KrzFile(path=path, rest=rest, osize=osize, programs=programs,
-                    keymaps=keymaps, samples=samples, other_objects=other_objects, pcm=pcm)
+                    keymaps=keymaps, samples=samples, other_objects=other_objects,
+                    pcm=pcm, shadowed_ids=tuple(shadowed))
 
 
 def parse(path: str) -> KrzFile:
@@ -693,6 +737,18 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
     if len(selections) > MAX_PRESETS:
         raise ValueError(f"too many programs: {len(selections)} > {MAX_PRESETS}")
 
+    # Ids are allocated PER TYPE -- samples 200.., keymaps 200.., programs
+    # 200.. -- because that is what the K2000 itself does: 1631 banks in this
+    # library carry a sample, a keymap AND a program all numbered 200, against
+    # 63 whose ranges merely happen not to overlap. A reference is typed by
+    # where it sits (a keymap entry names a sample, a CAL slot names a
+    # keymap), so nothing is ambiguous.
+    #
+    # This used to be ONE counter shared across all three types, which spent
+    # the 824-id space three times over: 781 programs, well inside
+    # MAX_PRESETS, produced 2829 objects whose ids wrapped past MAX_OBJECT_ID
+    # into 0..1023, leaving 1536 program references pointing at keymaps that
+    # no longer existed.
     base_id = 200
     # One lookup instead of the linear `next(s for s, _ in selections ...)`
     # scan this function used in four places; keys are id() of the source
@@ -823,7 +879,7 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
     keymap_new_id: dict[tuple[int, int], int] = {}
     keymap_objs: list[bytes] = []
     for i, key in enumerate(keymap_order):
-        new_id = base_id + len(sample_objs) + i
+        new_id = base_id + i
         keymap_new_id[key] = new_id
         km = keymap_lookup[key]
         patched = _repatch_keymap_samples(km, key, sample_key_to_new_id,
@@ -883,13 +939,23 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
     program_objs: list[bytes] = []
     fx_written = {i for _t, i in fx_taken}
     for i, (src, prog) in enumerate(prog_list):
-        new_id = base_id + len(sample_objs) + len(keymap_objs) + i
+        new_id = base_id + i
         patched = _repatch_program_refs(
             prog, id(src), keymap_new_id,
-            range(base_id + len(sample_objs),
-                  base_id + len(sample_objs) + len(keymap_objs)),
+            range(base_id, base_id + len(keymap_objs)),
             fx_new_id, fx_written)
         program_objs.append(_repack_block(patched, T_PROGRAM, new_id))
+
+    room = MAX_OBJECT_ID - base_id + 1
+    for kind, objs in (("sample", sample_objs), ("keymap", keymap_objs),
+                       ("program", program_objs)):
+        if len(objs) > room:
+            raise ValueError(
+                f"too many {kind}s for the KRZ id space: {len(objs)} needed, "
+                f"ids run {base_id}..{MAX_OBJECT_ID} so {room} are available. "
+                f"Build this in smaller banks: past the limit an id wraps, "
+                f"references point at ids nothing owns, and two objects "
+                f"collide onto one id.")
 
     preserve_from = selections[0][0]
     out = _build_file(preserve_from.rest, sample_objs, keymap_objs, program_objs,
@@ -939,7 +1005,13 @@ def _rebias_sample_block(samp: KrzObject, delta: int) -> bytes:
         for field_off in (8, 12, 16, 20):
             pos = hdr_off + field_off
             val = struct.unpack_from(">i", block, pos)[0]
-            struct.pack_into(">i", block, pos, val + delta)
+            moved = val + delta
+            if not (-0x80000000 <= moved <= 0x7FFFFFFF):
+                raise ValueError(
+                    f"{samp.name!r}: rebiasing word offset {val} by {delta} "
+                    f"leaves the 32-bit field it lives in — this bank's sample "
+                    f"offsets are not consistent with its PCM layout")
+            struct.pack_into(">i", block, pos, moved)
     return bytes(block)
 
 
@@ -1061,7 +1133,8 @@ def _repatch_program_refs(prog: KrzObject, src_id: int, keymap_new_id: dict,
             new_kid = keymap_new_id.get((src_id, old_kid))
             if new_kid is None:
                 new_kid = old_kid if old_kid not in reserved else 0
-            struct.pack_into(">H", block, abs_data_start + off, new_kid)
+            if new_kid != old_kid:
+                struct.pack_into(">H", block, abs_data_start + off, new_kid)
     return bytes(block)
 
 

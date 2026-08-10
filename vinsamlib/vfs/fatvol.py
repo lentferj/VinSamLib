@@ -509,6 +509,14 @@ class Fat16Volume(WritableVolume):
     def read(self, entry: Entry) -> bytes:
         g = self._geo
         r = entry.ref
+        # A FOLDER's ref is its cluster number, a file's is a dict. Reading a
+        # folder is a caller bug, but it used to surface as
+        # "TypeError: 'int' object is not subscriptable" from inside the FAT
+        # walk, which says nothing about what went wrong.
+        if not isinstance(r, dict):
+            raise IsADirectoryError(
+                f"{entry.name!r} is a folder — list() its contents instead of "
+                f"reading it")
         with open(self.path, "rb") as f:
             fat = self._read_fat(f)
             chain = _walk_chain(lambda n: fat[n], r["cluster"], _FAT16_EOC_MIN, _FAT16_BAD, len(fat))
