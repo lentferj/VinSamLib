@@ -423,9 +423,24 @@ Two diagnoses were offered before that one, and both were wrong:
   already uses their arithmetic.
 
 The comparison now counts only zones that **resolve to a real sample** on both
-sides, which is like-for-like, and the check covers **E4B and EIII**. KRZ
-stays out for the original reason: it reaches samples through keymaps, so an
-equivalent count needs the keymap walk.
+sides, which is like-for-like, and the check covers **E4B and EIII**.
+
+**KRZ is no longer out** (2026-08-09). The keymap walk it needed exists —
+`KeymapLayout.entry_offsets()`, across all eight velocity bands — and
+`tests/manual_krz_velocity_bands.py` now performs the equivalent
+reference-survival check on it: for every keymap that a name identifies
+unambiguously on both sides, each entry's *resolved sample name* must match
+source to build. Scoring by name rather than by id is the point: 200 is both
+the commonest source id and the first id `assemble()` mints, so "kept a stale
+id" and "renumbered onto the same number" are indistinguishable by number
+alone, and "does the reference dangle" misses ~95% of real breakage because a
+wrong id normally resolves — to the wrong sample.
+
+Four KRZ reference classes are now covered by that file plus
+`tests/manual_krz_fx_objects.py`, each verified by reverting the code it
+guards: ROM sample ids, ROM keymap ids, the minting-window bound on both, and
+FX/Studio objects. Run both before a release; neither is in the run-all
+script, because both need the K2000 corpus under `~/Dokumente/SYNTHS`.
 
 > A `ZoneMapping` refers to its sample **by name** — it has no
 > `sample_index`. Asking for one returns `None` for every zone, which drove

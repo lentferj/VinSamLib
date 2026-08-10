@@ -85,21 +85,27 @@ def _zones_of(body: bytes, lay: krz.KeymapLayout) -> list[tuple[int, int, int]]:
     one run by definition and are never multisample."""
     if lay.id_off is None:
         return []
-    ids = []
-    for k in range(lay.num_keys):
-        p = lay.table + k * lay.stride + lay.id_off
-        if p + 2 > len(body):
-            break
-        ids.append(struct.unpack_from(">H", body, p)[0])
 
-    runs, lo, prev = [], 0, None
-    for i, sid in enumerate(ids):
-        if sid != prev:
-            if prev:
-                runs.append((lo, i - 1, prev))
-            lo, prev = i, sid
-    if prev:
-        runs.append((lo, len(ids) - 1, prev))
+    # Every velocity band, not just the softest. This walk was one of three
+    # hand-rolled copies of `lay.table + k*lay.stride + lay.id_off` that had
+    # drifted from KeymapLayout.entry_offsets(); on a layered keymap it saw
+    # one run and check_keymap_shift skipped the keymap entirely.
+    runs = []
+    for base in (lay.bands or (lay.table,)):
+        ids = []
+        for k in range(lay.num_keys):
+            p = base + k * lay.stride + lay.id_off
+            if p + 2 > len(body):
+                break
+            ids.append(struct.unpack_from(">H", body, p)[0])
+        lo, prev = 0, None
+        for i, sid in enumerate(ids):
+            if sid != prev:
+                if prev:
+                    runs.append((lo, i - 1, prev))
+                lo, prev = i, sid
+        if prev:
+            runs.append((lo, len(ids) - 1, prev))
     return runs
 
 
@@ -255,22 +261,25 @@ def _boundaries(km: krz.KrzObject) -> list[tuple[int, int]] | None:
     if lay.id_off is None:
         return [(0, lay.num_keys - 1)]      # compacted: one run by definition
 
-    ids = []
-    for k in range(lay.num_keys):
-        p = lay.table + k * lay.stride + lay.id_off
-        if p + 2 > len(body):
-            break
-        ids.append(struct.unpack_from(">H", body, p)[0])
-    if not ids:
-        return None
-
-    runs, lo, prev = [], 0, ids[0]
-    for i, sid in enumerate(ids[1:], 1):
-        if sid != prev:
-            runs.append((lo, i - 1))
-            lo, prev = i, sid
-    runs.append((lo, len(ids) - 1))
-    return runs
+    # Per band, same reason as _zones_of: on a layered keymap this returned
+    # [(0, 127)] and the build-vs-source comparison then compared nothing.
+    runs = []
+    for base in (lay.bands or (lay.table,)):
+        ids = []
+        for k in range(lay.num_keys):
+            p = base + k * lay.stride + lay.id_off
+            if p + 2 > len(body):
+                break
+            ids.append(struct.unpack_from(">H", body, p)[0])
+        if not ids:
+            continue
+        lo, prev = 0, ids[0]
+        for i, sid in enumerate(ids[1:], 1):
+            if sid != prev:
+                runs.append((lo, i - 1))
+                lo, prev = i, sid
+        runs.append((lo, len(ids) - 1))
+    return runs or None
 
 
 def _internal_splits(runs: list[tuple[int, int]]) -> list[int]:
@@ -510,6 +519,97 @@ def check_velocity_loss(bank: krz.KrzFile,
     return findings
 
 
+def check_rom_zeroing(bank: krz.KrzFile,
+                      source: krz.KrzFile) -> list[str]:
+    """Slots the built bank writes as 0 where its source counterpart holds a
+    nonzero id the SOURCE does not contain. Only with `--against`.
+
+    THE DEFECT IT LOOKS FOR. Until 2026-08-09 the assembler rewrote any id it
+    had not copied to 0, meaning "no sample". An id absent from the bank is
+    not nothing -- it is a ROM id the K2000 resolves against the machine, and
+    433 banks in this library hold programs and no sample objects at all. Every
+    one of them assembled silent.
+
+    Why the other four detectors cannot see it, which is why the README used
+    to say there was no scanner for it: nothing dangles. The reference was
+    REPLACED, not broken, and the bank holds every sample it claims to. Even
+    check_velocity_loss is structurally blind -- it resolves both sides
+    through `bank.samples.get(sid)` and drops ROM ids from the comparison
+    before making it.
+
+    The signature is positional, and it needs no knowledge of the machine's
+    ROM: at the same entry, the source has a nonzero id it does not own and
+    the build has 0. Both readings come from KeymapLayout.entry_offsets(), so
+    a layered keymap is compared on every band.
+
+    Scored by building the first program of 200 real banks twice, once with
+    the old zeroing restored and once as the code now stands: **100 of 200
+    pre-fix builds flagged, 0 of 200 fixed ones**. Zero false positives is
+    the number that matters -- a detector that fires on correctly built banks
+    is worse than none, because this library is mostly correctly built banks.
+    The 100 that do not flag are simply programs with no ROM reference to
+    lose.
+
+    A keymap whose source counterpart cannot be identified by name is skipped
+    rather than guessed at, the same rule check_velocity_loss follows.
+    """
+    def raw_ids(b, km):
+        body = km.body()
+        lay = krz.keymap_layout(body)
+        if lay is None or lay.id_off is None:
+            return []
+        out = []
+        for off in lay.entry_offsets():
+            if off + 2 > len(body):
+                break
+            out.append(struct.unpack_from(">H", body, off)[0])
+        return out
+
+    by_name: dict[str, list] = {}
+    for km in source.keymaps.values():
+        by_name.setdefault(_norm(km.name), []).append(km)
+
+    findings: list[str] = []
+    for kid, km in bank.keymaps.items():
+        cands = by_name.get(_norm(km.name), [])
+        if not cands and len(source.keymaps) == 1:
+            cands = list(source.keymaps.values())
+        if len(cands) != 1:
+            continue                      # absent or ambiguous: not a finding
+        src_ids = raw_ids(source, cands[0])
+        got_ids = raw_ids(bank, km)
+        if not src_ids or len(src_ids) != len(got_ids):
+            continue                      # different shape: not comparable
+        lost = {a for a, b in zip(src_ids, got_ids)
+                if a and not b and a not in source.samples}
+        if lost:
+            findings.append(
+                f"keymap {kid} ({km.name.strip()!r}): {len(lost)} ROM sample "
+                f"id(s) silenced to 0 -- {', '.join(str(x) for x in sorted(lost)[:4])}"
+                + (" …" if len(lost) > 4 else ""))
+
+    # Same rule on the program side: a program's CAL keymap slot zeroed where
+    # the source named a keymap it does not own.
+    src_progs = {_norm(p.name): p for p in source.programs.values()}
+    for pid, prog in bank.programs.items():
+        sp = src_progs.get(_norm(prog.name))
+        if sp is None:
+            continue
+        a_ids = source.program_keymap_refs(sp)
+        b_ids = bank.program_keymap_refs(prog)
+        # program_keymap_refs drops zeros, so a zeroed slot shows up as a
+        # SHORTER list -- which is exactly the evidence wanted here.
+        if len(b_ids) >= len(a_ids):
+            continue
+        rom = [k for k in a_ids if k not in source.keymaps]
+        if rom:
+            findings.append(
+                f"program {pid} ({prog.name.strip()!r}): {len(a_ids) - len(b_ids)} "
+                f"keymap slot(s) dropped, source names ROM keymap(s) "
+                f"{', '.join(str(x) for x in sorted(set(rom))[:4])}")
+    return findings
+
+
 def scan_bytes(data: bytes, label: str, source=None,
                source_kind: str = "krz") -> tuple[bool, bool]:
     """Returns (flagged, had_unverified_keymaps)."""
@@ -529,8 +629,10 @@ def scan_bytes(data: bytes, label: str, source=None,
         drift, unverified = check_against_source(bank, source)
     velloss = check_velocity_loss(bank, source) if source is not None \
         and source_kind != "e4b" else []
+    romzero = check_rom_zeroing(bank, source) if source is not None \
+        and source_kind != "e4b" else []
 
-    if shift or scribble or drift or velloss:
+    if shift or scribble or drift or velloss or romzero:
         print(f"  ⚠  {label}")
         for f in shift:
             print(f"       KEYMAP-SHIFT   {f}")
@@ -540,6 +642,8 @@ def scan_bytes(data: bytes, label: str, source=None,
             print(f"       SOURCE-DRIFT   {f}")
         for f in velloss:
             print(f"       VELOCITY-LOSS  {f}")
+        for f in romzero:
+            print(f"       ROM-SILENCED   {f}")
         return True, bool(unverified)
 
     if unverified:

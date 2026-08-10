@@ -227,6 +227,37 @@ def band_starts(body: bytes, num_keys: int, stride: int) -> tuple[int, ...]:
     return tuple(starts)
 
 
+def band_velocity_windows(body: bytes, num_keys: int, stride: int) -> dict:
+    """{band start offset: (lo_vel, hi_vel)} for every band `band_starts()`
+    finds, from the SAME `Level[8]` arithmetic.
+
+    The eight slots are the K2000's fixed velocity levels ppp..fff, each
+    covering 16 of the 128 velocities: slot j is `16*j .. 16*j+15`. Several
+    slots can point at one band -- that is how a keymap has, say, two layers
+    rather than eight -- so a band's window runs from the lowest to the
+    highest slot that names it.
+
+    A single-band keymap gets `(0, 127)`, which is what every caller assumed
+    unconditionally before velocity bands were read at all."""
+    starts = band_starts(body, num_keys, stride)
+    if len(starts) <= 1:
+        return {starts[0]: (0, 127)} if starts else {}
+    if len(body) < KEYMAP_LEVELS_OFF + 2 * NUM_VELO_LEVELS:
+        return {starts[0]: (0, 127)}
+    levels = struct.unpack_from(f">{NUM_VELO_LEVELS}h", body, KEYMAP_LEVELS_OFF)
+    slots: dict = {}
+    for j, lv in enumerate(levels):
+        slots.setdefault(KEYMAP_LEVELS_OFF + 2 * j + lv, []).append(j)
+    out = {}
+    for st in starts:
+        js = slots.get(st)
+        if not js:
+            continue
+        step = 128 // NUM_VELO_LEVELS
+        out[st] = (min(js) * step, max(js) * step + step - 1)
+    return out
+
+
 def _decode_hash(hash_val: int) -> tuple[int, int]:
     """Conditional decode per KRZ_FORMAT.md §2.2's cross-implementation
     note: when bit 0x8000 is set (types 36/37/38), type = hash>>10,
@@ -412,17 +443,28 @@ class KrzFile:
         return min(starts) if starts else 0
 
     def _sample_exact_words(self, samp: KrzObject) -> int | None:
-        """Sum of every ONE-SHOT (non-looped) local-data header's exact
-        word count (`sampleEnd - sampleStart + 1`), or None if the object
-        has any looped local-data header (whose `sampleEnd` is the loop
-        end, not necessarily the true PCM end — see `sample_word_extent`).
-        A header without the 0x40 "data present" flag (device ROM
-        reference) is skipped entirely (contributes neither words nor a
-        None-forcing looped flag)."""
+        """The SPAN covered by every ONE-SHOT (non-looped) local-data header
+        — `max(sampleEnd) - min(sampleStart) + 1` — or None if the object has
+        any looped local-data header (whose `sampleEnd` is the loop end, not
+        necessarily the true PCM end — see `sample_word_extent`). A header
+        without the 0x40 "data present" flag (device ROM reference) is
+        skipped entirely (contributes neither words nor a None-forcing
+        looped flag).
+
+        A SPAN, not the sum of the per-header lengths it used to be. The two
+        agree whenever a multi-header sample's planes sit back-to-back, which
+        is 757 of the 802 multi-header samples here — but not for the other
+        45, where the channels are laid out with a gap between them. The
+        caller copies `num_words` from `_sample_start()`, which is
+        `min(sampleStart)`, and `_rebias_sample_block()` then shifts every
+        header by ONE delta; so anything short of the full span truncates the
+        last plane by exactly the gap. Measured: a stereo sample with left at
+        words 21 256..194 599 and right at 215 856..389 199 summed to 346 688
+        and spans 367 944, so the right channel lost its final 21 256 words
+        into whatever was appended next."""
         body = samp.body()
         num_headers = struct.unpack_from(">h", body, 2)[0] + 1
-        total = 0
-        any_header = False
+        lo = hi = None
         for h in range(num_headers):
             ho = SAMPLE_HDR + h * SFH_SIZE
             if ho + SFH_SIZE > len(body):
@@ -430,13 +472,13 @@ class KrzFile:
             flags = body[ho + 1]
             if not (flags & 0x40):
                 continue
-            any_header = True
             if not (flags & 0x80):   # 0x80 clear = looped -> sampleEnd unreliable
                 return None
-            s = struct.unpack_from(">i", body, ho + 8)[0]
-            e = struct.unpack_from(">i", body, ho + 20)[0]
-            total += max(0, e - s + 1)
-        return total if any_header else 0
+            st = struct.unpack_from(">i", body, ho + 8)[0]
+            en = struct.unpack_from(">i", body, ho + 20)[0]
+            lo = st if lo is None else min(lo, st)
+            hi = en if hi is None else max(hi, en)
+        return max(0, hi - lo + 1) if lo is not None else 0
 
     def _all_sample_lengths(self) -> dict:
         """{sample_id: num_words} for every sample in this file, cached.
@@ -474,32 +516,51 @@ class KrzFile:
                 continue
             next_start = starts[by_start[i + 1]] if i + 1 < len(by_start) else total_words
             n = next_start - starts[sid]
-            # Negative/zero means this file's samples aren't laid out
-            # sequentially (seen in some real hardware-saved banks) — fall
-            # back to the (possibly loop-truncated, but at least
-            # non-negative) exact-style computation rather than producing
-            # a nonsensical span.
-            lengths[sid] = n if n > 0 else self._sample_exact_words_unconditional(self.samples[sid])
+            # Never shorter than the sample's OWN headers say it reaches.
+            # `n` is the gap to the next sample's start, which assumes the
+            # samples are laid out one after another — false for a bank whose
+            # stereo planes are INTERLEAVED, where the next start sits inside
+            # this sample. Measured on a real ARP bank: every sample is
+            # looped, so the exact path returns None for all of them, and a
+            # stereo sample spanning words 243 584..420 377 got the gap to the
+            # next start, 10 950 words of 176 794 -- its right channel
+            # entirely absent and its left one cut to an eighth.
+            #
+            # The header span is a floor, not the answer: for a LOOPED header
+            # `sampleEnd` is the loop end and the true tail can lie past it,
+            # which is the whole reason the gap heuristic exists. Taking the
+            # larger keeps that benefit and stops the interleaved case from
+            # truncating. Over-copying only duplicates audio another sample
+            # also carries; under-copying loses it.
+            span = self._sample_exact_words_unconditional(self.samples[sid])
+            lengths[sid] = max(n, span) if n > 0 else span
         self._length_cache = lengths
         return lengths
 
     def _sample_exact_words_unconditional(self, samp: KrzObject) -> int:
-        """Last-resort fallback: `sampleEnd - sampleStart + 1` regardless
-        of loop status (may truncate a looped sample's post-loop tail —
-        see `_all_sample_lengths` — but never negative/crashing)."""
+        """Last-resort fallback: the span `max(sampleEnd) - min(sampleStart)
+        + 1` regardless of loop status (may truncate a looped sample's
+        post-loop tail — see `_all_sample_lengths` — but never
+        negative/crashing).
+
+        A span for the same reason as `_sample_exact_words`: the caller
+        copies from `min(sampleStart)` and rebiases every header by one
+        delta, so summing per-header lengths loses the gap between
+        non-contiguous planes."""
         body = samp.body()
         num_headers = struct.unpack_from(">h", body, 2)[0] + 1
-        total = 0
+        lo = hi = None
         for h in range(num_headers):
             ho = SAMPLE_HDR + h * SFH_SIZE
             if ho + SFH_SIZE > len(body):
                 break
             if not (body[ho + 1] & 0x40):
                 continue
-            s = struct.unpack_from(">i", body, ho + 8)[0]
-            e = struct.unpack_from(">i", body, ho + 20)[0]
-            total += max(0, e - s + 1)
-        return total
+            st = struct.unpack_from(">i", body, ho + 8)[0]
+            en = struct.unpack_from(">i", body, ho + 20)[0]
+            lo = st if lo is None else min(lo, st)
+            hi = en if hi is None else max(hi, en)
+        return max(0, hi - lo + 1) if lo is not None else 0
 
     def sample_word_extent(self, samp: KrzObject) -> tuple[int, int]:
         """(start_word, num_words) for a sample object — see

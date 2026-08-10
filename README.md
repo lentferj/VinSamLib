@@ -1318,11 +1318,19 @@ did *not* copy — a ROM id, which is simply an id absent from the bank — was
 rewritten to **0**, meaning "no sample". On the K2000 that is a silent key or
 a missing layer.
 
-**Why it looked correct:** a bank full of ROM references is invisible to every
-integrity check, including this project's own. Nothing dangles, because the
-reference was replaced rather than broken, and the bank has all the samples it
-claims to have. Measured on one real build: three of thirty programs lost
-their reference to ROM sample 168 with nothing to show for it.
+**Why it looked correct:** nothing dangles. The reference was replaced rather
+than broken, and the bank has all the samples it claims to have. Measured on
+one real build: three of thirty programs lost their reference to ROM sample
+168 with nothing to show for it.
+
+**How to find them:** `tools/check_krz_banks.py` gained a `ROM-SILENCED`
+check. Run it with `--against` the bank you built from — the signature is
+positional and needs no knowledge of your machine's ROM: at the same keymap
+entry, the source holds a nonzero id it does not own and your build holds 0.
+Scored by building 200 real banks both ways, it flags **100 of 200 pre-fix
+builds and 0 of 200 fixed ones**. (The other four detectors genuinely cannot
+see this one, `VELOCITY-LOSS` included — it resolves both sides through the
+bank's own sample table, which drops ROM ids before the comparison.)
 
 **What to do:** rebuild. Fixed 2026-08-09 — an id absent from the bank is now
 written through unchanged, for keymaps as well as samples. A bank you built

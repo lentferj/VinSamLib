@@ -213,12 +213,42 @@ def _keymap_entry_sample_ids(km: krz.KrzObject) -> list[int]:
         return [lay.header_sid] * lay.num_keys
 
     ids = []
-    for k in range(lay.num_keys):
-        p = lay.table + k * lay.stride + lay.id_off
-        if p + 2 > len(body):
+    for off in lay.entry_offsets():
+        if off + 2 > len(body):
             break
-        ids.append(struct.unpack_from(">H", body, p)[0])
+        ids.append(struct.unpack_from(">H", body, off)[0])
     return ids
+
+
+def _keymap_bands(km: krz.KrzObject) -> list[tuple[int, int, list[int]]]:
+    """[(lo_vel, hi_vel, [sample id per key])] — one tuple per velocity band.
+
+    This used to be a single `lay.table + k*lay.stride + lay.id_off` walk,
+    one of three hand-rolled copies that had drifted from
+    `KeymapLayout.entry_offsets()` -- whose docstring says it exists so "the
+    reference walk and the id patcher cannot drift apart". They had: the
+    assembler read all eight bands while the Detail pane, and both detectors
+    in tools/check_krz_banks.py, read only the softest one. A four-layer
+    velocity multisample showed as ONE zone naming whichever sample band 0
+    happens to hold."""
+    body = km.body()
+    lay = krz.keymap_layout(body)
+    if lay is None:
+        return []
+    if lay.id_off is None:
+        return [(0, 127, [lay.header_sid] * lay.num_keys)]
+    windows = krz.band_velocity_windows(body, lay.num_keys, lay.stride)
+    out = []
+    for base in (lay.bands or (lay.table,)):
+        ids = []
+        for k in range(lay.num_keys):
+            off = base + k * lay.stride + lay.id_off
+            if off + 2 > len(body):
+                break
+            ids.append(struct.unpack_from(">H", body, off)[0])
+        lo_vel, hi_vel = windows.get(base, (0, 127))
+        out.append((lo_vel, hi_vel, ids))
+    return out
 
 
 def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSummary], set[int]]:
@@ -232,8 +262,6 @@ def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSu
     genuinely-referenced samples in the same keymap). Those runs are
     dropped rather than shown as `<sample NNNN>` noise — a librarian is
     for finding real, playable content, not surfacing hardware artifacts."""
-    sample_by_entry = _keymap_entry_sample_ids(km)
-
     def key_of(entry: int) -> int:
         # Entry i sounds at key i+12, so entries run past 127 and the tail is
         # clamped rather than shown as a key the keyboard doesn't have.
@@ -241,21 +269,27 @@ def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSu
 
     runs: list[ZoneSummary] = []
     sample_ids: set[int] = set()
-    lo, prev_sid = None, None
-    for entry, sid in enumerate(sample_by_entry):
-        if sid != prev_sid:
-            if prev_sid and prev_sid in bank.samples:
-                runs.append(_krz_zone(bank, prev_sid, key_of(lo), key_of(entry) - 1))
-                sample_ids.add(prev_sid)
-            lo, prev_sid = entry, sid
-    if prev_sid and prev_sid in bank.samples:
-        runs.append(_krz_zone(bank, prev_sid, key_of(lo),
-                              key_of(len(sample_by_entry) - 1)))
-        sample_ids.add(prev_sid)
+    # Once per velocity band, so a layered keymap reports one set of key runs
+    # per layer rather than only its softest.
+    for lo_vel, hi_vel, sample_by_entry in _keymap_bands(km):
+        lo, prev_sid = None, None
+        for entry, sid in enumerate(sample_by_entry):
+            if sid != prev_sid:
+                if prev_sid and prev_sid in bank.samples:
+                    runs.append(_krz_zone(bank, prev_sid, key_of(lo),
+                                          key_of(entry) - 1, lo_vel, hi_vel))
+                    sample_ids.add(prev_sid)
+                lo, prev_sid = entry, sid
+        if prev_sid and prev_sid in bank.samples:
+            runs.append(_krz_zone(bank, prev_sid, key_of(lo),
+                                  key_of(len(sample_by_entry) - 1),
+                                  lo_vel, hi_vel))
+            sample_ids.add(prev_sid)
     return runs, sample_ids
 
 
-def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int) -> ZoneSummary:
+def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int,
+               lo_vel: int = 0, hi_vel: int = 127) -> ZoneSummary:
     samp = bank.samples[sid]   # caller already checked sid is a real sample
     name = samp.name.strip()
     root_key, loop = 60, "?"
@@ -281,7 +315,7 @@ def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int) -> ZoneSumm
         bit_depth = 16
     return ZoneSummary(sample_name=name, lo_key=lo_key, hi_key=hi_key,
                         sample_rate=sample_rate, bit_depth=bit_depth,
-                        lo_vel=0, hi_vel=127, root_key=root_key, loop=loop)
+                        lo_vel=lo_vel, hi_vel=hi_vel, root_key=root_key, loop=loop)
 
 
 # ── EIII ─────────────────────────────────────────────────────────────────────
