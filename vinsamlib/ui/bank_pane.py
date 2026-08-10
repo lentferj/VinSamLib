@@ -842,10 +842,16 @@ class BankPane(QWidget):
         # an all-ROM KRZ bank has presets and no samples at all -- 433 of them
         # in this author's library -- so the button lit up and then could only
         # answer "No samples to rename yet". Ask about samples.
-        has_samples = bool(self._sample_rows_in_bank()) if self._items else False
-        ok = has_samples and self._format in self._RENAMEABLE
+        # Ask about samples ONLY for a format that can rename them. Walking
+        # the staged banks happens inside a repaint, and _samples_of() only
+        # knows the three renameable shapes -- an AKAI bank fell through to
+        # the E4B/EIII zone reader and raised TypeError out of _refresh().
+        # Formats that cannot rename never needed the answer.
+        renameable = self._format in self._RENAMEABLE
+        has_samples = bool(self._sample_rows_in_bank()) if (self._items and renameable) else False
+        ok = renameable and has_samples
         self._rename_btn.setEnabled(ok)
-        if self._items and self._format in self._RENAMEABLE and not has_samples:
+        if self._items and renameable and not has_samples:
             self._rename_btn.setToolTip(
                 "These presets use only sounds from the sampler's own ROM, so "
                 "the bank holds no samples to rename.")
