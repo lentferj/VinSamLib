@@ -39,11 +39,13 @@ irreplaceable, and test unfamiliar images on a spare SD card / floppy
 before touching real hardware.
 
 **Several fixed defects produced files that are wrong and do not look
-it** — KRZ banks whose programs use ROM sounds, anything converted from an
-E4B between 28 July and 9 August, velocity-layered `.KRZ` banks built
-before 2026-08-09, two older kinds of `.KRZ` bank, anything converted with
-a Vintage Resample profile from stereo, and any large MPC multisample
-imported before 2026-08-04.
+it.** Most of them are `.KRZ` banks: ones whose programs use their own
+effects or the K2000's ROM sounds, ones built from more than one source
+bank, from a multi-disc source, or containing stereo samples — all fixed
+2026-08-10 — plus velocity-layered ones built before 2026-08-09 and two
+older kinds. Outside KRZ: anything converted from an E4B between 28 July
+and 9 August, anything converted with a Vintage Resample profile from
+stereo, and any large MPC multisample imported before 2026-08-04.
 All are fixed, none can be repaired in place, and nothing warns you
 about a file you already have: see [Fixed defects — check what you built
 earlier](#fixed-defects--check-what-you-built-earlier).
@@ -1305,6 +1307,136 @@ material with a current mpc2emu and VinSamLib.
 
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
+
+> **KRZ banks share keymaps, and that is visible on the machine.** When two
+> presets you stage came from one source bank and used the same keymap, the
+> built bank keeps them sharing it — the same object, referenced twice, exactly
+> as the source had it. Editing that keymap on the K2000 therefore changes
+> every program using it. This is invisible in the file and very visible on the
+> front panel, so it is worth knowing before you edit a bank we built.
+> Measured upstream, it is also what makes a bank load quickly: 600 programs
+> over 600 keymaps take about 20 s to load, the same 600 sharing one take 11.5.
+
+### If you built a KRZ bank whose programs use their own EFFECTS before 2026-08-10, rebuild it
+
+**Affects:** any `.KRZ` this program assembled from a source bank that ships
+its own FX/Studio objects. **3146 program FX segments across 168 banks** in
+this author's library name an effect belonging to their own bank.
+
+**What went wrong:** the assembler wrote samples, keymaps and programs, and
+silently dropped the effects — while leaving every program still naming them
+by number. The K2000 then loads whatever effect happens to sit at that number
+on your machine.
+
+**Why it looked correct:** the bank is complete by every other measure, and a
+program that asks for effect 48 is not obviously wrong until you know the bank
+was supposed to carry its own effect 48.
+
+**How to find them:** open the source bank and the built one side by side; if
+the source's Detail pane lists effects the built bank does not have, it is
+affected. This is the one reference class where an absent object is *not* a
+ROM reference.
+
+**What to do:** rebuild. Fixed 2026-08-10.
+
+### If you built a KRZ bank from a multi-disc source before 2026-08-10, discard it
+
+**Affects:** any `.KRZ` built from a bank whose sample audio lives on a second
+volume — the multi-disc sets where disc 1 carries the object table. **310 of
+27 217 samples** here declare audio past the end of their own file.
+
+**What went wrong:** the audio was copied with a plain slice, which returns
+short (often empty) rather than failing, while the write position advanced by
+the full declared length. So the affected sample is silent *and* every sample
+after it points into audio that was never written.
+
+**Why it looked correct:** the written headers agree with what was copied, so
+the file re-reads consistently. One real drum bank produced 10 samples of
+which 4 addressed audio the file does not contain, and this project's own
+round-trip check called it clean.
+
+**How to find them:** re-open the bank; if it plays silence where the source
+plays sound, or if sounds are wrong from some point onward, it is affected.
+
+**What to do:** rebuild from the complete disc set — the audio was never in
+the file, so nothing can recover it. VinSamLib now refuses rather than
+writing one. Fixed 2026-08-10.
+
+### If you built a KRZ bank mixing two sources before 2026-08-10, check it
+
+**Affects:** any `.KRZ` assembled from **more than one source bank**. Two
+things could go wrong, both silent.
+
+**What went wrong, 1 — samples merged that should not have been.** Samples
+were deduplicated by name and object header, never by their audio. Two banks
+holding a byte-identical header over different sound collapsed into one, and
+the second program played the first one's sample. 10 such pairs here, e.g.
+the same-named note in two volumes of one sax set.
+
+**What went wrong, 2 — a ROM reference could name the wrong sample.** From
+2026-08-09, an id absent from the bank was written through unchanged, which is
+right for a ROM id. But the builder mints its own ids from 200 up, so an
+absent id landing in that range named a real, unrelated object of the new
+bank. Measured: a drum keymap pointing 55 keys at an absent sample met a build
+that minted 50 samples ending on exactly that number, and those keys came out
+playing tuned percussion from the other bank. **173 of 4200 ordered two-bank
+pairs collide this way.**
+
+**Why it looked correct:** in both cases the reference *resolves*. Nothing
+dangles, no check fires, the bank has everything it claims. The failure is
+wrong audio, not silence.
+
+**How to find them:** `tools/check_krz_banks.py --against <source>` — but the
+surer test is listening: play each preset and check it is the sound you
+staged.
+
+**What to do:** rebuild. Fixed 2026-08-10.
+
+### If you built a KRZ bank containing STEREO samples before 2026-08-10, check it
+
+**Affects:** any `.KRZ` whose samples carry more than one channel and whose
+channels are not stored back-to-back. **45 of 802** multi-channel samples here
+are laid out with a gap between the channels; a few are interleaved with each
+other.
+
+**What went wrong:** a sample's length was taken as the sum of its channels
+rather than the span they cover, so the copy stopped short by exactly the gap
+and the last channel's tail read into whatever followed. In the interleaved
+case a whole channel was lost: one sample spanning 176 794 words was copied as
+10 950.
+
+**How to find them:** play the affected preset in stereo. A truncated or
+missing right channel, or a burst of the wrong sound at the end of a note, is
+the symptom.
+
+**What to do:** rebuild. Fixed 2026-08-10.
+
+### If you built a KRZ bank with more than ~800 objects, it was never valid
+
+**Affects:** any `.KRZ` this program assembled where the samples, keymaps and
+programs together exceeded roughly 824 objects.
+
+**What went wrong:** ids were minted from a single counter shared by all three
+types, and an id is packed into 10 bits. Past the ceiling the ids wrapped:
+references pointed at objects that did not exist and two objects collided onto
+one id. 781 programs — inside the documented program limit — produced 2829
+objects, ids running 0..1023 and 1536 broken references.
+
+**Why you may not have noticed:** a bank that large is beyond what a K2000
+will comfortably load. One took **11 minutes**, most of it spent resolving
+references to ROM sounds — it does finish, but an earlier attempt was
+abandoned at "Please wait …" in the belief that it had hung. **The K2000's user id space is 200–999 per type**, and past 999
+it silently piles every further object onto slot 999, each overwriting the
+last.
+
+**What to do:** split it. Two separate costs decide how big is sensible, and
+neither is the bank's size in bytes: **PRAM**, which holds the objects
+themselves (Settings has the budget, 110 KB by default), and **references to
+ROM sounds**, which cost about 0.37 s each at load time — 1748 of them is 11
+minutes. VinSamLib now numbers each type separately (which is
+what real banks and mpc2emu's writer do, confirmed on hardware 2026-08-10),
+refuses to exceed the id space, and warns when a build is larger than any real
+bank. Fixed 2026-08-10.
 
 ### If you built a KRZ bank whose programs use ROM sounds before 2026-08-09, rebuild it
 

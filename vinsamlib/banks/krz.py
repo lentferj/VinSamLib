@@ -87,11 +87,18 @@ CAL_TAG = 0x40
 # is 0..255 per type.
 FX_TAG = 0x0F
 FX_ID_OFF = 0
-FX_MAX_ID = 0xFF
+# Effect ids are NOT the full byte the hash could carry. Across 3631 type-113
+# objects in this library the highest id is 127 and the lowest is 1, so the
+# space is 1..127 -- renumbering a collision into 128+ would put it somewhere
+# the machine has no slot for. (0 stays reserved: a 0x0F segment reads it as
+# "no effect".) Jan: confirm 127 against the hardware's own limit if you have
+# it; this is a corpus bound, not a documented one.
+FX_MAX_ID = 127
 CAL_KEYMAP_OFF_1 = 7    # 2 bytes, BE u16 — primary keymap slot
 CAL_KEYMAP_OFF_2 = 11   # 2 bytes, BE u16 — secondary keymap slot ("CAL[7,8] is a 2nd keymap slot")
 
-MAX_PRESETS = 1000      # K2000 hardware limit on user object ids per type (id space 200-999-ish)
+MAX_PRESETS = 800       # ids 200..999 inclusive — see MAX_OBJECT_ID, confirmed
+                        # on hardware 2026-08-10
 
 # The id space a program/keymap/sample hash can actually address. _encode_hash
 # packs those three types as `(type << 10) | (id & 0x3FF)`, so 1023 is the
@@ -105,7 +112,131 @@ MAX_PRESETS = 1000      # K2000 hardware limit on user object ids per type (id s
 # wrapping into 0..1023 and 1536 program keymap references pointing at
 # keymaps that no longer existed. banks/e4b.py caps its samples separately
 # (MAX_SAMPLES); this is the KRZ equivalent it never had.
-MAX_OBJECT_ID = 0x3FF
+# 999, not the 0x3FF the hash could encode. HARDWARE-OBSERVED 2026-08-10:
+# loading a bank of 796 programs, the K2000 filled up to program 999 and then
+# put every remaining program on 999 itself, each overwriting the last -- it
+# clamps rather than refusing, so the loss is silent and you only notice
+# because the last slot keeps changing name. The user id space really is
+# 200..999 per type, exactly as MAX_PRESETS' comment always said.
+#
+# It also means a bank's program count is not the only limit: the K2000 asks
+# where to load, and `load_point + count - 1` must also land under 999. A
+# 796-program bank technically fits, but only if loaded at 200..204 -- which
+# is what made the first version of this test unloadable in practice.
+MAX_OBJECT_ID = 999
+
+# Per-type ceilings. These are NOT all the same, and one shared number was
+# wrong: the K2000 limits each object type separately, and the id space is
+# only half the story -- a type also has a maximum COUNT.
+#
+# Highest id and largest single-bank population actually observed here:
+#
+#     type      ids seen     most in one bank
+#     sample     39..952            191
+#     keymap     12..952             77
+#     program     1..999            229
+#     effect      1..127              1
+#
+# HARDWARE-OBSERVED 2026-08-10: programs clamp at 999 -- everything past it
+# lands on 999 itself, each overwriting the last, silently. The other three
+# ceilings are corpus bounds and want the same confirmation; a bank built past
+# a real limit will not announce it.
+MAX_IDS = {"sample": 999, "keymap": 999, "program": 999}
+
+# How many words of declared-but-absent audio to treat as a rounding artifact
+# rather than a truncated file. See the use site in assemble(): 8 samples in
+# this library fall under it, 330 genuinely-missing ones are far above.
+PCM_SHORTFALL_SLACK = 64
+
+
+# ── PRAM: what actually limits a KRZ bank ─────────────────────────────────────
+# A K2000 keeps its OBJECTS -- programs, keymaps, sample headers -- in PRAM,
+# separately from the sample RAM the audio lives in. Object COUNT is not what
+# binds; PRAM BYTES are. Measured by mpc2emu against a K2000R's own object list
+# on 2026-08-10 (disc K2KLIMIT), the machine displaying exactly these sizes:
+PRAM_SAMPLE = 84        # sample header only; the PCM is in sample RAM
+PRAM_PROGRAM = 272
+PRAM_KEYMAP = 688       # 128 entries x 5 bytes + header -- the dominant cost
+#
+# This is the real explanation of the hang that produced MAX_OBJECT_ID above.
+# A 796-program bank was blamed here on object count; it is 746 K of PRAM
+# against that machine's 760 K expansion, 98% full. Not a count, not the id
+# space.
+#
+# And it retires the envelope that briefly stood here (229 programs / 191
+# samples / 77 keymaps, "the largest bank in the library"). That was never a
+# format limit: it is the shape of banks authored for an UNEXPANDED K2000,
+# which is what nearly all commercial material was. Two libraries were
+# measured and both produced a number about the corpus rather than about the
+# machine.
+#
+#   original K2000    128 K fitted, ~116 K usable
+#   expanded          760 K is common but NOT standard
+#
+# 110 K rather than the full 116 K, matching mpc2emu's `--pram` default: PRAM
+# also holds setups, effects and whatever is already loaded, so a bank filling
+# it exactly leaves no room. At 110 K a plain one-keymap program (960 bytes)
+# gives ~117 per bank; with a 760 K machine, ~810.
+DEFAULT_PRAM_KB = 110
+
+# NOT counted: the FX/Studio objects assemble() now carries. Nobody has
+# measured their PRAM cost, and guessing one would make the estimate look more
+# precise than it is. A bank near the budget is near it either way.
+
+
+# ── ROM references: cheap in bytes, expensive on load ─────────────────────────
+# A program can name a keymap the bank does not contain; the K2000 resolves it
+# against its own ROM. That costs nothing in the file and nothing in PRAM, and
+# a great deal at load time -- the machine appears to consult its ROM object
+# table per reference, displaying what it finds as it goes.
+#
+# MEASURED ON HARDWARE 2026-08-10, both banks 796 programs on the same K2000R:
+#
+#     mpc2emu's SK796, 0 ROM references      18-20 s
+#     ours, 1748 ROM references              ~11 minutes
+#
+# ~0.37 s per ROM reference, a 33x slowdown at identical program count. It
+# does COMPLETE -- an earlier run was abandoned at "Please wait ..." and
+# written up here as a hang, which it is not. The machine displays its own ROM
+# object names -- tuned percussion, a flute, a pad, none of them anywhere in
+# the file -- interleaved with the bank's own while it resolves them, which is
+# what the cost looks like from the front panel.
+#
+# The threshold is where real material stops: across 2128 banks holding
+# programs, the most ROM references any single one makes is 459 (a 196-program
+# ROM-demo bank), and NONE reaches 500. All of them load. Ours is 3.8x the
+# highest. So 500 separates "normal, including entirely ROM-based banks" from
+# "nothing has ever done this".
+#
+# A warning and never a refusal: ROM references are legitimate and 433 banks
+# here are built almost entirely from them. The cost is real but the boundary
+# is one observation wide.
+ROM_REF_ADVISORY = 500
+
+
+def rom_keymap_refs(bank: "KrzFile") -> int:
+    """How many keymap references the bank's programs make that it does not
+    itself contain — i.e. that the machine must resolve against ROM."""
+    return sum(1 for p in bank.programs.values()
+               for k in bank.program_keymap_refs(p)
+               if k and k not in bank.keymaps)
+
+
+def pram_budget_bytes(pram_kb: int | None = None) -> int:
+    """Usable PRAM in bytes for a machine with `pram_kb` KB of it."""
+    return int(pram_kb or DEFAULT_PRAM_KB) * 1024
+
+
+def bank_pram_bytes(n_samples: int, n_keymaps: int, n_programs: int) -> int:
+    """PRAM an assembled KRZ bank will occupy on the machine.
+
+    Counts the objects THIS bank actually holds. mpc2emu's equivalent takes
+    presets and charges one keymap per voice, because its writer synthesises
+    one keymap per voice; we carry the source's own keymaps, so the real
+    keymap count is known and is what to charge for."""
+    return (n_samples * PRAM_SAMPLE
+            + n_keymaps * PRAM_KEYMAP
+            + n_programs * PRAM_PROGRAM)
 
 
 class KrzFormatError(ValueError):
@@ -664,8 +795,9 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
         # The name field is MAX_NAME bytes; searching to the END OF THE BLOCK
         # for a terminator reads whatever field follows it whenever those 16
         # bytes are full. 486 objects here parsed a longer name that way, and
-        # 6 picked up unprintable bytes with it -- 'General MIDI kit\x9d\xdb',
-        # exactly the shape mpc2emu's KRZ_FORMAT.md warns about. _rename_block
+        # 6 picked up unprintable bytes with it -- a 16-character kit name with
+        # \x9d\xdb hanging off the end, exactly the shape mpc2emu's
+        # KRZ_FORMAT.md warns about. _rename_block
         # already truncates to MAX_NAME when WRITING, so reading past it also
         # made a name that could not survive a round trip.
         name_limit = min(next_pos, name_start + MAX_NAME)
@@ -715,8 +847,16 @@ def parse(path: str) -> KrzFile:
 # ── assembly ─────────────────────────────────────────────────────────────────
 
 def assemble(selections: list[tuple[KrzFile, KrzObject]],
-             sample_names: dict | None = None) -> bytes:
+             sample_names: dict | None = None,
+             warnings_out: list | None = None,
+             pram_kb: int | None = None) -> bytes:
     """Build a new KRZ file from selected (source_bank, program) pairs.
+
+    `warnings_out`, if given, collects advisory strings — currently one when
+    the bank needs more PRAM than `pram_kb` allows (see DEFAULT_PRAM_KB).
+    Advisory rather than fatal: how much PRAM a machine has is a property of
+    that machine, not of the bank, so the same file is fine on one K2000 and
+    unloadable on another.
 
     Each selected Program pulls in the Keymaps its CAL segments reference,
     and each of those Keymaps pulls in the Samples its entries reference —
@@ -738,11 +878,17 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
         raise ValueError(f"too many programs: {len(selections)} > {MAX_PRESETS}")
 
     # Ids are allocated PER TYPE -- samples 200.., keymaps 200.., programs
-    # 200.. -- because that is what the K2000 itself does: 1631 banks in this
+    # 200.. -- because that is what the K2000 itself does. 1631 banks in this
     # library carry a sample, a keymap AND a program all numbered 200, against
-    # 63 whose ranges merely happen not to overlap. A reference is typed by
-    # where it sits (a keymap entry names a sample, a CAL slot names a
-    # keymap), so nothing is ambiguous.
+    # 63 whose ranges merely happen not to overlap, and mpc2emu's writer has
+    # always done the same.
+    #
+    # HARDWARE-CONFIRMED 2026-08-10: a bank built this way, with ids 200-205 in
+    # use by all three types at once, loaded on a cleared K2000 at load point
+    # 200 and every program played its own sound -- including the three built
+    # so that their keymap number and sample number deliberately differ
+    # (keymap 202 reaches sample 216). A reference really is resolved by the
+    # slot it sits in.
     #
     # This used to be ONE counter shared across all three types, which spent
     # the 824-id space three times over: 781 programs, well inside
@@ -821,6 +967,17 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
 
             new_start = cursor
             got_words = len(piece) // 2
+            # A shortfall of a few words is the `sampleEnd - sampleStart + 1`
+            # convention overcounting, not missing audio -- the same ±1 that
+            # makes consecutive samples' declared ranges overlap by a word (see
+            # _all_sample_lengths). Measured over the corpus the two cases do
+            # not overlap: 3 samples are short by exactly 1 word and 5 more by
+            # under 64, against 330 short by hundreds or thousands. Refusing on
+            # the first kind blocked an ordinary bank over two bytes, which the
+            # release matrix caught. Clamp those and carry on; the copy is
+            # already cursor-correct because `cursor` advances by got_words.
+            if 0 < n_words - got_words <= PCM_SHORTFALL_SLACK:
+                n_words = got_words
             if got_words < n_words:
                 # The sample's declared extent runs past the end of its own
                 # bank's PCM region, so the slice comes back short (or empty).
@@ -957,9 +1114,36 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
                 f"references point at ids nothing owns, and two objects "
                 f"collide onto one id.")
 
+    if warnings_out is not None:
+        used = bank_pram_bytes(len(sample_objs), len(keymap_objs), len(program_objs))
+        budget = pram_budget_bytes(pram_kb)
+        if used > budget:
+            warnings_out.append(
+                f"needs about {used // 1024} K of PRAM, more than the "
+                f"{budget // 1024} K configured (Settings…). A K2000 keeps its "
+                f"programs, keymaps and sample headers in PRAM, separately from "
+                f"sample RAM, so this is not about the bank's size in bytes: "
+                f"{len(keymap_objs)} keymap(s) alone cost "
+                f"{len(keymap_objs) * PRAM_KEYMAP // 1024} K. A bank that "
+                f"overruns PRAM does not report anything — it hangs the machine "
+                f"on \"Please wait …\".")
+
     preserve_from = selections[0][0]
     out = _build_file(preserve_from.rest, sample_objs, keymap_objs, program_objs,
                       fx_objs, new_pcm)
+
+    if warnings_out is not None:
+        n_rom = rom_keymap_refs(parse_bytes(out, "built"))
+        if n_rom >= ROM_REF_ADVISORY:
+            warnings_out.append(
+                f"makes {n_rom} references to sounds in the K2000's ROM rather "
+                f"than in the bank. That is free in bytes and very slow to "
+                f"load: measured on a K2000R, about 0.37 s per reference, so "
+                f"this bank will take roughly {int(n_rom * 0.37) // 60} min "
+                f"{int(n_rom * 0.37) % 60} s to load against ~20 s for the same "
+                f"programs without them. No bank in a 2128-bank library makes "
+                f"more than 459. The bank is valid and will finish — expect the "
+                f"wait, or split it.")
 
     # Self-check, and ONLY when a rename actually resized a block. This is the
     # single path in this module that changes a block's physical length, so it

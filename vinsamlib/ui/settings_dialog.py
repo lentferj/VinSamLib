@@ -63,7 +63,25 @@ class SettingsDialog(QDialog):
         self._krz_limit_spin.setSuffix(" MB")
         self._krz_limit_spin.setValue(config.krz_bank_limit_mb)
         limits_form.addRow("K2000 (KRZ):", self._krz_limit_spin)
+        # PRAM is a SECOND limit and cannot be expressed in MB, so it gets its
+        # own row rather than being folded into the size figures above.
+        self._krz_pram_spin = QSpinBox()
+        self._krz_pram_spin.setRange(16, 4096)
+        self._krz_pram_spin.setSuffix(" KB")
+        self._krz_pram_spin.setValue(config.krz_pram_kb)
+        limits_form.addRow("K2000 object memory (PRAM):", self._krz_pram_spin)
         layout.addLayout(limits_form)
+        pram_hint = QLabel(
+            "A K2000 keeps programs, keymaps and sample headers in PRAM, "
+            "separately from the sample RAM the audio uses — so a small bank "
+            "can still be too big to load. A stock machine has about 116 KB "
+            "usable and the default leaves headroom for setups and effects; "
+            "set 760 if yours has the expansion. Measured cost: 688 bytes a "
+            "keymap, 272 a program, 84 a sample. A bank that overruns PRAM "
+            "does not report anything, it hangs the machine.")
+        pram_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        pram_hint.setWordWrap(True)
+        layout.addWidget(pram_hint)
         limits_hint = QLabel(
             "A soft warning in New Bank once a bank exceeds this size — the "
             "most common real RAM configuration, not the format's absolute "
@@ -115,13 +133,15 @@ class SettingsDialog(QDialog):
         new_path = Path(self._path_edit.text())
         path_changed = new_path != self._config.mpc2emu_path
         limits_changed = (self._e4b_limit_spin.value() != self._config.e4b_bank_limit_mb
-                           or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb)
+                           or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb
+                           or self._krz_pram_spin.value() != self._config.krz_pram_kb)
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
         if limits_changed:
             self._config.e4b_bank_limit_mb = self._e4b_limit_spin.value()
             self._config.krz_bank_limit_mb = self._krz_limit_spin.value()
+            self._config.krz_pram_kb = self._krz_pram_spin.value()
         if path_changed or limits_changed:
             self._config.save()
         super().accept()

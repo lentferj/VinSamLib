@@ -542,6 +542,15 @@ def check_rom_zeroing(bank: krz.KrzFile,
     the build has 0. Both readings come from KeymapLayout.entry_offsets(), so
     a layered keymap is compared on every band.
 
+    KEYMAP ENTRIES ONLY. A program-side version of the same idea -- "the built
+    program names fewer keymaps than the source" -- looked like free extra
+    coverage and was not: scored over 200 banks it flagged the identical 100,
+    so it detected nothing the entry walk missed, while firing on every bank
+    CONVERTED through mpc2emu rather than re-assembled. A conversion rebuilds
+    programs from the audio up, and a source layer pointing at ROM has no
+    audio to convert, so its absence is correct. That cost two rows of a
+    release run before it was removed.
+
     Scored by building the first program of 200 real banks twice, once with
     the old zeroing restored and once as the code now stands: **100 of 200
     pre-fix builds flagged, 0 of 200 fixed ones**. Zero false positives is
@@ -588,25 +597,6 @@ def check_rom_zeroing(bank: krz.KrzFile,
                 f"id(s) silenced to 0 -- {', '.join(str(x) for x in sorted(lost)[:4])}"
                 + (" …" if len(lost) > 4 else ""))
 
-    # Same rule on the program side: a program's CAL keymap slot zeroed where
-    # the source named a keymap it does not own.
-    src_progs = {_norm(p.name): p for p in source.programs.values()}
-    for pid, prog in bank.programs.items():
-        sp = src_progs.get(_norm(prog.name))
-        if sp is None:
-            continue
-        a_ids = source.program_keymap_refs(sp)
-        b_ids = bank.program_keymap_refs(prog)
-        # program_keymap_refs drops zeros, so a zeroed slot shows up as a
-        # SHORTER list -- which is exactly the evidence wanted here.
-        if len(b_ids) >= len(a_ids):
-            continue
-        rom = [k for k in a_ids if k not in source.keymaps]
-        if rom:
-            findings.append(
-                f"program {pid} ({prog.name.strip()!r}): {len(a_ids) - len(b_ids)} "
-                f"keymap slot(s) dropped, source names ROM keymap(s) "
-                f"{', '.join(str(x) for x in sorted(set(rom))[:4])}")
     return findings
 
 

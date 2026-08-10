@@ -57,7 +57,10 @@ _RECOMPUTE_DEBOUNCE_MS = 250
 # (Config.e4b_bank_limit_mb/krz_bank_limit_mb) is a soft "will this fit MY
 # hardware's actual RAM" warning underneath this.
 _E4B_MAX_PRESETS = 1000
-_KRZ_MAX_PRESETS = 1000
+# 800, not 1000: ids run 200..999, hardware-confirmed 2026-08-10. Kept in step
+# with banks/krz.py's MAX_PRESETS so the meter warns before assemble() refuses,
+# rather than letting a user stage 900 presets and only find out at the end.
+_KRZ_MAX_PRESETS = krz.MAX_PRESETS
 _EIII_MAX_PRESETS = 256   # EMULATOR_3X/ESI_32_V3 -- the tighter of the two
                            # write targets; eiii.assemble() itself enforces
                            # the exact physical-preset-slot count (a preset
@@ -765,8 +768,15 @@ class BankPane(QWidget):
         Samples dialog opening with zero rows for a KRZ bank while its button
         sat enabled, which is precisely the "control that silently does
         nothing" this whole feature was held back to avoid.
+
+        Dispatched on the BANK, not on `self._format`. The two can disagree
+        for a moment -- `_refresh()` runs while the pane is being repopulated,
+        and the format label is not always the format of the objects already
+        in `_items`. With the label as the switch, an E4B bank went down the
+        KRZ path and raised AttributeError out of a repaint; the bank knows
+        what it is.
         """
-        if self._format == "KRZ":
+        if hasattr(bank, "program_keymap_refs"):
             for km_id in bank.program_keymap_refs(preset):
                 km = bank.keymaps.get(km_id)
                 if km is None:
@@ -1136,13 +1146,41 @@ class BankPane(QWidget):
                       f"E4XT RAM limit (Settings…).")
         else:
             limit_bytes = self._config.krz_bank_limit_mb * 1024 * 1024
-            self._meter_label.setText(
-                f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}")
-            over = len(data) > limit_bytes or n > _KRZ_MAX_PRESETS
-            detail = (f"{n} presets exceed the K2000's {_KRZ_MAX_PRESETS}-preset limit."
-                      if n > _KRZ_MAX_PRESETS else
-                      f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
-                      f"K2000 RAM limit (Settings…).")
+            # PRAM is a SECOND limit and the one that actually bites first: a
+            # K2000 holds its objects there, not in sample RAM, so a bank well
+            # inside the MB figure can still be unloadable. Read the counts
+            # back off the assembled bytes rather than guessing from _items --
+            # one preset can pull in many keymaps, and keymaps dominate.
+            pram_used = pram_budget = 0
+            try:
+                built = krz.parse_bytes(data, "meter")
+                pram_used = krz.bank_pram_bytes(
+                    len(built.samples), len(built.keymaps), len(built.programs))
+                pram_budget = krz.pram_budget_bytes(self._config.krz_pram_kb)
+            except Exception:
+                pass
+            over_pram = bool(pram_budget) and pram_used > pram_budget
+            meter = f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}"
+            if pram_budget:
+                meter += (f"  ·  PRAM {pram_used // 1024} K / "
+                          f"{pram_budget // 1024} K")
+            self._meter_label.setText(meter)
+            over = (len(data) > limit_bytes or n > _KRZ_MAX_PRESETS or over_pram)
+            if n > _KRZ_MAX_PRESETS:
+                detail = f"{n} presets exceed the K2000's {_KRZ_MAX_PRESETS}-preset limit."
+            elif over_pram:
+                detail = (
+                    f"This bank needs about {pram_used // 1024} KB of PRAM, more "
+                    f"than the {pram_budget // 1024} KB set in Settings…. A K2000 "
+                    f"keeps programs, keymaps and sample headers in PRAM, "
+                    f"separately from sample RAM — so this is not about the "
+                    f"bank's size in bytes. A bank that overruns PRAM does not "
+                    f"report anything; it hangs the machine on \"Please wait …\". "
+                    f"Raise the figure in Settings if your K2000 has the PRAM "
+                    f"expansion.")
+            else:
+                detail = (f"{_human(len(data))} exceeds your configured "
+                          f"{_human(limit_bytes)} K2000 RAM limit (Settings…).")
         self._meter_label.setStyleSheet(
             f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;")
         self._save_btn.setEnabled(not over)
@@ -1174,9 +1212,17 @@ class BankPane(QWidget):
         if self._was_over_limit:
             return
         self._was_over_limit = True
+        # "Too Large" only when it IS about size. assemble() also refuses a
+        # bank whose audio lives on another disc of a multi-disc set, and one
+        # that needs more object ids than the format has -- neither is a size
+        # problem, and titling them that sends the user off to raise a limit
+        # in Settings that has nothing to do with it.
+        about_size = not any(k in detail for k in
+                             ("not all here", "id space", "PRAM"))
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Bank Too Large")
+        box.setWindowTitle("Bank Too Large" if about_size
+                            else "Can't Build This Bank")
         box.setText(f"This bank can't be built as-is.\n\n{detail}")
         keep_btn = box.addButton("Keep Anyway", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(keep_btn)

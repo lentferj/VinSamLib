@@ -73,6 +73,14 @@ class Config:
     # usually well under the format's own absolute maximum.
     e4b_bank_limit_mb: int = 64
     krz_bank_limit_mb: int = 32
+    # The K2000's PRAM budget in KB — a SECOND, independent limit that the MB
+    # figures above cannot express. Objects (programs, keymaps, sample headers)
+    # live in PRAM, the audio in sample RAM, so a small bank can still be
+    # unloadable: one keymap costs 688 bytes whatever its samples weigh.
+    # 110 rather than the ~116 a stock machine has usable, matching mpc2emu's
+    # `--pram` default, because PRAM also holds setups, effects and whatever is
+    # already loaded. Raise it if your K2000 has the expansion (760 is common).
+    krz_pram_kb: int = 110
     # Main-window size, remembered on close. None until the first quit, so a
     # fresh install still gets the built-in default rather than a 0x0 window.
     # Size only, deliberately not position: a window restored onto a monitor
@@ -103,10 +111,12 @@ class Config:
         defaults = cls()
         e4b_bank_limit_mb = data.get("e4b_bank_limit_mb", defaults.e4b_bank_limit_mb)
         krz_bank_limit_mb = data.get("krz_bank_limit_mb", defaults.krz_bank_limit_mb)
+        krz_pram_kb = data.get("krz_pram_kb", defaults.krz_pram_kb)
         return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
                     last_image_dir=last_image_dir, last_library_dir=last_library_dir,
                     last_sample_dir=last_sample_dir, last_program_dir=last_program_dir,
                     e4b_bank_limit_mb=e4b_bank_limit_mb, krz_bank_limit_mb=krz_bank_limit_mb,
+                    krz_pram_kb=krz_pram_kb,
                     window_width=data.get("window_width"),
                     window_height=data.get("window_height"))
 
@@ -147,6 +157,7 @@ class Config:
             lines.append(f'last_program_dir = "{self.last_program_dir.as_posix()}"')
         lines.append(f"e4b_bank_limit_mb = {self.e4b_bank_limit_mb}")
         lines.append(f"krz_bank_limit_mb = {self.krz_bank_limit_mb}")
+        lines.append(f"krz_pram_kb = {self.krz_pram_kb}")
         if self.window_width and self.window_height:
             lines.append(f"window_width = {int(self.window_width)}")
             lines.append(f"window_height = {int(self.window_height)}")
