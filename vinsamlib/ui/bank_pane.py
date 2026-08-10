@@ -1157,12 +1157,13 @@ class BankPane(QWidget):
             # inside the MB figure can still be unloadable. Read the counts
             # back off the assembled bytes rather than guessing from _items --
             # one preset can pull in many keymaps, and keymaps dominate.
-            pram_used = pram_budget = 0
+            pram_used = pram_budget = rom_refs = 0
             try:
                 built = krz.parse_bytes(data, "meter")
                 pram_used = krz.bank_pram_bytes(
                     len(built.samples), len(built.keymaps), len(built.programs))
                 pram_budget = krz.pram_budget_bytes(self._config.krz_pram_kb)
+                rom_refs = krz.rom_keymap_refs(built)
             except Exception:
                 pass
             over_pram = bool(pram_budget) and pram_used > pram_budget
@@ -1170,6 +1171,14 @@ class BankPane(QWidget):
             if pram_budget:
                 meter += (f"  ·  PRAM {pram_used // 1024} K / "
                           f"{pram_budget // 1024} K")
+            # References the bank does not contain are free in bytes and slow
+            # to load -- about 0.37 s each, measured. Shown, never blocking:
+            # they are legitimate, and whole categories of bank are built from
+            # them. Only worth saying once the wait becomes noticeable.
+            if rom_refs >= krz.ROM_REF_ADVISORY:
+                secs = int(rom_refs * 0.37)
+                meter += (f"  ·  {rom_refs} ROM refs ≈ {secs // 60}m{secs % 60:02d}s "
+                          f"to load")
             self._meter_label.setText(meter)
             over = (len(data) > limit_bytes or n > _KRZ_MAX_PRESETS or over_pram)
             if n > _KRZ_MAX_PRESETS:

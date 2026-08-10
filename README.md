@@ -108,11 +108,15 @@ waiting for the tree to be expanded down to it.
 The New Bank column accepts presets/programs dragged from anywhere in
 the library (or added via right-click), locks to whichever format the
 first one came from, and shows a live, real size/count meter — computed
-by actually assembling the selection, not an estimate. The E4XT's 128 MB / 1000-preset and the
-K2000's 1000-program limits are hard, format-technical ceilings, always
-enforced; a separate, lower, configurable-in-Settings byte threshold
-(default 64 MB E4B / 32 MB KRZ) warns earlier, once a bank likely
-exceeds *your own* hardware's actual RAM. Save the result directly to a
+by actually assembling the selection, not an estimate. The E4XT's 128 MB /
+1000-preset and the K2000's 800-objects-per-type limits are hard,
+format-technical ceilings, always enforced; a separate, lower,
+configurable-in-Settings byte threshold (default 64 MB E4B / 32 MB KRZ)
+warns earlier, once a bank likely exceeds *your own* hardware's actual
+RAM. For KRZ the meter shows two further figures the byte count cannot
+express — **PRAM**, the object memory a K2000 loads into, and the number
+of **references to ROM sounds**, which cost about 0.37 s each at load
+time. Save the result directly to a
 file, or queue it for image building.
 
 Samples inside the bank can also be **renamed** before it is written —
@@ -576,11 +580,25 @@ check itself is on).
 The **size/count meter** below the name field recomputes by actually
 assembling the current selection — not an estimate — debounced a
 quarter-second after your last change. It enforces the real hardware
-ceilings: **128 MB / 1000 presets** for E4B, **1000 programs** for KRZ,
-**256 preset slots** for EIII/ESI-32 (a preset needing more than one
+ceilings: **128 MB / 1000 presets** for E4B, **800 objects of each type**
+(programs, keymaps, samples — ids run 200–999, confirmed on hardware) for
+KRZ, **256 preset slots** for EIII/ESI-32 (a preset needing more than one
 linked layer can use more than one slot, so "256 presets" isn't quite
 the same as "256 slots" — see Known Limitations). Going over any of
 these pushes the meter red and disables **Save as…**.
+
+For KRZ it also reports two things the byte count says nothing about:
+
+* **`PRAM n K / m K`** — the object memory the bank needs against the
+  budget set in Settings (110 KB default). Objects live in PRAM,
+  separately from sample RAM, so a small bank can still be unloadable.
+  Over budget is treated like any other over-limit.
+* **`N ROM refs ≈ Xm YYs to load`**, once a bank makes 500 or more —
+  references to sounds in the machine's ROM rather than in the bank.
+  These are free in bytes and legitimate (whole categories of bank are
+  built from them), but the K2000 resolves each one at load: measured at
+  ~0.37 s apiece, so a bank making 1748 of them takes about eleven
+  minutes. Shown, never blocking.
 
 **Adding a preset that pushes you over the limit** shows a warning
 dialog with two choices: **Keep Anyway** (leave the new item in place,
@@ -1265,7 +1283,7 @@ numbers written to the bank.
 
 ### Settings
 
-![Settings dialog showing a found mpc2emu checkout with its live status line, and the New Bank size-warning threshold fields for E4B and KRZ](docs/screenshots/06_settings.png)
+![Settings dialog showing a found mpc2emu checkout with its live status line, the New Bank size-warning thresholds for E4B and KRZ, and the K2000 object-memory (PRAM) budget](docs/screenshots/06_settings.png)
 
 **File → Settings…** — the mpc2emu checkout path, with a live status
 line: whether the path itself is even a usable mpc2emu checkout, and
@@ -1280,13 +1298,28 @@ on the same E4XT hardware, via its backward-compatibility loader, so a
 third near-identical spinbox would say nothing new): the most common
 real E4XT/K2000 RAM configurations,
 *not* the format's own absolute technical maximum (128 MB for E4B; the
-K2000 has no hard byte ceiling at all, only its 1000-program limit —
-see New Bank above). This is a **soft**
+K2000 has no hard byte ceiling at all, only its 800-object-per-type
+limit — see New Bank above). This is a **soft**
 warning New Bank's size meter and over-limit dialog use to flag a bank
 that's probably too big for *your* actual hardware, before you find out
 the hard way — raise it if you genuinely have more RAM installed;
 "Keep Anyway" in the over-limit dialog still lets you build past it
 either way. Takes effect immediately on OK, no restart needed.
+
+**K2000 object memory (PRAM)** — a *second* limit for KRZ that the MB
+field above cannot express, so a bank can sit comfortably inside your
+size threshold and still be too big to load. A K2000 keeps its objects —
+programs, keymaps and sample headers — in PRAM, separately from the
+sample RAM the audio uses. An object costs roughly its own size: a plain
+keymap about 430 bytes, a velocity-layered one three times that, a
+program 210–280, a sample header 84.
+
+The default **110 KB** is a stock machine's ~116 KB usable less headroom
+for setups and effects, matching mpc2emu's own `--pram` default. Set
+**760** if your K2000 has the expansion. New Bank's meter shows
+`PRAM n K / m K` for a KRZ bank as you stage it, and warns through the
+same over-limit dialog as the size threshold. Measured on hardware
+2026-08-10; a bank that overruns PRAM does not report anything.
 
 ### Keyboard Shortcuts
 

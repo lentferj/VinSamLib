@@ -76,9 +76,11 @@ class SettingsDialog(QDialog):
             "separately from the sample RAM the audio uses — so a small bank "
             "can still be too big to load. A stock machine has about 116 KB "
             "usable and the default leaves headroom for setups and effects; "
-            "set 760 if yours has the expansion. Measured cost: 688 bytes a "
-            "keymap, 272 a program, 84 a sample. A bank that overruns PRAM "
-            "does not report anything, it hangs the machine.")
+            "set 760 if yours has the expansion. An object costs roughly its "
+            "own size — a plain keymap about 430 bytes, a velocity-layered one "
+            "three times that, a program 210–280 — so the estimate in New Bank "
+            "is a guide, not a guarantee. A bank that overruns PRAM does not "
+            "report anything.")
         pram_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         pram_hint.setWordWrap(True)
         layout.addWidget(pram_hint)

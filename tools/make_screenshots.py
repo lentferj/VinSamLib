@@ -264,8 +264,25 @@ def shot_favourites(app, win) -> None:
     dialog.close()
 
 
-ALL = {"02_new_bank": shot_new_bank, "12_bank_placement": shot_placement,
-       "13_favourites": shot_favourites}
+def shot_settings(app, win) -> None:
+    """06_settings -- the dialog, including the two RAM limits and PRAM.
+
+    Added to the generator because it went stale for the same reason
+    02_new_bank did: a row was added to the dialog and the picture in the
+    README went on showing the old one. The dialog is built from a Config, so
+    it needs no library and no staging -- but it must be given a Config that
+    is NEVER saved (see the guard in this file's _no_save).
+    """
+    from vinsamlib.ui.settings_dialog import SettingsDialog
+    dlg = SettingsDialog(win._config)
+    dlg.resize(560, dlg.sizeHint().height())
+    _settle(app)
+    _grab(dlg, "06_settings")
+    dlg.deleteLater()
+
+
+ALL = {"02_new_bank": shot_new_bank, "06_settings": shot_settings,
+       "12_bank_placement": shot_placement, "13_favourites": shot_favourites}
 
 
 def main(argv: list[str]) -> int:
