@@ -43,6 +43,7 @@ offsets. `blocksize` itself is therefore reused unmodified.
 
 from __future__ import annotations
 
+import hashlib
 import struct
 from dataclasses import dataclass, field
 
@@ -80,6 +81,13 @@ SFH_SIZE = 32
 ENV_SIZE = 12
 
 CAL_TAG = 0x40
+# A program layer's FX/Studio reference: tag 0x0F, id in the first u16 of its
+# 7 data bytes. Every 0x0F ref measured in this library names a type-113
+# object; ids for such types are 8-bit (see _encode_hash), so the whole space
+# is 0..255 per type.
+FX_TAG = 0x0F
+FX_ID_OFF = 0
+FX_MAX_ID = 0xFF
 CAL_KEYMAP_OFF_1 = 7    # 2 bytes, BE u16 — primary keymap slot
 CAL_KEYMAP_OFF_2 = 11   # 2 bytes, BE u16 — secondary keymap slot ("CAL[7,8] is a 2nd keymap slot")
 
@@ -322,6 +330,40 @@ class KrzFile:
                 kid = struct.unpack_from(">H", data, off)[0]
                 if kid:
                     out.append(kid)
+        return out
+
+    def program_fx_refs(self, prog: KrzObject) -> list[int]:
+        """Every (nonzero) FX/Studio object id a Program's 0x0F segments name,
+        in encounter order (may repeat).
+
+        The id is the first u16 of the segment's 7 data bytes. Located by
+        measurement, not by documentation: across 120 banks that carry FX
+        objects of their own, offset 0 lands on an id the bank really owns
+        720 times and offsets 1-5 do so 3, 0, 0, 0 and 0 times."""
+        out = []
+        for tag, _ds, data in _walk_segments(prog.body()):
+            if tag != FX_TAG:
+                continue
+            fid = struct.unpack_from(">H", data, FX_ID_OFF)[0]
+            if fid:
+                out.append(fid)
+        return out
+
+    def other_by_id(self) -> dict[int, KrzObject]:
+        """FX/Studio objects keyed by id, first occurrence winning.
+
+        Keying by id ALONE, across every non-program/keymap/sample type, even
+        though those types have separate id spaces and a 0x0F segment carries
+        no type. Measured over 2237 banks: of 10 985 references that resolve
+        in-bank, exactly **0** find a candidate in more than one type, so the
+        ambiguity this could create does not occur in real material. 10 395
+        name a type-113 object (mpc2emu's KRZ_FORMAT.md leaves 112-vs-113
+        labelling open, and this settles which one an FX segment means); the
+        remaining 590 name a 111/100/104 object with no 113 competing for the
+        number, and carrying those is still better than dropping them."""
+        out: dict[int, KrzObject] = {}
+        for o in self.other_objects:
+            out.setdefault(o.id, o)
         return out
 
     def keymap_sample_refs(self, km: KrzObject) -> list[int]:
@@ -591,6 +633,10 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
         raise ValueError(f"too many programs: {len(selections)} > {MAX_PRESETS}")
 
     base_id = 200
+    # One lookup instead of the linear `next(s for s, _ in selections ...)`
+    # scan this function used in four places; keys are id() of the source
+    # bank, which is what every (src_bank, old_id) key here already carries.
+    src_by_id = {id(s): s for s, _ in selections}
 
     # ── walk the reference graph: which keymaps, then which samples ────────
     # (src_bank_id, old_id) -> object, preserving first-encounter order
@@ -611,7 +657,7 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
             keymap_order.append(key)
 
     for key in keymap_order:
-        src = next(s for s, _ in selections if id(s) == key[0])
+        src = src_by_id[key[0]]
         km = keymap_lookup[key]
         for sid in src.keymap_sample_refs(km):
             skey = (id(src), sid)
@@ -621,7 +667,7 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
             sample_lookup[skey] = samp
             sample_order.append(skey)
 
-    # ── dedupe samples by (name, content); assign new ids 200.. ─────────────
+    # ── dedupe samples by (name, header, audio); assign new ids 200.. ──────
     # Each sample's word extent (KrzFile.sample_word_extent — see that
     # method for why it isn't a simple per-object computation) is resolved
     # against its OWN source file, so samples from different sources can
@@ -635,19 +681,55 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
 
     for key in sample_order:
         samp = sample_lookup[key]
-        content_key = (samp.name, samp.block)
+        src = src_by_id[key[0]]
+        old_start, n_words = src.sample_word_extent(samp)
+        piece = src.pcm[old_start * 2:(old_start + n_words) * 2] if n_words else b""
+
+        # The key includes a digest of the AUDIO, not just the object header.
+        # `KrzObject.block` is the header alone -- unlike banks/e4b.py, whose
+        # `E4BSample.body` really is header+PCM, so the two are not the
+        # equivalent keys this comment used to claim they were. Measured: 10
+        # distinct (name, header) pairs in this library sit over genuinely
+        # different audio, e.g. the same tenor-sax note in two volumes of one
+        # sax set. Staging one program from each collapsed them into a single
+        # sample and the second program played the first one's sound -- while
+        # also inheriting its word extent, which is resolved per file by a gap
+        # heuristic and need not agree.
+        content_key = (samp.name, samp.block,
+                       hashlib.blake2b(piece, digest_size=16).digest())
         new_id = dedupe_key_to_new_id.get(content_key)
         if new_id is None:
-            src = next(s for s, _ in selections if id(s) == key[0])
-            old_start, n_words = src.sample_word_extent(samp)
-
             new_id = base_id + len(patched_sample_blocks)
             dedupe_key_to_new_id[content_key] = new_id
 
             new_start = cursor
-            if n_words:
-                pcm_pieces.append(src.pcm[old_start * 2:(old_start + n_words) * 2])
-            cursor += n_words
+            got_words = len(piece) // 2
+            if got_words < n_words:
+                # The sample's declared extent runs past the end of its own
+                # bank's PCM region, so the slice comes back short (or empty).
+                # This is the multi-disk split bank _split_bank_hint() already
+                # names: disk 1 carries the object table and the audio is on
+                # the next volume, which is why the bank parses perfectly and
+                # only the PCM is missing. 310 of 27 217 samples here are like
+                # this.
+                #
+                # Refusing rather than writing it, for the same reason as a
+                # ROM-only program: the result cannot play. Silently, this was
+                # worse than one dud sample -- `cursor` advanced by the
+                # DECLARED count while only the short piece was appended, so
+                # every LATER sample's rebiased offset pointed into audio that
+                # was never written, and one truncated sample corrupted all
+                # the samples behind it.
+                raise ValueError(
+                    f"{samp.name!r} needs {n_words} words of audio from "
+                    f"{str(src.path).split('/')[-1]} but only {got_words} are "
+                    f"in the file -- this bank's sample data is not all here (a "
+                    f"multi-disc set stores it on the next volume), so the "
+                    f"programs using it cannot be rebuilt from this file "
+                    f"alone")
+            if piece:
+                pcm_pieces.append(piece)
+            cursor += got_words
 
             delta = new_start - old_start
             patched_sample_blocks.append(_rebias_sample_block(samp, delta))
@@ -682,20 +764,75 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
     for i, key in enumerate(keymap_order):
         new_id = base_id + len(sample_objs) + i
         keymap_new_id[key] = new_id
-        src = next(s for s, _ in selections if id(s) == key[0])
         km = keymap_lookup[key]
-        patched = _repatch_keymap_samples(km, key, sample_key_to_new_id, src)
+        patched = _repatch_keymap_samples(km, key, sample_key_to_new_id,
+                                          range(base_id, base_id + len(sample_objs)))
         keymap_objs.append(_repack_block(patched, T_KEYMAP, new_id))
+
+    # ── carry the FX/Studio objects the programs name ───────────────────────
+    # Nothing used to write these, so a bank that ships its own effects came
+    # out with the effects deleted and the programs still naming them by id.
+    # That is the one reference class where "absent means the machine
+    # resolves it" is provably false: measured across this library, 3146
+    # program FX segments in 168 banks name an FX object of their OWN bank,
+    # and the program then loads whatever effect happens to sit at that
+    # number on the machine.
+    #
+    # These types are not renumbered into the 200+ space -- their hash packs
+    # the id into 8 bits (_encode_hash), a separate per-type space that
+    # nothing else here allocates from -- so an id is kept as-is and moved
+    # only when two source banks disagree about what lives at that number.
+    fx_order: list[tuple[int, int]] = []
+    fx_lookup: dict[tuple[int, int], KrzObject] = {}
+    for src, prog in prog_list:
+        owned = src.other_by_id()
+        for fid in src.program_fx_refs(prog):
+            key = (id(src), fid)
+            obj = owned.get(fid)
+            if obj is None or key in fx_lookup:
+                continue
+            fx_lookup[key] = obj
+            fx_order.append(key)
+
+    fx_new_id: dict[tuple[int, int], int] = {}
+    fx_objs: list[bytes] = []
+    fx_taken: set[tuple[int, int]] = set()          # (type, id) already written
+    fx_by_content: dict[tuple, int] = {}
+    for key in fx_order:
+        obj = fx_lookup[key]
+        content = (obj.type, obj.block)
+        shared = fx_by_content.get(content)
+        if shared is not None:
+            fx_new_id[key] = shared
+            continue
+        nid = obj.id
+        if (obj.type, nid) in fx_taken:
+            # From 1: id 0 is "no effect" in a 0x0F segment, so an object
+            # placed there is referenced by a field that reads as empty.
+            nid = next((c for c in range(1, FX_MAX_ID + 1)
+                        if (obj.type, c) not in fx_taken), None)
+            if nid is None:
+                continue                            # space full: leave it out
+        fx_taken.add((obj.type, nid))
+        fx_by_content[content] = nid
+        fx_new_id[key] = nid
+        fx_objs.append(_repack_block(obj.block, obj.type, nid))
 
     # ── build new program objects (renumbered hash + CAL keymap-id fields) ─
     program_objs: list[bytes] = []
+    fx_written = {i for _t, i in fx_taken}
     for i, (src, prog) in enumerate(prog_list):
         new_id = base_id + len(sample_objs) + len(keymap_objs) + i
-        patched = _repatch_program_keymaps(prog, id(src), keymap_new_id)
+        patched = _repatch_program_refs(
+            prog, id(src), keymap_new_id,
+            range(base_id + len(sample_objs),
+                  base_id + len(sample_objs) + len(keymap_objs)),
+            fx_new_id, fx_written)
         program_objs.append(_repack_block(patched, T_PROGRAM, new_id))
 
     preserve_from = selections[0][0]
-    out = _build_file(preserve_from.rest, sample_objs, keymap_objs, program_objs, new_pcm)
+    out = _build_file(preserve_from.rest, sample_objs, keymap_objs, program_objs,
+                      fx_objs, new_pcm)
 
     # Self-check, and ONLY when a rename actually resized a block. This is the
     # single path in this module that changes a block's physical length, so it
@@ -746,7 +883,7 @@ def _rebias_sample_block(samp: KrzObject, delta: int) -> bytes:
 
 
 def _repatch_keymap_samples(km: KrzObject, src_key: tuple[int, int],
-                             sample_key_to_new_id: dict, src: "KrzFile") -> bytes:
+                             sample_key_to_new_id: dict, reserved: range) -> bytes:
     block = bytearray(km.block)
     body_start = km.body_start()
     src_id = src_key[0]
@@ -773,10 +910,29 @@ def _repatch_keymap_samples(km: KrzObject, src_key: tuple[int, int],
         out to be a bank referencing a ROM sample absent from THAT MACHINE's
         ROM. Silent because nothing resolved it, not because an out-of-bank
         id is invalid.
+
+        EXCEPT inside `reserved` -- the id window THIS build is minting into.
+        Passing an id through only works because nothing else claims it, and
+        `assemble()` hands out 200, 201, ... to the samples it writes. An
+        absent id landing in that window would name a real, unrelated sample
+        of the new bank. Measured on two ordinary library banks: a drum
+        keymap in the first points 55 of its keys at an absent sample 249,
+        the build mints 50 samples ending at 249, and those 55 keys come out
+        playing a tuned percussion sample from the SECOND bank. 173 of 4200
+        ordered two-bank pairs in this library collide that way.
+
+        Zero is the honest answer there and the only one available: the id
+        cannot be preserved, since a real object of the output bank now owns
+        it. Silent is a worse bank than correct and a better one than wrong
+        -- and it is only ever reached for the ~2.5% of absent ids at >= 200,
+        which are dangling references to another disk's user samples rather
+        than ROM. Genuine ROM ids (97.8% of them, below 200, plus soundblock
+        ids above the window) still pass through untouched.
         """
-        if not old_sid:
-            return 0
-        return sample_key_to_new_id.get((src_id, old_sid), old_sid)
+        new_sid = sample_key_to_new_id.get((src_id, old_sid))
+        if new_sid is not None:
+            return new_sid
+        return old_sid if old_sid not in reserved else 0
 
     default_sid = struct.unpack_from(">H", block, body_start)[0]
     struct.pack_into(">H", block, body_start, _remap(default_sid))
@@ -799,22 +955,51 @@ def _repatch_keymap_samples(km: KrzObject, src_key: tuple[int, int],
     return bytes(block)
 
 
-def _repatch_program_keymaps(prog: KrzObject, src_id: int, keymap_new_id: dict) -> bytes:
+def _repatch_program_refs(prog: KrzObject, src_id: int, keymap_new_id: dict,
+                          reserved: range, fx_new_id: dict,
+                          fx_written: set) -> bytes:
+    """Renumber a Program's outgoing references: keymap ids in its CAL
+    segments, FX/Studio ids in its 0x0F segments.
+
+    This used to open with `if tag != CAL_TAG: continue`, so tag 0x0F was
+    never even read -- which is why the FX objects went unwritten and
+    unnoticed for as long as they did."""
     block = bytearray(prog.block)
     body_start = prog.body_start()
     body = bytes(block[body_start:])
     for tag, data_start, data in _walk_segments(body):
+        abs_data_start = body_start + data_start
+        if tag == FX_TAG:
+            old_fid = struct.unpack_from(">H", data, FX_ID_OFF)[0]
+            if not old_fid:
+                continue
+            new_fid = fx_new_id.get((src_id, old_fid))
+            if new_fid is None:
+                # Not ours to carry: a ROM effect, kept verbatim unless this
+                # build put one of its own objects on that number, in which
+                # case the same rule as samples and keymaps applies -- zero,
+                # because wrong is worse than absent.
+                new_fid = old_fid if old_fid not in fx_written else 0
+            struct.pack_into(">H", block, abs_data_start + FX_ID_OFF, new_fid)
+            continue
         if tag != CAL_TAG:
             continue
-        abs_data_start = body_start + data_start
         for off in (CAL_KEYMAP_OFF_1, CAL_KEYMAP_OFF_2):
             old_kid = struct.unpack_from(">H", data, off)[0]
             if not old_kid:
                 continue
-            # Same rule as sample ids, and it matters here too: a program
-            # can reference a ROM KEYMAP. The bank the KRZ writer was built
-            # against has no keymap objects at all.
-            new_kid = keymap_new_id.get((src_id, old_kid), old_kid)
+            # Same rule as sample ids, including the reserved window, and it
+            # matters here too: a program can reference a ROM KEYMAP (the bank
+            # the KRZ writer was built against has no keymap objects at all),
+            # but keymaps are minted right after the samples, so the window
+            # MOVES with the sample count -- whether a passed-through id
+            # aliases depends on what else is staged. Measured on a real
+            # pair: 31 samples then 24 keymaps are minted, window [231,255),
+            # so an absent keymap 254 becomes a wind-instrument keymap of the
+            # other bank and four pad programs sound it instead.
+            new_kid = keymap_new_id.get((src_id, old_kid))
+            if new_kid is None:
+                new_kid = old_kid if old_kid not in reserved else 0
             struct.pack_into(">H", block, abs_data_start + off, new_kid)
     return bytes(block)
 
@@ -829,7 +1014,8 @@ def _repack_block(block: bytes, type_code: int, new_id: int) -> bytes:
 
 
 def _build_file(rest: tuple, sample_objs: list[bytes], keymap_objs: list[bytes],
-                 program_objs: list[bytes], pcm: bytes) -> bytes:
+                 program_objs: list[bytes], fx_objs: list[bytes],
+                 pcm: bytes) -> bytes:
     out = bytearray()
     out += FILE_MAGIC
     osize_pos = len(out)
@@ -841,6 +1027,12 @@ def _build_file(rest: tuple, sample_objs: list[bytes], keymap_objs: list[bytes],
     for block in keymap_objs:
         out += block
     for block in program_objs:
+        out += block
+    # After the programs, which is where a real bank that ships its own
+    # effects puts them: the observed object order of such a bank is 100
+    # programs followed by its 10 FX objects, so nothing requires a
+    # referenced object to precede its referrer.
+    for block in fx_objs:
         out += block
     out += struct.pack(">i", 0)   # object-section end marker
     osize = len(out)

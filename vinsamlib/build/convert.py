@@ -656,7 +656,35 @@ def apply_conversion(bank_path: str, opts: ConversionOptions,
     if opts.is_noop(fmt):
         return bank_path
     bank = _parse_by_format(bank_path, fmt)
+    # Same ROM-only case as convert_preset(), reached instead when a whole
+    # already-assembled bank is converted rather than one program. Checked
+    # against mpc2emu's parse here because that is what this path already
+    # has in hand, and it is the object _apply_and_write would work from.
+    if not getattr(bank, "samples", None):
+        raise ConvertOpError(
+            f"{Path(bank_path).name} holds no sample audio -- its programs "
+            f"reference only samples in the sampler's ROM, so there is "
+            f"nothing to convert.")
     return _apply_and_write(bank, opts, Path(bank_path).stem, risks_out)
+
+
+def _assembled_sample_count(data: bytes, suffix: str) -> int:
+    """How many sample objects an assembled bank actually holds.
+
+    Read back with VinSamLib's own byte-level readers rather than trusting
+    the assembler, the same independence rule `_verify_written` follows. A
+    reader that cannot make sense of the bytes returns -1 rather than 0, so
+    an unparseable bank is never mistaken for a ROM-only one and blocked on
+    that ground -- it goes on to the real conversion and fails there, with
+    that error."""
+    from ..banks import e4b as vs_e4b
+    from ..banks import eiii as vs_eiii
+    from ..banks import krz as vs_krz
+    reader = {".krz": vs_krz, ".e3x": vs_eiii}.get(suffix.lower(), vs_e4b)
+    try:
+        return len(reader.parse_bytes(data, "assembled").samples)
+    except Exception:
+        return -1
 
 
 def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
@@ -695,6 +723,27 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
         tmp_path = tmp_dir / f"{stem}.e3x"
     else:
         raise ConvertOpError(f"not a recognized E4B, KRZ or EIII bank: {type(bank)!r}")
+
+    # A program that references ONLY the machine's ROM assembles into a valid
+    # bank with no sample objects in it, and there is no audio anywhere to
+    # convert -- the samples live in the sampler, not the file. Left to run,
+    # the whole chain completes silently: mpc2emu parses 0 presets and prints
+    # an explanatory [INFO] that _run_captured discards because nothing
+    # raised, _verify_written and _zone_loss_risk both early-return on the
+    # empty case, and the caller reads back an empty list without an
+    # exception -- so nothing appears in New Bank, no dialog opens, and the
+    # status bar sits on "Converting ...". 433 KRZ banks here hold programs
+    # and zero samples, so this is a whole class of material, not a corner:
+    # they are shipping products that play on a K2000 and cannot become an
+    # E4B. Browsing and inspecting them still works; only conversion cannot.
+    n_samples = _assembled_sample_count(data, tmp_path.suffix)
+    if not n_samples:
+        raise ConvertOpError(
+            f"{getattr(preset_obj, 'name', 'This program')!r} references only "
+            f"samples held in the sampler's ROM -- the bank file contains no "
+            f"audio for them, so there is nothing to convert. (Browsing and "
+            f"inspecting the bank still works.)")
+
     tmp_path.write_bytes(data)
     out = apply_conversion(str(tmp_path), opts, risks_out)
     # The intermediate was only ever input to apply_conversion, so it can go

@@ -451,6 +451,9 @@ Right-click (or double-click) behavior depends on what you've selected:
 | `.xpm` program or `.xty` track | Import (opens the conversion dialog) | "Import …" |
 | `.xpj` project | Expand into its programs | "Import all programs of …" |
 | One program inside a project | Import (opens the conversion dialog) | "Import …" |
+| Bank (E4B / KRZ / EIII) | Expand into its presets | **"Add favourites from a list to New Bank…"** — paste the preset numbers you noted on the hardware |
+| `.sf2` / `.gig` (many instruments) | Expand into its instruments | "Import all of …" |
+| `.sfz` / `.exs` / `.talsmpl`, or one instrument | Import (opens the conversion dialog) | "Import …" — works on a multi-selection |
 | Library root (top-level folder) | — | "Remove … from Library…" |
 
 Real **EIII / ESI-32** bank data — which commonly shares an EMU3-
@@ -714,6 +717,10 @@ sheet that prompted this says `Big Bank 64` where the disc says
 
 ![Pending for Image column showing one queued bank and its contents](docs/screenshots/03_pending_for_image.png)
 
+Right-click an entry for **Rename…**, **Delete**, or **Send to New Bank**
+— the last one puts the recipe back in New Bank for editing, the same thing
+double-clicking it does.
+
 Each entry in the queue can be **renamed**, **reordered** (drag within
 the list), and given its **own mpc2emu conversion options** —
 deliberately per *bank*, not a single global setting for the whole
@@ -976,6 +983,11 @@ itself can write:
 | K2000 ISO 9660 | KRZ | CD, needs K2000 OS v3.87+ | `.iso` |
 | K2000 Gotek floppy | KRZ | FAT12 floppy for a Gotek/FlashFloppy | `.img` |
 
+The dialog also takes a list of **initial banks** — **Add Files…** picks them
+from disk, **Remove Selected** takes one back out — so an image can be built
+already populated instead of created empty and filled afterwards. Floppy
+images, which can't be appended to later, are the case that needs it.
+
 E4B and EIII share the exact same EMU3-filesystem container (real
 commercial E4XT discs commonly mix both on one volume), so any "EMU3"
 kind above accepts either — each image still locks to whichever format
@@ -986,7 +998,9 @@ follow.
 real bytes, not assumed from the file extension). Once open, dragging a
 bank in (or a Pending build landing on it) **appends** to it in place —
 no rebuild, no external tools — except floppy images, which aren't
-appendable and must be built whole each time.
+appendable and must be built whole each time. **Append File(s)…** does the
+same for banks that aren't in your library: pick them from anywhere on disk,
+several at once. It greys out on the image kinds that can't be appended.
 
 Right-click an entry for **Rename…**, **Delete**, or **Export…** (write
 just that one bank back out to a standalone file) — all in-place
@@ -1146,6 +1160,13 @@ with its sample so nothing plays transposed. The result is one
 multisampled preset, landing straight in New Bank under the folder's
 name — exactly the way a `.xpm` import lands one preset, never a whole
 bank of its own.
+
+**File > Import Instrument…** is the menu route to the soft-sampler
+formats — pick a `.sf2`, `.sfz`, `.exs`, `.talsmpl` or `.gig` from anywhere
+on disk, without adding its folder to the library first. It opens the same
+Convert Options dialog the Explorer's right-click "Import…" does, and a
+container holding several instruments imports all of them. Greyed out with
+the reason when mpc2emu is missing, like everything else that needs it.
 
 **File > Import Samples…** is the same import for a **selection of
 files** rather than a whole folder — for the very common case of one
