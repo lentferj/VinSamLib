@@ -1770,10 +1770,24 @@ existing bank.** That is the gap, and it is the one no amount of testing here
 closes.
 
 `assemble()` therefore re-reads any bank it resized and refuses to hand on one
-that will not parse or comes back short. A wrong block size is not silent
-corruption — it lands the object walk mid-block, which a re-parse catches at
-once. So the failure mode is a refusal, not a bad file. **If you see that
-refusal, please report it.**
+that will not parse or comes back short. A wrong block size lands the object
+walk mid-block, which a re-parse catches at once, so *that* failure is a
+refusal rather than a bad file. **If you see that refusal, please report it.**
+
+**What the re-read cannot tell you, and why it is not evidence the feature is
+safe.** It is a round-trip check: it proves the file we wrote is the file we
+can read. It says nothing about whether a field means what we think it means
+to the sampler. mpc2emu demonstrated the gap on an S3000XL in August 2026 —
+four values written to a sample's tuning field over SysEx all read back
+exactly, and the pitch did not move by a thousandth of a cent. The field
+stored and returned faithfully and meant nothing; a wrong offset writes
+somewhere real and reads back clean.
+
+That is the same shape as the dangling reference that *resolves*, described
+under Fixed defects: every integrity check reports clean precisely because
+nothing is broken in the terms those checks are written in. So the argument
+for lifting the EXPERIMENTAL label above cannot include "it round-trips".
+Only a sampler loading a grown bank can close it.
 
 Names are capped at 16 characters for every format. E4B and EIII enforce it
 with their fixed field; KRZ has no such limit and would happily carry more,
