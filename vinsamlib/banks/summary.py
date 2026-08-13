@@ -31,7 +31,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import e4b, eiii, krz
+from . import e4b, eiii, krz, loopcheck
 from ..mpc2emu_bridge import e4b_parser, eiii_parser
 
 _LOOP_NAMES = {0: "none", 1: "forward", 2: "alternating", 3: "forward (release)"}
@@ -93,6 +93,11 @@ class PresetSummary:
     voice_count: int                 # voices (E4B/EIII) / keymaps referenced (KRZ)
     zones: list[ZoneSummary] = field(default_factory=list)
     total_sample_bytes: int = 0      # unique samples referenced by this preset's zones
+    #: Advisory lines for the Detail pane — things worth knowing about the
+    #: preset that are not part of its structure. Empty unless a check that
+    #: produces them was switched on; nothing here is computed by default,
+    #: because these cost a walk of the PCM.
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -182,6 +187,46 @@ def summarize_krz_bank(bank: krz.KrzFile) -> BankSummary:
         total_size=total,
         preset_names=[p.name.strip() for p in bank.programs.values()],
     )
+
+
+def krz_loop_notes(bank: krz.KrzFile, prog: krz.KrzObject) -> list[str]:
+    """Advisory lines for loops that click, for one program.
+
+    Aggregated to ONE line per program naming the worst offender, not one per
+    sample: a multisample with fifteen clicking zones is a single authoring
+    problem, and fifteen lines in the Detail pane would bury everything else.
+    ConvertWithMoss reached the same shape independently.
+
+    Only called when `Config.loop_click_check` is on — it reads the PCM
+    around every loop the program touches.
+    """
+    worst = None
+    n = 0
+    seen: set[int] = set()
+    for kid in bank.program_keymap_refs(prog):
+        km = bank.keymaps.get(kid)
+        if km is None:
+            continue
+        for sid in bank.keymap_sample_refs(km):
+            if sid in seen:
+                continue
+            seen.add(sid)
+            samp = bank.samples.get(sid)
+            if samp is None:
+                continue
+            for start, end in bank.sample_loops(samp):
+                hit = loopcheck.check_loop(bank.pcm, start, end, samp.name.strip())
+                if hit:
+                    n += 1
+                    if worst is None or hit.step_pct > worst.step_pct:
+                        worst = hit
+    if worst is None:
+        return []
+    others = f" (and {n - 1} more)" if n > 1 else ""
+    return [f"Loop clicks: {worst.sample_name!r} steps {worst.step_pct:.0f}% of "
+            f"its local level at the loop point{others} — audible as a tick on "
+            f"every repeat. The loop is as the source authored it; nothing here "
+            f"changes it."]
 
 
 def summarize_krz_program(bank: krz.KrzFile, prog: krz.KrzObject) -> PresetSummary:

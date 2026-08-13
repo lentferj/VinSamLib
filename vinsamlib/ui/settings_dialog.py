@@ -94,6 +94,21 @@ class SettingsDialog(QDialog):
         limits_hint.setWordWrap(True)
         layout.addWidget(limits_hint)
 
+        from PySide6.QtWidgets import QCheckBox
+        self._loop_click_box = QCheckBox("Check loops for audible clicks")
+        self._loop_click_box.setChecked(config.loop_click_check)
+        layout.addWidget(self._loop_click_box)
+        loop_hint = QLabel(
+            "Reports a forward loop whose wrap-around lands on a mismatched "
+            "level — heard as a tick on every repeat. Off by default because "
+            "it reads the audio of every sample a preset touches. Nothing is "
+            "ever changed: the loop is written exactly as the source authored "
+            "it, and a repair means re-converting through mpc2emu with its "
+            "cross-fade or zero-snap option.")
+        loop_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        loop_hint.setWordWrap(True)
+        layout.addWidget(loop_hint)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -136,7 +151,8 @@ class SettingsDialog(QDialog):
         path_changed = new_path != self._config.mpc2emu_path
         limits_changed = (self._e4b_limit_spin.value() != self._config.e4b_bank_limit_mb
                            or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb
-                           or self._krz_pram_spin.value() != self._config.krz_pram_kb)
+                           or self._krz_pram_spin.value() != self._config.krz_pram_kb
+                           or self._loop_click_box.isChecked() != self._config.loop_click_check)
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
@@ -144,6 +160,7 @@ class SettingsDialog(QDialog):
             self._config.e4b_bank_limit_mb = self._e4b_limit_spin.value()
             self._config.krz_bank_limit_mb = self._krz_limit_spin.value()
             self._config.krz_pram_kb = self._krz_pram_spin.value()
+            self._config.loop_click_check = self._loop_click_box.isChecked()
         if path_changed or limits_changed:
             self._config.save()
         super().accept()

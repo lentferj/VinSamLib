@@ -724,6 +724,31 @@ class KrzFile:
             hi = en if hi is None else max(hi, en)
         return max(0, hi - lo + 1) if lo is not None else 0
 
+    def sample_loops(self, samp: KrzObject) -> list[tuple[int, int]]:
+        """[(loop_start_word, loop_end_word)] for each LOOPED local-data
+        header, absolute PCM word offsets.
+
+        Per KRZ_FORMAT.md's Soundfilehead table: `sampleLoopStart` at 16:20 is
+        the loop start for a looped header, `sampleEnd` at 20:24 is the loop
+        END rather than the PCM end, and flags bit 0x80 CLEAR means looped.
+        A one-shot collapses both onto the PCM end, so it has no loop and is
+        skipped rather than reported as a zero-length one."""
+        body = samp.body()
+        n = struct.unpack_from(">h", body, 2)[0] + 1
+        out = []
+        for h in range(n):
+            ho = SAMPLE_HDR + h * SFH_SIZE
+            if ho + SFH_SIZE > len(body):
+                break
+            flags = body[ho + 1]
+            if not (flags & 0x40) or (flags & 0x80):
+                continue                      # no local data, or one-shot
+            start = struct.unpack_from(">i", body, ho + 16)[0]
+            end = struct.unpack_from(">i", body, ho + 20)[0]
+            if end > start >= 0:
+                out.append((start, end))
+        return out
+
     def sample_word_extent(self, samp: KrzObject) -> tuple[int, int]:
         """(start_word, num_words) for a sample object — see
         `_all_sample_lengths` for how num_words is determined."""
