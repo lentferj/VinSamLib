@@ -101,10 +101,11 @@ class SettingsDialog(QDialog):
         loop_hint = QLabel(
             "Reports a forward loop whose wrap-around lands on a mismatched "
             "level — heard as a tick on every repeat. Off by default because "
-            "it reads the audio of every sample a preset touches. Nothing is "
-            "ever changed: the loop is written exactly as the source authored "
-            "it, and a repair means re-converting through mpc2emu with its "
-            "cross-fade or zero-snap option.")
+            "it reads the audio of every sample a preset touches. This setting "
+            "only REPORTS, in the Detail pane; the loop is written exactly as "
+            "the source authored it. To repair one, use Check Loops… in New "
+            "Bank, which offers a zero-snap, a nudge and a cross-fade per "
+            "sample — and never applies one you did not choose.")
         loop_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         loop_hint.setWordWrap(True)
         layout.addWidget(loop_hint)

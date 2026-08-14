@@ -677,6 +677,46 @@ the same window beside the note, but only when a preset actually has more than
 one — repeating `v1-127` down seventy rows hides the note instead of
 qualifying it.
 
+**Check Loops…** looks for loops that *click*, and offers to repair them. A
+looped sample plays to its last frame and jumps back to the loop start; if
+those two frames sit at different levels, the jump is a step you hear as a tick
+on every repetition, forever. It is a property of how the sample was authored —
+this program copies loop points verbatim — but the first hint is usually the
+preset ticking on the sampler, where finding the culprit means auditioning
+everything.
+
+The button scans the staged presets and lists each sample whose loop steps
+audibly, worst first, with the step shown as a percentage of the local level
+(the number that corresponds to how loud the tick is). **Finding nothing is a
+normal result**, and common for E4B and EIII material: measured across this
+library, 11 of 2294 looped E4B headers click and 1 of 237 EIII ones, against
+1545 of 11551 for KRZ.
+
+Nothing is repaired unless you choose a repair, and nothing is preselected —
+a clicking loop **may be deliberate**, since percussive and rhythmic material
+clicks on purpose. Three choices, in increasing order of what they cost:
+
+| | what it does | audio | cleared the click in |
+|---|---|---|---|
+| **Snap to zero crossings** | moves both loop points to the nearest zero crossing of the same slope | untouched | ~64% |
+| **Nudge the loop end to match** | searches back for where the waveform best matches the loop start, and moves the loop *end* there; the loop gets slightly shorter | untouched | ~99% |
+| **Cross-fade the wrap** | blends the frames approaching the loop end into the frames before the loop start | **rewritten** | always continuous |
+
+(measured on 101 clicking loops from real K2000 banks.)
+
+The most effective repair is the only lossy one, which is why they are not
+ranked by success rate and why the cross-fade says so in its own row: it
+destroys the frames it smooths. The two that only move loop *points* cannot
+make the audio wrong. As everywhere else in New Bank, **the file in your
+library is never modified** — the repair is applied while the new bank is
+assembled, and a repair is keyed by sample, so it applies everywhere that
+sample is used.
+
+There is also a passive version: switch on **Check loops for audible clicks** in
+Settings and the Detail pane notes them for any preset you select, without
+building anything. It is off by default because it reads the audio around
+every loop a preset touches.
+
 Overlapping key ranges are normal once samples are separated by velocity —
 that is what layering *is* — so the overlap warning stays a warning.
 
