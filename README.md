@@ -568,6 +568,23 @@ of a *different* format is rejected with a status message, matching mpc2emu's ow
 "no cross-format conversion in one step" rule (that's what "Import via
 mpc2emu" is for).
 
+**The order is the numbering, and each row shows the number it will
+get.** A row reads `200  Prometheus`, not just `Prometheus`, because
+where a preset sits in this list decides what it answers to on the
+machine:
+
+| Format | The first row becomes |
+|---|---|
+| **KRZ** | program **200** on the K2000 — the number you dial up to hear it |
+| **E4B** | preset **0** in the bank |
+| **EIII** | preset **0** |
+| **AKAI** | MIDI program **0** — the sampler's panel shows that as `1` |
+
+**Reorder by dragging a row**, or right-click → **Move Up** / **Move
+Down** for precise placement (greyed out at the ends). The numbers
+renumber themselves immediately, so what the list shows is always what
+the built bank will carry. Nothing else about the presets changes.
+
 **Duplicate detection** (View menu, both on by default): re-adding a
 preset already in the bank is caught by content — the bank's file path
 plus the preset's own index/id, not object identity, since a preset
