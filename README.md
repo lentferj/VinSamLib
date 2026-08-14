@@ -689,8 +689,8 @@ The button scans the staged presets and lists each sample whose loop steps
 audibly, worst first, with the step shown as a percentage of the local level
 (the number that corresponds to how loud the tick is). **Finding nothing is a
 normal result**, and common for E4B and EIII material: measured across this
-library, 11 of 2294 looped E4B headers click and 1 of 237 EIII ones, against
-1545 of 11551 for KRZ.
+library, 96 of 3416 looped E4B headers click (2.8%) and 1 of 237 EIII ones
+(0.4%), against 1545 of 11551 for KRZ (13.4%).
 
 Nothing is repaired unless you choose a repair, and nothing is preselected —
 a clicking loop **may be deliberate**, since percussive and rhythmic material
