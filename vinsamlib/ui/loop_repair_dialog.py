@@ -125,6 +125,20 @@ class LoopRepairDialog(QDialog):
 
         layout.addWidget(self._table)
 
+        # Shown only once a repair is actually chosen. Always-on warnings are
+        # read once and then not at all; this one appears at the moment it
+        # becomes true, which is also the moment the user can still change
+        # their mind. Same standing as renaming and placement: exercised
+        # against real banks, never played on a sampler.
+        self._experimental = QLabel(
+            "⚠ Repairs are EXPERIMENTAL — no sampler has yet played a loop "
+            "repaired this way. Your source file is never modified; keep the "
+            "bank you build until you have heard it.")
+        self._experimental.setWordWrap(True)
+        self._experimental.setStyleSheet("color: #c07000;")
+        self._experimental.setVisible(False)
+        layout.addWidget(self._experimental)
+
         self._hint = QLabel(_HINTS[""])
         self._hint.setWordWrap(True)
         self._hint.setStyleSheet("color: palette(placeholdertext);")
@@ -167,6 +181,8 @@ class LoopRepairDialog(QDialog):
     def _update_hint(self) -> None:
         """Describe whichever repair the user is currently looking at."""
         kinds = {c.currentData() for c in self._combos}
+        self._experimental.setVisible(
+            any(k in loopcheck.REPAIRS for k in kinds))
         kind = kinds.pop() if len(kinds) == 1 else None
         if kind is None:
             self._hint.setText("Different repairs chosen for different samples.")
