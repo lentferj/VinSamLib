@@ -69,6 +69,14 @@ _EIII_MAX_PRESETS = 256   # EMULATOR_3X/ESI_32_V3 -- the tighter of the two
                            # one slot), this is just the meter's proxy.
 
 _ASSEMBLE_FNS = {"E4B": e4b.assemble, "KRZ": krz.assemble, "EIII": eiii.assemble}
+
+#: Formats whose assemble() takes `loop_repair`. Named explicitly rather than
+#: left ungated on the reasoning "all three formats store loop points" -- that
+#: is true of the three above and stops being true the moment a fourth arrives.
+#: feat/akai-s3000xl adds "AKAI" to _ASSEMBLE_FNS, and akai.assemble() takes
+#: (sample_names, volume_name) and nothing else, so binding the argument would
+#: raise TypeError from the size meter.
+_LOOP_REPAIRABLE = ("E4B", "KRZ", "EIII")
 _FORMAT_EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
 _DEFAULT_BANK_NAME = "NewBank"
 
@@ -1125,7 +1133,20 @@ class BankPane(QWidget):
                     if samp is not None:
                         yield samp, bank.sample_loops(samp), bank.pcm, True
             return
-        mod = e4b if isinstance(bank, e4b.E4BFile) else eiii
+        # Explicit, with NO fallback. `mod = e4b if isinstance(...) else eiii`
+        # sent every other bank type down the EIII path, and an AKAI sample
+        # does not fail there -- AkaiSample.body is "header block + 16-bit
+        # mono PCM", so eiii.sample_loops() happily reads an options word at
+        # 58 and loop offsets at 36/44 out of an AKAI header and returns
+        # whatever those bytes happen to say. Rows for loops that do not
+        # exist, which is worse than the AttributeError that this same
+        # dispatch-by-elimination produced twice before in this pane.
+        if isinstance(bank, e4b.E4BFile):
+            mod = e4b
+        elif isinstance(bank, eiii.EIIIFile):
+            mod = eiii
+        else:
+            return
         for idx in getattr(preset, "sample_indices", []) or []:
             if idx in seen:
                 continue
@@ -1138,6 +1159,10 @@ class BankPane(QWidget):
     def _check_loops(self) -> None:
         if not self._items:
             self.statusMessage.emit("Nothing staged to check yet")
+            return
+        if self._format not in _LOOP_REPAIRABLE:
+            self.statusMessage.emit(
+                f"Loop checking isn't available for {self._format} banks")
             return
         items = self._selected_presets()
         rows = self._clicking_rows(items)
@@ -1222,11 +1247,10 @@ class BankPane(QWidget):
             fn = functools.partial(fn, zone_placement=dict(self._zone_placement))
         if self._voice_velocity and self._format in self._PLACEABLE:
             fn = functools.partial(fn, voice_velocity=dict(self._voice_velocity))
-        # No format gate: all three assemble() functions take loop_repair,
-        # because all three formats store loop points. The renames and the
-        # placement edits above are gated only because their assemblers are
-        # not uniform.
-        if self._loop_repairs:
+        # Gated like the two above. Every format this pane can build stores
+        # loop points, but not every assemble() accepts the argument -- see
+        # _LOOP_REPAIRABLE.
+        if self._loop_repairs and self._format in _LOOP_REPAIRABLE:
             fn = functools.partial(fn, loop_repair=dict(self._loop_repairs))
         return fn
 

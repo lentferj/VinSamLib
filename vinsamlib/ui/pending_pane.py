@@ -33,7 +33,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDia
 
 from . import workers
 from .. import tempdirs
-from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _sanitize_bank_name
+from .bank_pane import (_ASSEMBLE_FNS, _FORMAT_EXT, _LOOP_REPAIRABLE,
+                        _sanitize_bank_name)
 from .convert_options_dialog import ConvertOptionsDialog
 from ..build.convert import (apply_conversion, load_sources_samples_for_test,
                               polyphony_risk_lines)
@@ -81,12 +82,12 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         velocity = entry.get("voice_velocity") or {}
         if velocity and fmt == "E4B":
             kwargs["voice_velocity"] = velocity
-        # No format gate: every native format stores loop points and every
-        # assemble() takes this. The rename above is the cautionary tale --
-        # it carried a format list that went stale and dropped KRZ renames on
-        # the way to an image, which is the one path nothing else re-checks.
+        # Gated on the same list the pane binds by, imported rather than
+        # spelled out again here: the rename above is the cautionary tale of
+        # a SECOND copy of a format list, which went stale and dropped KRZ
+        # renames on the way to an image.
         repairs = entry.get("loop_repair") or {}
-        if repairs:
+        if repairs and fmt in _LOOP_REPAIRABLE:
             kwargs["loop_repair"] = repairs
         data = fn(selections, **kwargs)
         ext = _FORMAT_EXT[fmt]
