@@ -46,6 +46,8 @@ from __future__ import annotations
 
 import re
 import struct
+
+from . import loopcheck
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -186,6 +188,46 @@ def sample_loops(samp: "E4BSample") -> list[tuple[int, int]]:
     start = (start_b - PCM_OFFSET) // 2
     end = min((end_b - PCM_OFFSET) // 2 + 1, frames - 1)
     return [(start, end)] if end > start >= 0 else []
+
+
+def _repair_body_loops(body: bytes, kind: str) -> bytes:
+    """Apply one loop repair to a sample body, returning a new body.
+
+    The body is header+PCM, so a cross-fade rewrites bytes in place from
+    PCM_START and the two point repairs rewrite the loop fields at 38 and 46.
+
+    THE +1 GOES BACK IN. `sample_loops` returns the last frame PLAYED, and
+    `loop_end_l` stores the frame BEFORE it (ConvertWithMoss PR #220), so the
+    end written here is `(end - 1) * 2 + PCM_OFFSET`. Reading and writing
+    through different conventions would move every repaired loop by one frame
+    — small enough to look like success and audible on a short loop.
+    """
+    out = bytearray(body)
+    for start, end in sample_loops_of_body(bytes(out)):
+        pcm = bytes(out[PCM_START:])
+        got = loopcheck.apply_repair(kind, pcm, start, end,
+                                     big_endian=PCM_BIG_ENDIAN)
+        if got is None:
+            continue
+        new_pcm, new_start, new_end = got
+        if new_pcm is not None:
+            out[PCM_START:] = new_pcm
+        struct.pack_into("<I", out, 38, new_start * 2 + PCM_OFFSET)
+        struct.pack_into("<I", out, 46, (new_end - 1) * 2 + PCM_OFFSET)
+    return bytes(out)
+
+
+def sample_loops_of_body(body: bytes) -> list[tuple[int, int]]:
+    """`sample_loops` for a raw body, so the assembler can work on the bytes
+    it is about to write rather than on the source object."""
+    return sample_loops(_BodyOnly(body))
+
+
+class _BodyOnly:
+    __slots__ = ("body",)
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
 
 
 @dataclass
@@ -561,7 +603,8 @@ def _split_voices_by_velocity(body: bytearray, num_voices: int,
 def assemble(selections: list[tuple[E4BFile, E4BPreset]],
               sample_names: Optional[dict] = None,
               zone_placement: Optional[dict] = None,
-              voice_velocity: Optional[dict] = None) -> bytes:
+              voice_velocity: Optional[dict] = None,
+              loop_repair: Optional[dict] = None) -> bytes:
     """Build a new E4B FORM from selected (source_bank, preset) pairs.
 
     Each preset's original chunk bytes are copied verbatim; only the 2-byte
@@ -662,6 +705,12 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
                 # reference it: a reader (mpc2emu's own e4b_parser included)
                 # keys samples by this embedded value, not by file position.
                 sbody = bytearray(samp.body)
+                # Loop repair before anything else touches the body: it is
+                # keyed by sample name, so every copy of this sample gets the
+                # same treatment and the dedupe decision above stays valid.
+                _rk = (loop_repair or {}).get(samp.name.strip())
+                if _rk:
+                    sbody = bytearray(_repair_body_loops(bytes(sbody), _rk))
                 struct.pack_into(">H", sbody, 0, new_idx & 0xFFFF)
                 final_name = (sample_names or {}).get(samp.name, samp.name)
                 if final_name != samp.name:

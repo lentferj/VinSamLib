@@ -85,6 +85,8 @@ one.
 from __future__ import annotations
 
 import struct
+
+from . import loopcheck
 from dataclasses import dataclass, field
 
 NAME_LENGTH = 16
@@ -436,9 +438,40 @@ def parse(path: str) -> EIIIFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
+class _BodyOnly:
+    __slots__ = ("body",)
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+
+def _repair_body_loops(body: bytes, kind: str) -> bytes:
+    """Apply one loop repair to an EIII sample body, returning a new body.
+
+    Header+PCM in one buffer, so a cross-fade rewrites from PCM_START and the
+    point repairs rewrite the loop fields at 36 and 44. Unlike E4B there is no
+    off-by-one convention here: both fields are plain byte offsets from the
+    start of the header, so the value written back is `frame * 2 + PCM_START`.
+    """
+    out = bytearray(body)
+    for start, end in sample_loops(_BodyOnly(bytes(out))):
+        pcm = bytes(out[PCM_START:])
+        got = loopcheck.apply_repair(kind, pcm, start, end,
+                                     big_endian=PCM_BIG_ENDIAN)
+        if got is None:
+            continue
+        new_pcm, new_start, new_end = got
+        if new_pcm is not None:
+            out[PCM_START:] = new_pcm
+        struct.pack_into("<I", out, 36, new_start * 2 + PCM_START)
+        struct.pack_into("<I", out, 44, new_end * 2 + PCM_START)
+    return bytes(out)
+
+
 def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x",
              bank_name: str | None = None,
-             sample_names: dict | None = None) -> bytes:
+             sample_names: dict | None = None,
+             loop_repair: dict | None = None) -> bytes:
     """Build a new EIII bank from selected (source_bank, preset) pairs.
 
     Each preset's every linked segment is copied verbatim; only each
@@ -513,6 +546,10 @@ def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x"
                     # change which samples are distinct.
                     final_name = (sample_names or {}).get(samp.name, samp.name)
                     body = samp.body
+                    # Keyed by stripped name, like the other two assemblers.
+                    _rk = (loop_repair or {}).get(samp.name.strip())
+                    if _rk:
+                        body = _repair_body_loops(body, _rk)
                     if final_name != samp.name:
                         patched_body = bytearray(body)
                         patched_body[0:NAME_LENGTH] = _encode_name(final_name)
