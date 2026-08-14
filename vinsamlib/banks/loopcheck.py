@@ -270,7 +270,7 @@ def nudge_to_match(pcm: bytes, loop_start: int, loop_end: int,
 
 
 def crossfade(pcm: bytes, loop_start: int, loop_end: int,
-              fade_frames: int = 256) -> bytes | None:
+              fade_frames: int = 256, big_endian: bool = True) -> bytes | None:
     """Cross-fade INTO the loop end so the wrap is continuous. REWRITES PCM.
 
     The frames approaching `loop_end` are blended toward the frames preceding
@@ -293,5 +293,48 @@ def crossfade(pcm: bytes, loop_start: int, loop_end: int,
         t = (i + 1) / n                               # 0 → 1 across the window
         v = int(round(tail[i] * (1.0 - t) + head[i] * t))
         v = max(-32768, min(32767, v))
-        struct.pack_into(">h", out, (loop_end - n + 1 + i) * 2, v)
+        struct.pack_into(">h" if big_endian else "<h", out,
+                         (loop_end - n + 1 + i) * 2, v)
     return bytes(out)
+
+
+# ── one entry point for the assemblers ───────────────────────────────────────
+
+REPAIRS = ("snap", "nudge", "fade")
+
+REPAIR_LABELS = {
+    "snap": "Snap to zero crossings",
+    "nudge": "Nudge loop end to match",
+    "fade": "Cross-fade the wrap (rewrites audio)",
+}
+
+
+def apply_repair(kind: str, pcm: bytes, loop_start: int, loop_end: int,
+                 big_endian: bool = True
+                 ) -> tuple[bytes | None, int, int] | None:
+    """Run one named repair. Returns (new_pcm_or_None, start, end), or None.
+
+    `new_pcm` is None for the two point-moving repairs — the caller then
+    patches only the loop fields — and a full replacement buffer for the
+    cross-fade, whose loop points do not move. Returning None at all means
+    the repair could not be applied (too short a loop, no crossing found);
+    the caller must leave the sample exactly as it was rather than guess.
+
+    Every assembler goes through here so that the byte-order argument is
+    passed in ONE place. It was previously threaded per call site, and both
+    times it was got wrong it failed silently: the detector reported a
+    flawless corpus, and `crossfade` used a `big_endian` it never declared.
+    """
+    if kind not in REPAIRS:
+        raise ValueError(f"unknown loop repair: {kind!r}")
+    if kind == "fade":
+        out = crossfade(pcm, loop_start, loop_end, big_endian=big_endian)
+        return None if out is None else (out, loop_start, loop_end)
+    fn = snap_to_zero if kind == "snap" else nudge_to_match
+    moved = fn(pcm, loop_start, loop_end, big_endian=big_endian)
+    if moved is None:
+        return None
+    s, e = moved
+    if e <= s:
+        return None
+    return None, s, e
