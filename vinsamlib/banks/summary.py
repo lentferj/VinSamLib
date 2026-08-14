@@ -189,6 +189,70 @@ def summarize_krz_bank(bank: krz.KrzFile) -> BankSummary:
     )
 
 
+def loop_notes(bank, obj) -> list[str]:
+    """Advisory lines about clicking loops, for any of the three formats.
+
+    Dispatches to the per-format loop accessors, each of which knows its own
+    PCM offset and byte order — getting either wrong does not fail loudly, it
+    reports a corpus of impossibly clean loops (see banks/loopcheck.py).
+    """
+    if isinstance(bank, krz.KrzFile):
+        return krz_loop_notes(bank, obj)
+    if isinstance(bank, e4b.E4BFile):
+        return _loop_notes_from(
+            [(e4b.sample_pcm(s), lp, s.name.strip(), e4b.PCM_BIG_ENDIAN)
+             for s in _e4b_preset_samples(bank, obj)
+             for lp in e4b.sample_loops(s)])
+    if isinstance(bank, eiii.EIIIFile):
+        return _loop_notes_from(
+            [(eiii.sample_pcm(s), lp, getattr(s, "name", "").strip(),
+              eiii.PCM_BIG_ENDIAN)
+             for s in _eiii_preset_samples(bank, obj)
+             for lp in eiii.sample_loops(s)])
+    return []
+
+
+def _e4b_preset_samples(bank, preset):
+    seen = set()
+    for idx in getattr(preset, "sample_indices", []) or []:
+        if idx in seen:
+            continue
+        seen.add(idx)
+        s = bank.samples.get(idx)
+        if s is not None:
+            yield s
+
+
+def _eiii_preset_samples(bank, preset):
+    seen = set()
+    for idx in getattr(preset, "sample_indices", []) or []:
+        if idx in seen:
+            continue
+        seen.add(idx)
+        s = bank.samples.get(idx)
+        if s is not None:
+            yield s
+
+
+def _loop_notes_from(items) -> list[str]:
+    """One aggregated line naming the worst offender, from (pcm, (ls, le),
+    name, big_endian) tuples."""
+    worst, n = None, 0
+    for pcm, (ls, le), name, be in items:
+        hit = loopcheck.check_loop(pcm, ls, le, name, big_endian=be)
+        if hit:
+            n += 1
+            if worst is None or hit.step_pct > worst.step_pct:
+                worst = hit
+    if worst is None:
+        return []
+    others = f" (and {n - 1} more)" if n > 1 else ""
+    return [f"Loop clicks: {worst.sample_name!r} steps {worst.step_pct:.0f}% of "
+            f"its local level at the loop point{others} — audible as a tick on "
+            f"every repeat. The loop is as the source authored it; nothing here "
+            f"changes it."]
+
+
 def krz_loop_notes(bank: krz.KrzFile, prog: krz.KrzObject) -> list[str]:
     """Advisory lines for loops that click, for one program.
 
@@ -434,14 +498,20 @@ def summarize_bank(bank) -> BankSummary:
     raise TypeError(f"not a recognised bank type: {type(bank)!r}")
 
 
-def summarize_preset(bank, obj) -> PresetSummary:
+def summarize_preset(bank, obj, loop_click_check: bool = False) -> PresetSummary:
+    """`loop_click_check` is off by default and costs a walk of the PCM around
+    every loop the preset touches — the caller passes the user's setting."""
     if isinstance(bank, e4b.E4BFile):
-        return summarize_e4b_preset(bank, obj)
-    if isinstance(bank, krz.KrzFile):
-        return summarize_krz_program(bank, obj)
-    if isinstance(bank, eiii.EIIIFile):
-        return summarize_eiii_preset(bank, obj)
-    raise TypeError(f"not a recognised bank type: {type(bank)!r}")
+        out = summarize_e4b_preset(bank, obj)
+    elif isinstance(bank, krz.KrzFile):
+        out = summarize_krz_program(bank, obj)
+    elif isinstance(bank, eiii.EIIIFile):
+        out = summarize_eiii_preset(bank, obj)
+    else:
+        raise TypeError(f"not a recognised bank type: {type(bank)!r}")
+    if loop_click_check:
+        out.notes.extend(loop_notes(bank, obj))
+    return out
 
 
 def _main(argv: list[str]) -> int:

@@ -129,6 +129,65 @@ class E4BSample:
         return len(self.body)
 
 
+#: Bytes of E3S1 header before the PCM. Every loop/length field in the header
+#: is a BYTE offset from the struct start, so a frame index is
+#: `(field - PCM_OFFSET) // 2` (E4B_FORMAT.md, sample-header table).
+PCM_OFFSET = 92
+
+#: Where the PCM actually begins in the chunk body. The header fields count
+#: from 92, but the body carries a 2-byte `sample_idx` in front of emu3bm's
+#: 92-byte struct — mpc2emu's parser slices `body[start_l + 2:]` for exactly
+#: this reason. So a frame index is `(field - 92) // 2` and it indexes a
+#: buffer starting at 94.
+PCM_START = 94
+
+#: E4B PCM is LITTLE-endian, where KRZ is big. Passed explicitly to
+#: banks/loopcheck.py, which reads one as the other otherwise and reports a
+#: corpus of impossibly clean loops.
+PCM_BIG_ENDIAN = False
+
+#: `options` bit that marks a forward loop (0x0031 = MONO_L | LOOP).
+_OPT_LOOP = 0x0001
+
+
+def sample_pcm(samp: "E4BSample") -> bytes:
+    """The sample's PCM, without the header. For a stereo sample this is the
+    left channel followed by the right; loop points index the left."""
+    return samp.body[PCM_START:]
+
+
+def sample_loops(samp: "E4BSample") -> list[tuple[int, int]]:
+    """[(loop_start_frame, loop_end_frame)] for a looped E4B sample.
+
+    Frames are indices into this sample's OWN PCM (unlike KRZ, where they are
+    absolute in a shared region), and `loop_end_frame` is the last frame
+    PLAYED.
+
+    THE +1 IS NOT A GUESS. `loop_end_l` stores the frame BEFORE the true
+    inclusive last loop frame, so the last played frame is
+    `(loop_end_l - 92) // 2 + 1`. ConvertWithMoss established this (PR #220)
+    by measuring the amplitude step at the loop seam across a commercial
+    corpus: reading the raw value left a discontinuity in many samples, and
+    the +1 raised the clean-seam share from 78% to 95%. mpc2emu encodes and
+    decodes it consistently, so it matters only when reading a third-party
+    bank -- which is exactly what this program does.
+    """
+    b = samp.body
+    if len(b) < 62:
+        return []
+    opts = struct.unpack_from("<H", b, 60)[0]
+    if not (opts & _OPT_LOOP):
+        return []
+    start_b = struct.unpack_from("<I", b, 38)[0]
+    end_b = struct.unpack_from("<I", b, 46)[0]
+    if start_b < PCM_OFFSET or end_b < PCM_OFFSET:
+        return []
+    frames = max(0, (len(b) - PCM_START) // 2)
+    start = (start_b - PCM_OFFSET) // 2
+    end = min((end_b - PCM_OFFSET) // 2 + 1, frames - 1)
+    return [(start, end)] if end > start >= 0 else []
+
+
 @dataclass
 class E4BFile:
     path: str

@@ -103,9 +103,16 @@ class LoopClick:
         return self.step / self.median_movement if self.median_movement else 0.0
 
 
-def _frames(pcm: bytes, first_word: int, count: int) -> list[int]:
-    """`count` signed 16-bit frames from `first_word`, big-endian, clipped to
-    what the buffer actually holds."""
+def _frames(pcm: bytes, first_word: int, count: int,
+            big_endian: bool = True) -> list[int]:
+    """`count` signed 16-bit frames from `first_word`, clipped to the buffer.
+
+    ENDIANNESS IS NOT A DETAIL HERE. KRZ stores PCM big-endian and E4B/EIII
+    little-endian, and reading one as the other does not merely shift values —
+    it scrambles them, so the median frame-to-frame movement explodes and the
+    ratio test stops firing. The symptom is a corpus that looks flawless: this
+    module reported 100% clean seams over 3289 E4B loops until the byte order
+    was fixed, which is the wrong kind of good news."""
     if count <= 0 or first_word < 0:
         return []
     lo = first_word * 2
@@ -113,11 +120,11 @@ def _frames(pcm: bytes, first_word: int, count: int) -> list[int]:
     if hi <= lo:
         return []
     n = (hi - lo) // 2
-    return list(struct.unpack_from(f">{n}h", pcm, lo))
+    return list(struct.unpack_from(f"{'>' if big_endian else '<'}{n}h", pcm, lo))
 
 
 def check_loop(pcm: bytes, loop_start: int, loop_end: int,
-               sample_name: str = "") -> LoopClick | None:
+               sample_name: str = "", big_endian: bool = True) -> LoopClick | None:
     """Return a LoopClick if this forward loop steps audibly at its wrap.
 
     `loop_start` and `loop_end` are absolute PCM **word** offsets, and
@@ -127,8 +134,8 @@ def check_loop(pcm: bytes, loop_start: int, loop_end: int,
     if loop_end <= loop_start:
         return None
 
-    a = _frames(pcm, loop_end, 1)
-    b = _frames(pcm, loop_start, 1)
+    a = _frames(pcm, loop_end, 1, big_endian)
+    b = _frames(pcm, loop_start, 1, big_endian)
     if not a or not b:
         return None
     step = abs(a[0] - b[0])
@@ -136,8 +143,8 @@ def check_loop(pcm: bytes, loop_start: int, loop_end: int,
     # How fast is the waveform moving around BOTH boundaries? Using both ends
     # matters: a loop can start in a smooth passage and end in a steep one,
     # and the wrap has to be judged against the material it actually joins.
-    around = (_frames(pcm, max(0, loop_start - WINDOW // 2), WINDOW)
-              + _frames(pcm, max(0, loop_end - WINDOW // 2), WINDOW))
+    around = (_frames(pcm, max(0, loop_start - WINDOW // 2), WINDOW, big_endian)
+              + _frames(pcm, max(0, loop_end - WINDOW // 2), WINDOW, big_endian))
     if len(around) < 4:
         return None
     moves = sorted(abs(y - x) for x, y in zip(around, around[1:]))
@@ -197,16 +204,17 @@ SEARCH_FRAMES = 1200
 MIN_LOOP_FRAMES = 600
 
 
-def _slope(pcm: bytes, w: int) -> int:
-    a = _frames(pcm, w, 2)
+def _slope(pcm: bytes, w: int, big_endian: bool = True) -> int:
+    a = _frames(pcm, w, 2, big_endian)
     return 0 if len(a) < 2 else a[1] - a[0]
 
 
-def _zero_crossings(pcm: bytes, centre: int, want_rising: bool) -> list[int]:
+def _zero_crossings(pcm: bytes, centre: int, want_rising: bool,
+                    big_endian: bool = True) -> list[int]:
     """Word offsets near `centre` where the waveform crosses zero with the
     requested slope, nearest first."""
     lo = max(0, centre - SEARCH_FRAMES)
-    f = _frames(pcm, lo, SEARCH_FRAMES * 2)
+    f = _frames(pcm, lo, SEARCH_FRAMES * 2, big_endian)
     out = []
     for i in range(len(f) - 1):
         a, b = f[i], f[i + 1]
@@ -219,8 +227,8 @@ def _zero_crossings(pcm: bytes, centre: int, want_rising: bool) -> list[int]:
     return out
 
 
-def snap_to_zero(pcm: bytes, loop_start: int, loop_end: int
-                 ) -> tuple[int, int] | None:
+def snap_to_zero(pcm: bytes, loop_start: int, loop_end: int,
+                 big_endian: bool = True) -> tuple[int, int] | None:
     """Both points to the nearest same-slope zero crossing. Points only."""
     if loop_end - loop_start < MIN_LOOP_FRAMES:
         return None
@@ -235,8 +243,8 @@ def snap_to_zero(pcm: bytes, loop_start: int, loop_end: int
     return s, e
 
 
-def nudge_to_match(pcm: bytes, loop_start: int, loop_end: int
-                   ) -> tuple[int, int] | None:
+def nudge_to_match(pcm: bytes, loop_start: int, loop_end: int,
+                   big_endian: bool = True) -> tuple[int, int] | None:
     """Move the loop END to where the waveform best matches the START.
 
     Scored on level AND slope together, because matching level alone can join
@@ -245,14 +253,14 @@ def nudge_to_match(pcm: bytes, loop_start: int, loop_end: int
     """
     if loop_end - loop_start < MIN_LOOP_FRAMES:
         return None
-    tgt = _frames(pcm, loop_start, 1)
+    tgt = _frames(pcm, loop_start, 1, big_endian)
     if not tgt:
         return None
     tgt_v, tgt_s = tgt[0], _slope(pcm, loop_start)
     lo = max(loop_start + MIN_LOOP_FRAMES, loop_end - SEARCH_FRAMES)
     best, best_at = None, None
     for w in range(lo, loop_end + SEARCH_FRAMES):
-        f = _frames(pcm, w, 2)
+        f = _frames(pcm, w, 2, big_endian)
         if len(f) < 2:
             break
         cost = abs(f[0] - tgt_v) + abs((f[1] - f[0]) - tgt_s)
@@ -276,8 +284,8 @@ def crossfade(pcm: bytes, loop_start: int, loop_end: int,
     n = min(fade_frames, (loop_end - loop_start) // 2)
     if n < 8:
         return None
-    tail = _frames(pcm, loop_end - n + 1, n)          # approaching the wrap
-    head = _frames(pcm, loop_start - n, n)            # what precedes the start
+    tail = _frames(pcm, loop_end - n + 1, n, big_endian)          # approaching the wrap
+    head = _frames(pcm, loop_start - n, n, big_endian)            # what precedes the start
     if len(tail) < n or len(head) < n:
         return None
     out = bytearray(pcm)

@@ -57,7 +57,14 @@ class DetailPane(QWidget):
         elif node.kind == "preset":
             self._browser.setHtml("<i>Loading…</i>")
             bank, preset_obj = node.payload
-            self._run(summary.summarize_preset, (bank, preset_obj), gen, self._apply_preset)
+            # The loop check is off unless the user turned it on: it reads the
+            # PCM around every loop the preset touches, which is far more work
+            # than summarising one. Config is loaded here rather than held,
+            # so toggling it in Settings takes effect on the next selection.
+            from ..config import Config
+            self._run(summary.summarize_preset,
+                      (bank, preset_obj, Config.load().loop_click_check),
+                      gen, self._apply_preset)
         elif node.kind == "xpm":
             self._browser.setHtml("<i>Loading…</i>")
             self._run(xpm_import.summarize_xpm, (str(node.payload),), gen, self._apply_xpm)
@@ -166,6 +173,11 @@ class DetailPane(QWidget):
         html = (f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br>"
                 f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
                 f"{zone_stats_lines(ps.zones)}")
+        if ps.notes:
+            import html as _html
+            html += "<br><br>" + "<br>".join(
+                f"<span style='color:#c07000'>⚠ {_html.escape(n)}</span>"
+                for n in ps.notes)
         self._browser.setHtml(html)
 
     def _apply_xpm(self, gen: int, xs: xpm_import.XpmSummary) -> None:
