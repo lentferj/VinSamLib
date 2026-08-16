@@ -114,9 +114,10 @@ mpc2emu checkout that has AKAI support.
 
 None of it is confirmed on real Akai hardware yet; see
 [Known Limitations](#akai-s1000--s3000). The format was never published
-by Akai, so every byte of it is reconstructed — this project reads nine
-real commercial library discs correctly and writes nothing a sampler has
-been asked to mount.
+by Akai, so every byte of it is reconstructed — this project reads
+**twenty real commercial library discs** (four libraries from three
+publishers, 1 835 volumes, evenly split S1000/S3000) correctly, and
+writes nothing a sampler has been asked to mount.
 
 ### Browse your whole library at once
 
@@ -1907,16 +1908,23 @@ and every row was locked. The control worked only on hand-authored banks.
 **Nothing here is confirmed on an Akai sampler.** Akai never published
 the disk or file format; it is reconstructed from Hiroyuki Ohsaki's
 binary analysis, cross-checked against `akaiutil`, and — the part that
-actually settles arguments — against **nine real commercial library
-discs**. That is what the two "verified" columns below mean and do not
-mean.
+actually settles arguments — against **twenty real commercial library
+discs**, four libraries from three publishers, evenly split between the
+S1000 and S3000 generations. That is what the ✅ column below means and
+does not mean.
+
+Four separate faults survived the "two implementations agree" stage and
+were caught only by real discs — including one that read *past* the end of
+every S1000 directory and invented files out of what followed. Two of them
+needed material that actually *uses* the feature, not more material: a
+corpus can be large and still never exercise the field you got wrong.
 
 | Feature | Status |
 |---|---|
-| Reading AKAI media | ✅ hard disk (`.hda`/`.img`), CD3000 CD-ROM (`.iso`) and 800 KB / 1.6 MB floppy, all sniffed by content since those extensions are shared with other formats. Verified against nine real library discs: 895 volumes and 24 334 files on the eight S3000 ones, every file byte-identical to what mpc2emu's independent reader gets from the same image |
-| Reading AKAI programs and samples | ✅ keygroups, velocity zones, key ranges, root notes, loops and rates, all in the Detail and Samples panes with no mpc2emu needed. 99.7 % of every zone name on those discs resolves to a sample on its own volume |
+| Reading AKAI media | ✅ hard disk (`.hda`/`.img`), CD3000 CD-ROM (`.iso`) and 800 KB / 1.6 MB floppy, all sniffed by content since those extensions are shared with other formats. Verified across **1 904 volumes and 58 716 files**, every one byte-identical to what mpc2emu's independent reader gets from the same image. One library ships a plain ISO 9660 PC disc in the same box as its sampler discs, and that one is correctly handed to the ISO 9660 reader instead — the AKAI test is tried first (an AKAI disc has no 55/AA signature and an AKAI floppy is not DOS-formatted, so neither could fall through), which is only safe because it does not over-match |
+| Reading AKAI programs and samples | ✅ keygroups, velocity zones, key ranges, root notes, loops and rates, all in the Detail and Samples panes with no mpc2emu needed. **8 226 programs** parsed, and 99.8 % of their zone names resolve to a sample on the same volume. The audio is checked too, not just the file bytes: **8 689 samples decoded and compared frame-for-frame** against mpc2emu's own reader, since the block length that decides where PCM starts differs by generation and getting it wrong is silent |
 | Converting AKAI → E4B / KRZ / EIII | ✅ via Explorer's "Import via mpc2emu…", needs an mpc2emu checkout with AKAI support |
-| Search | ✅ AKAI volumes index as banks and their programs as presets, the same shape the tree uses, so a hit resolves onto a row that exists. Only the programs are read at scan time, never sample audio — ten library discs (948 volumes, 5 581 programs, 4.8 GB) index in **1.9 s** |
+| Search | ✅ AKAI volumes index as banks and their programs as presets, the same shape the tree uses, so a hit resolves onto a row that exists. Only the programs are read at scan time, never sample audio — **1 835 volumes and 7 991 programs across 12.3 GB of media index in 3.6 s** |
 | Building a new AKAI volume | ✅ drag programs into New Bank and Save as… — writes a **folder** of `.P3`/`.S3` files, because an AKAI volume is a set of files and not one file. Sample files are copied verbatim; only a name that had to change is rewritten |
 | Writing AKAI **disk images** | ⚠️ **not offered.** mpc2emu can build them and its output is byte-identical to `akaiutil`'s, but no S3000XL has been asked to mount one. Until that happens, VinSamLib will not put media in front of you that a sampler might refuse. The New Bank folder above is the way out in the meantime |
 | Converting E4B / KRZ / EIII → AKAI | ⚠️ **not offered**, for the same reason, and gated behind its own support check so it cannot appear by accident |
