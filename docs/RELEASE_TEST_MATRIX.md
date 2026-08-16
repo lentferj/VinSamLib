@@ -611,6 +611,21 @@ A suite that prints `SKIPPED` because its material is not on the machine is
 **not** a pass — note it and find the material, or the matrix cell stays
 uncovered.
 
+**Quote a corpus pass rate as a rate with an interval, never as a tally.**
+`roundtrip_krz_corpus.py` reports 427/459. Re-running it is pointless as a
+check — the pass is deterministic, so run-to-run variation is zero. What
+actually varies is WHICH banks are in the corpus, so the honest figure comes
+from bootstrapping over corpus selection: **93.0 %, 95 % CI [90.6, 95.2]**,
+±10 banks (20 000 resamples; a normal approximation independently gives
+[90.7, 95.4]). That interval is wide enough to span several improvements that
+have been quoted this week as though they were exact.
+
+It also has to be a FIXED corpus to mean anything. The disk-image sample was
+an unsorted `glob` truncated at 150 banks, so the denominator drifted
+448 → 454 → 459 across three runs in one evening while the rate held. Sorted
+now; three consecutive runs agree exactly. A pass rate whose denominator moves
+is measuring the pipeline and the sampling at once.
+
 **Exit 77 means skipped**, distinct from 0 (passed) and 1 (failed), so a
 runner that checks the return code cannot count a skip as a pass. That is not
 hypothetical: three AKAI suites skipped for weeks while exiting 0, their cells
