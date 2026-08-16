@@ -43,7 +43,14 @@ class DetailPane(QWidget):
             self._render_kv("Directory", [("Path", node.payload)])
         elif node.kind == "volume_root":
             kind = type(node.handle).__name__ if node.handle else "Image"
-            self._render_kv(kind, [("Size", human_size(node.size)), ("Path", str(node.payload))])
+            # `note` carries an image-level caveat -- currently an AKAI disc
+            # that holds less than its own partition table declares. Shown
+            # here rather than swallowed: a half-copied disc lists its whole
+            # contents and can only deliver the start of them, so without
+            # this it looks like a smaller library rather than a broken one.
+            self._render_kv(kind, [("Size", human_size(node.size)),
+                                    ("Path", str(node.payload))],
+                             note=node.note or None)
         elif node.kind == "folder":
             self._render_kv("In-image folder", [("Name", node.label)])
         elif node.kind == "bank":

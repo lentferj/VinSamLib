@@ -350,6 +350,18 @@ def _fetch_volume_root(node: TreeNode) -> list[TreeNode]:
             node.error = "not a recognised image"
             return []
         node.handle = vol
+        # An image can be readable and still be missing most of itself -- a
+        # partially copied AKAI disc keeps its partition table and volume
+        # directories, which live at the front, so it lists its whole
+        # contents and can deliver only the beginning of them. Not an error:
+        # the files that ARE there read correctly and are worth browsing.
+        # Carried on the row so the Detail pane can say so.
+        warn = getattr(vol, "truncation_warning", None)
+        if callable(warn):
+            try:
+                node.note = warn() or ""
+            except Exception:
+                pass
     return _fetch_vfs_listing(node.handle, None, node)
 
 
