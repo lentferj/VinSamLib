@@ -140,6 +140,15 @@ def _resolve_in_image(container_path: str, result: SearchResult) -> Optional[Tre
                 return node
             current_entry = found
             node = TreeNode(chain_entry.kind, found.name, node, (vol, found), size=found.size)
+            if chain_entry.kind == "bank" and found.meta.get("akai_volume"):
+                # An AKAI bank is a whole volume, not a file to read bytes
+                # from -- see banks/akai.py. Same branch the tree takes.
+                try:
+                    node.handle = vol.volume_bank(found)
+                    node.format_label = "AKAI"
+                except Exception:
+                    pass
+                continue
             if chain_entry.kind == "bank":
                 try:
                     data = vol.read(found)
@@ -160,6 +169,12 @@ def _resolve_in_image(container_path: str, result: SearchResult) -> Optional[Tre
 def _find_preset(bank, fmt: str, native_id: Optional[str]):
     if native_id is None:
         return None
+    if fmt == "AKAI":
+        # An AKAI program has neither index nor id -- it is a file in a
+        # volume, so its filename is what identifies it. Falls back to the
+        # name for a program that reached the index without one.
+        return next((p for p in getattr(bank, "programs", [])
+                     if (p.filename or p.name) == native_id), None)
     try:
         if fmt == "E4B" or fmt == "EIII":
             idx = int(native_id)

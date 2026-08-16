@@ -226,6 +226,21 @@ _EXT_FTYPE = {ftype_to_ext(t).upper(): t
                         + [_FTYPE_CDSETUP, _FTYPE_CDSAMPLE])}
 
 
+def generation_of_ftype(ftype: Optional[int]) -> Optional[bool]:
+    """Which sampler generation a directory entry's type byte names, or None.
+
+    This is the authoritative source for the generation -- it is not in the
+    file (see BLOCK_ID_PROGRAM) -- so a caller holding a real directory entry
+    should use this rather than letting the parser infer."""
+    if ftype is None:
+        return None
+    if ftype in (FILE_TYPES["P1"], FILE_TYPES["S1"]):
+        return False
+    if ftype in (FILE_TYPES["P3"], FILE_TYPES["S3"], FILE_TYPES["M3"]):
+        return True
+    return None
+
+
 def ext_to_ftype(ext: str) -> Optional[int]:
     """The file-type byte an extension stands for, or None if it names no
     AKAI type at all. The inverse of `ftype_to_ext`, built from it so the

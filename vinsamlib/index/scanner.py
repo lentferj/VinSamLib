@@ -226,6 +226,22 @@ def _scan_image_container(path: str, volume_cls, size: int, db: IndexDB,
 def _scan_vfs_listing(vol, folder_entry, db: IndexDB, container_id: int,
                        parent_item_id: Optional[int]) -> None:
     for ordinal, e in enumerate(vol.list(folder_entry)):
+        if e.kind == EntryKind.FOLDER and e.meta.get("akai_volume"):
+            # An AKAI volume IS the bank and its programs are the presets --
+            # the same shape ui/models.py gives the tree, so a search hit
+            # resolves back onto a row that actually exists there.
+            item_id = db.add_item(container_id, parent_item_id, "bank", e.name,
+                                   native_id=e.name, format="AKAI", ordinal=ordinal)
+            try:
+                programs = vol.volume_programs(e)
+            except Exception:
+                continue
+            for i, prog in enumerate(programs):
+                db.add_item(container_id, item_id, "preset",
+                            prog.name.strip() or "(untitled)",
+                            native_id=prog.filename or prog.name,
+                            format="AKAI", ordinal=i)
+            continue
         if e.kind == EntryKind.FOLDER:
             item_id = db.add_item(container_id, parent_item_id, "folder", e.name,
                                    native_id=e.name, ordinal=ordinal)

@@ -455,6 +455,26 @@ class AkaiVolume(Volume):
         `banks.akai.parse_volume()` takes."""
         return [(e.name, self.read(e)) for e in self.list(folder)]
 
+    def volume_programs(self, folder: Entry) -> list:
+        """Just the volume's programs, without reading a byte of its samples.
+
+        For the library scanner, which wants program names and nothing else.
+        Reading whole volumes there would mean pulling every sample's PCM
+        off the disc: ten real library discs are 5.5 GB of audio against a
+        few MB of programs, and a scan that costs the former to learn the
+        latter is not a scan anyone will leave switched on."""
+        out = []
+        for e in self.list(folder):
+            if e.meta.get("role") != "program":
+                continue
+            prog = vs_akai.parse_program(
+                self.read(e), e.name,
+                s3000=vs_akai.generation_of_ftype(e.meta.get("akai_type")),
+                typed=True)
+            if prog is not None:
+                out.append(prog)
+        return out
+
     def volume_bank(self, folder: Entry) -> vs_akai.AkaiBank:
         """One volume, parsed as an `AkaiBank`."""
         return vs_akai.parse_volume(
