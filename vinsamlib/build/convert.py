@@ -40,9 +40,10 @@ from typing import Any, Callable, Optional
 
 from .. import tempdirs
 from ..filenames import safe_filename
-from ..mpc2emu_bridge import (bank_splitter, e4b_parser, e4b_writer, eiii_parser,
-                                eiii_writer, krz_parser, krz_writer, models_common,
-                                resampler, start_trim, tail_trim, zone_reducer)
+from ..mpc2emu_bridge import (akai_parser, bank_splitter, e4b_parser, e4b_writer,
+                                eiii_parser, eiii_writer, krz_parser, krz_writer,
+                                models_common, resampler, start_trim, tail_trim,
+                                zone_reducer)
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
@@ -696,10 +697,14 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
     "Import via mpc2emu..." on an individual preset or program.
 
     `bank`/`preset_obj` is a VinSamLib E4BFile/E4BPreset, KrzFile/
-    KrzObject, or EIIIFile/EIIIPreset pair (from a "preset" TreeNode's
-    payload) -- all three are real mpc2emu *input* formats now
-    (parsers.krz_parser added 2026-07-27, parsers.eiii_parser added
-    2026-07-28).
+    KrzObject, EIIIFile/EIIIPreset or AkaiBank/AkaiProgram pair (from a
+    "preset" TreeNode's payload) -- all four are real mpc2emu *input*
+    formats now (parsers.krz_parser added 2026-07-27, parsers.eiii_parser
+    2026-07-28, parsers.akai_s3000_parser 2026-08-05).
+
+    AKAI diverges here and only here; see _convert_akai_program for why a
+    format whose "bank" is a set of files cannot take the single-temp-file
+    route the other three share.
 
     Assembles a temporary single-preset/program file via VinSamLib's own
     byte-verbatim banks.e4b.assemble()/banks.krz.assemble()/
@@ -707,11 +712,14 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
     banks/summary.py's preset preview already make), then reuses
     apply_conversion() unchanged on that real file. Returns the new
     file's path."""
+    from ..banks import akai as vs_akai
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
     tmp_dir = tempdirs.session_temp_dir(_CONVERT_TEMP_PREFIX)
     stem = _sanitize_stem(getattr(preset_obj, "name", "") or "")
+    if isinstance(bank, vs_akai.AkaiBank):
+        return _convert_akai_program(bank, preset_obj, opts, tmp_dir, risks_out)
     if isinstance(bank, vs_e4b.E4BFile):
         data = vs_e4b.assemble([(bank, preset_obj)])
         tmp_path = tmp_dir / f"{stem}.e4b"
@@ -752,3 +760,80 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
     if Path(out) != tmp_path:
         tempdirs.forget(tmp_dir)
     return out
+
+
+def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
+                           tmp_dir: Path, risks_out: Optional[list]) -> str:
+    """One AKAI program -> a bank in whichever target format was chosen.
+
+    AKAI takes its own route to the same pipeline, because it is the one
+    source format here that is not a single file: a program and the samples
+    it names are separate files that resolve against each other by name
+    within one volume. So the throwaway intermediate is a temp *directory*
+    holding an assembled one-program volume, and mpc2emu reads it with the
+    sample folder pointed at that directory -- exactly how it resolves a
+    volume lifted off a disc.
+
+    Going through banks.akai.assemble() rather than handing mpc2emu the
+    original files is what makes this correct across volumes: assemble()
+    renames on a name collision and patches the zone that named it, so a
+    program whose sample shares a name with another volume's still converts
+    with its own audio.
+
+    There is no apply_conversion() equivalent -- that one starts from a bank
+    FILE on disk, and AKAI has none to sniff."""
+    ok, reason = _akai_config().check_akai_read_support()
+    if not ok:
+        raise ConvertOpError(reason)
+    if opts.target_format == "AKAI":
+        raise ConvertOpError(
+            "AKAI to AKAI is not offered: the whole pipeline runs through "
+            "mpc2emu's Bank model, which carries a fraction of what an AKAI "
+            "program file holds, so the round trip would lose parameters for "
+            "no gain. Use New Bank to collect AKAI programs verbatim instead.")
+
+    from ..banks import akai as vs_akai
+    name = getattr(program, "name", "") or "?"
+    wanted = program.sample_names
+    missing = bank.missing_samples(program)
+    if wanted and len(missing) == len(wanted):
+        # Not a broken program: an AKAI library is routinely split so that a
+        # program sits on one volume and its samples on another. Refused
+        # here, before mpc2emu is asked, and with the names in the message --
+        # that is the difference between the user knowing where to look and
+        # a bare failure.
+        raise ConvertOpError(
+            f"{name!r} names {len(missing)} sample(s) that are not on its own "
+            f"volume ({', '.join(missing[:4])}{'…' if len(missing) > 4 else ''}), "
+            f"so there is no audio to convert. AKAI libraries often keep a "
+            f"program and its samples on different volumes.")
+
+    # Samples and the program go in SEPARATE directories, and only the
+    # sample directory is handed over. mpc2emu's own lookup falls back to
+    # matching any file in that folder whose stem equals the wanted name,
+    # regardless of its type -- and a program file opens with the same
+    # header id a sample does. A program named SHEKO MUTE whose zone names
+    # the sample SHEKO MUTE (which is on another volume) therefore loads its
+    # OWN 192-byte header as audio and converts to a bank of noise, silently.
+    # That happens on a real library disc. Keeping the two apart makes it
+    # unreachable rather than relying on the fallback being fixed.
+    samples_dir = tmp_dir / "samples"
+    samples_dir.mkdir(parents=True, exist_ok=True)
+    files = vs_akai.assemble([(bank, program)])
+    program_files = [(fn, d) for fn, d in files
+                     if fn.upper().endswith((".P3", ".P1"))]
+    sample_files = [(fn, d) for fn, d in files if (fn, d) not in program_files]
+    if not program_files:
+        raise ConvertOpError(f"{name!r} produced no program file.")
+    vs_akai.write_volume(sample_files, str(samples_dir))
+    program_path = tmp_dir / program_files[0][0]
+    program_path.write_bytes(program_files[0][1])
+
+    parsed = _run_captured(akai_parser.parse_akai_program,
+                            str(program_path), str(samples_dir))
+    return _apply_and_write(parsed, opts, _sanitize_stem(name), risks_out)
+
+
+def _akai_config():
+    from ..config import Config
+    return Config.load()

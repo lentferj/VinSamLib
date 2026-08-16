@@ -233,6 +233,48 @@ class Config:
             return False, f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}"
         return True, "XPM import is available"
 
+    def check_akai_read_support(self) -> tuple[bool, str]:
+        """AKAI as a conversion SOURCE: reading an AKAI program into
+        mpc2emu's Bank model so it can be written as E4B/KRZ/EIII.
+
+        Browsing an AKAI disk needs none of this -- banks/akai.py and
+        vfs/akai.py are VinSamLib's own -- and that is deliberate, because
+        mpc2emu's AKAI support lives on an unmerged branch. A checkout of its
+        main browses AKAI media perfectly and simply cannot convert it, which
+        is a far better failure than an Explorer whose AKAI rows come and go
+        with the configured checkout's branch."""
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        marker = self.mpc2emu_path / "parsers" / "akai_s3000_parser.py"
+        if not marker.exists():
+            return False, (
+                "this mpc2emu checkout has no AKAI support "
+                f"({marker.relative_to(self.mpc2emu_path)} is missing). "
+                "Browsing AKAI discs works regardless; converting them needs "
+                "a checkout that has it.")
+        return True, "Converting AKAI programs is available"
+
+    def check_akai_write_support(self) -> tuple[bool, str]:
+        """AKAI as a conversion TARGET, and building AKAI media.
+
+        Separate from reading on purpose. Reading an AKAI disc you own can
+        only ever produce an E4B/KRZ/EIII bank, so a mistake there costs a
+        conversion. Writing produces media a sampler is asked to mount, and
+        the AKAI format was never published by Akai -- every byte of it is
+        reconstructed. That asymmetry is why the two are gated apart."""
+        ok, reason = self.check_akai_read_support()
+        if not ok:
+            return False, reason
+        required = [
+            Path("writers") / "akai_s3000_writer.py",
+            Path("writers") / "akai_s3000_image.py",
+        ]
+        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        if missing:
+            return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
+        return True, "Writing AKAI programs and media is available"
+
     def check_sample_dir_import_support(self) -> tuple[bool, str]:
         """Sample-folder import (build/sampledir_import.py) needs mpc2emu's
         own WAV-folder-to-preset parser specifically -- a checkout could

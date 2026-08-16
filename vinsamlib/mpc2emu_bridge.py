@@ -89,6 +89,14 @@ fat12 = _Lazy("writers.fat12")
 fat16 = _Lazy("writers.fat16")
 fat32 = _Lazy("writers.fat32")
 bank_splitter = _Lazy("writers.bank_splitter")
+# AKAI S1000/S3000. Only needed to CONVERT: browsing an AKAI disk and
+# assembling volumes from it are VinSamLib's own (banks/akai.py, vfs/akai.py),
+# which is what keeps those working against an mpc2emu checkout that has no
+# AKAI support at all -- as its main branch does not. Config.check_akai_*
+# gate every use of these.
+akai_parser = _Lazy("parsers.akai_s3000_parser")
+akai_writer = _Lazy("writers.akai_s3000_writer")
+akai_image = _Lazy("writers.akai_s3000_image")
 
 
 def mpc2emu_root() -> Path:
