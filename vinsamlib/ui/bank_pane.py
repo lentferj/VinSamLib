@@ -264,6 +264,18 @@ class BankPane(QWidget):
         if not self._save_btn.isEnabled():
             self.statusMessage.emit("Can't send an over-limit bank — remove some presets first")
             return
+        if self._format == "AKAI":
+            # Refused here rather than at build time. Pending for Image ends
+            # in an AKAI disk image, and writing AKAI media is deliberately
+            # withheld until an S3000XL has mounted one -- so a queue built
+            # from these would fill up and then fail on the last step, which
+            # is the worst moment to learn it. "Save as…" writes the volume
+            # as a folder in the meantime.
+            self.statusMessage.emit(
+                "AKAI can't go to the Image column yet — writing AKAI media "
+                "is unverified on hardware. Use Save as… to write the volume "
+                "as a folder.")
+            return
         name = _sanitize_bank_name(self._name_edit.text())
         # The renames travel WITH the recipe. Pending re-assembles from
         # (bank, preset) pairs rather than from the bytes this pane already
