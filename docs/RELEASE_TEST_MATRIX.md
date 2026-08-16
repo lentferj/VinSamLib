@@ -611,6 +611,23 @@ A suite that prints `SKIPPED` because its material is not on the machine is
 **not** a pass — note it and find the material, or the matrix cell stays
 uncovered.
 
+**Exit 77 means skipped**, distinct from 0 (passed) and 1 (failed), so a
+runner that checks the return code cannot count a skip as a pass. That is not
+hypothetical: three AKAI suites skipped for weeks while exiting 0, their cells
+read as covered, and the day the environment changed and they finally ran, one
+failed immediately on a three-value unpack of a six-value signal that had been
+stale the whole time. **A skip that reads as a pass is worse than a missing
+test, because it is counted.**
+
+The same corrosion arrives from the other side, and both were fixed together:
+**a test that FAILS for a reason that is not a defect.** The eight AKAI suites
+import `vinsamlib/banks/akai.py`, which exists only on `feat/akai-s3000xl`, so
+on master they died with `ImportError` and a release run showed eight failures
+that meant nothing. Noise gets silenced, and silenced is how a real skip
+becomes invisible. `tests/_skip.py`'s `require_akai()` turns that into an
+honest "could not check" — verified in both directions: rc 0 and running on
+the branch, rc 77 with a reason on master.
+
 ## Assert the content, not the arrival
 
 The single most valuable thing this matrix turned up was not a missing cell.
