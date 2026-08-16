@@ -44,7 +44,7 @@ from . import dnd, workers
 from .detail_pane import _escape, zone_stats_lines
 from .sample_placement_dialog import SamplePlacementDialog, vel_window
 from .sample_rename_dialog import SampleRenameDialog
-from ..banks import e4b, eiii, krz, summary
+from ..banks import akai, e4b, eiii, krz, summary
 from ..filenames import safe_filename
 from ..config import Config
 
@@ -67,7 +67,14 @@ _EIII_MAX_PRESETS = 256   # EMULATOR_3X/ESI_32_V3 -- the tighter of the two
                            # with several linked layers can use more than
                            # one slot), this is just the meter's proxy.
 
-_ASSEMBLE_FNS = {"E4B": e4b.assemble, "KRZ": krz.assemble, "EIII": eiii.assemble}
+#: An AKAI volume holds at most this many FILES, and samples and programs
+#: share the budget (banks/akai.py's MAX_FILES_PER_VOLUME) -- unlike every
+#: other format here, where the ceiling counts presets alone. So the meter
+#: counts files, not presets: 200 one-sample programs is 400 files, not 200.
+_AKAI_MAX_FILES = akai.MAX_FILES_PER_VOLUME
+
+_ASSEMBLE_FNS = {"E4B": e4b.assemble, "KRZ": krz.assemble, "EIII": eiii.assemble,
+                 "AKAI": akai.assemble}
 _FORMAT_EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
 _DEFAULT_BANK_NAME = "NewBank"
 
@@ -1105,12 +1112,20 @@ class BankPane(QWidget):
         fn = _ASSEMBLE_FNS[self._format]
         if self._format == "EIII":
             fn = functools.partial(fn, bank_name=_sanitize_bank_name(self._name_edit.text()))
+        elif self._format == "AKAI":
+            # An AKAI program carries a real 12-character name field, like an
+            # EIII bank does -- but per PROGRAM, so the typed name is only
+            # applied when there is exactly one and it cannot be ambiguous
+            # (banks/akai.py's assemble() enforces that itself).
+            fn = functools.partial(
+                fn, volume_name=_sanitize_bank_name(self._name_edit.text()))
         # Bound the same way as bank_name, so the meter, Save as… and Send to
         # Image all assemble the identical bytes -- a rename visible only in
         # one of the three would be worse than no rename at all. Only for the
         # formats whose assemble() accepts it; _sync_rename_button keeps the
-        # dict empty for the others, but binding an argument KRZ's assemble()
-        # does not take would be a TypeError rather than a no-op.
+        # dict empty for the others, and AKAI is absent from _RENAMEABLE too --
+        # binding an argument its assemble() does not take would be a
+        # TypeError rather than a no-op.
         if self._sample_renames and self._format in self._RENAMEABLE:
             fn = functools.partial(fn, sample_names=dict(self._sample_renames))
         # Same binding rule as the renames: bound here so the meter, Save as…
@@ -1126,6 +1141,9 @@ class BankPane(QWidget):
             return
         self._last_bytes = data
         n = len(self._items)
+        if self._format == "AKAI":
+            self._apply_size_akai(gen, data, n)
+            return
         if self._format == "E4B":
             limit_bytes = self._config.e4b_bank_limit_mb * 1024 * 1024
             self._meter_label.setText(
@@ -1201,6 +1219,37 @@ class BankPane(QWidget):
         self._save_btn.setEnabled(not over)
         self._maybe_warn_over_limit(over, detail)
 
+    def _apply_size_akai(self, gen: int, files: list, n: int) -> None:
+        """The meter for a format whose assemble() returns a LIST OF FILES.
+
+        Two things differ from the other three, both because an AKAI bank is
+        a volume rather than a file. The size is the total across the files,
+        and the count that can overflow is FILES -- samples and programs
+        share one 510-entry volume directory, so 200 one-sample programs is
+        400 entries, not 200. Counting presets would let a bank through that
+        the volume then cannot hold.
+
+        The soft RAM threshold is the K2000 spinbox's: the S3000XL maxes out
+        at 32 MB, the same figure that setting defaults to, and adding a
+        third near-identical Settings row for one more sampler with the same
+        answer would be noise. Same reasoning as EIII borrowing the E4XT's.
+        """
+        total = sum(len(d) for _fn, d in files)
+        limit_bytes = self._config.krz_bank_limit_mb * 1024 * 1024
+        self._meter_label.setText(
+            f"{n} program(s), {len(files)} file(s) — "
+            f"{_human(total)} / {_human(limit_bytes)}")
+        over = total > limit_bytes or len(files) > _AKAI_MAX_FILES
+        detail = (f"{len(files)} files exceed the {_AKAI_MAX_FILES}-entry AKAI "
+                  f"volume directory (samples and programs share it)."
+                  if len(files) > _AKAI_MAX_FILES else
+                  f"{_human(total)} exceeds your configured {_human(limit_bytes)} "
+                  f"sampler RAM limit (Settings…).")
+        self._meter_label.setStyleSheet(
+            f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;")
+        self._save_btn.setEnabled(not over)
+        self._maybe_warn_over_limit(over, detail)
+
     def _apply_size_error(self, gen: int, message: str) -> None:
         if gen != self._gen:
             return
@@ -1269,6 +1318,10 @@ class BankPane(QWidget):
             self.statusMessage.emit(f"Save failed: {ex}")
             return
 
+        if self._format == "AKAI":
+            self._save_akai_volume(data)
+            return
+
         ext = _FORMAT_EXT[self._format]
         name = _sanitize_bank_name(self._name_edit.text())
         path, _filter = QFileDialog.getSaveFileName(
@@ -1283,12 +1336,52 @@ class BankPane(QWidget):
             return
         self.statusMessage.emit(f"Saved {path}")
 
+    def _save_akai_volume(self, files: list) -> None:
+        """AKAI saves a FOLDER, because an AKAI volume is a set of files.
+
+        Asking for a save *filename* would be a lie for this format -- there
+        is no single file to name. The folder is the volume: hand it to
+        `--from-samples`-style tooling, copy it onto media, or point the
+        Image column at it. The sampler's own extensions (.S3/.P3) are not
+        decoration and are kept exactly as assembled: the directory-entry
+        type byte is derived from them, so a file that loses its extension
+        cannot be placed on AKAI media at all.
+        """
+        name = _sanitize_bank_name(self._name_edit.text())
+        directory = QFileDialog.getExistingDirectory(
+            self, "Save AKAI volume into folder", "",
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontUseNativeDialog)
+        if not directory:
+            return
+        target = Path(directory) / name
+        if target.exists() and any(target.iterdir()):
+            if QMessageBox.question(
+                    self, "Save AKAI volume",
+                    f"{target} already exists and is not empty.\n\n"
+                    f"Write {len(files)} file(s) into it anyway? Files with "
+                    f"the same names will be replaced.") != \
+                    QMessageBox.StandardButton.Yes:
+                return
+        try:
+            written = akai.write_volume(files, str(target))
+        except OSError as ex:
+            self.statusMessage.emit(f"Save failed: {ex}")
+            return
+        self.statusMessage.emit(f"Saved {len(written)} file(s) into {target}")
+
 
 def _preset_key(bank: Any, preset_obj: Any, fmt: Optional[str]) -> tuple:
     """A duplicate-detection key that survives re-parsing the same bank
     file (bank.path is the label parse_bytes() was called with; presets
     carry their own stable index/id within that file)."""
     path = getattr(bank, "path", None)
+    if fmt == "AKAI":
+        # An AKAI program has neither an index nor an id -- it is a FILE in a
+        # volume, so its filename is the stable identity. Two volumes on one
+        # disc may each hold a MELLOW.P3 and they are different programs;
+        # bank.path already carries the volume ("<image>:A/NAME").
+        return ("AKAI", path, getattr(preset_obj, "filename", None)
+                or getattr(preset_obj, "name", None))
     if fmt == "KRZ":
         return ("KRZ", path, getattr(preset_obj, "id", None))
     if fmt == "EIII":

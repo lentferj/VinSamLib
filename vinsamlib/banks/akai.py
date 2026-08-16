@@ -98,11 +98,34 @@ _AKAI_SPACE = _AKAI_REVERSE[" "]
 NAME_LEN = 12
 
 SAMPLE_HDR = 0xC0
+
+#: Program block sizes **by sampler generation**. The S3000 program is an
+#: extension of the S1000 one, and "extension" is literal: the S3000 appends
+#: 42 bytes to each block, so its common block and keygroups are 0xC0 where
+#: the S1000's are 0x96.
+#:
+#: Measured, not assumed. On a third-party S1000 library disc, 93 of 93
+#: programs satisfy `len(file) == 0x96 + keygroup_count * 0x96` exactly, and
+#: none fits the S3000 shape. Using 0xC0 for both puts keygroup 0 at byte 192
+#: of a program whose first keygroup starts at 150, so every zone name after
+#: that reads out of the middle of something else -- names like `002.5##00.00`
+#: and `.0...1`, of which only 19% happened to match a real sample. With the
+#: right sizes it is 99%+, in line with the S3000 discs.
+PROGRAM_COMMON_BY_GEN = {1: 0x96, 3: 0xC0}
+KEYGROUP_LEN_BY_GEN = {1: 0x96, 3: 0xC0}
+
+#: The S3000 sizes, kept under the old names for readers that only ever deal
+#: with S3000 material.
 PROGRAM_COMMON = 0xC0
 KEYGROUP_LEN = 0xC0
 
 #: Velocity-zone offsets within a keygroup: a **uniform 0x18 stride**, which
-#: is 12 name bytes plus a 12-byte parameter record.
+#: is 12 name bytes plus a 12-byte parameter record. The same for both
+#: generations -- the S3000's extra 42 bytes go after the zones, which is
+#: what makes it an extension rather than a different layout. Confirmed on
+#: the S1000 disc: sliding a 12-byte window across every keygroup, 0x22
+#: names a real sample in 1 667 of 1 669 keygroups and 0x3a in 13%, with
+#: nothing anywhere else.
 #:
 #: The primary spec lists the third one as 0x53, making the deltas
 #: 0x18/0x19/0x17, and both implementations built on it copied that. It is
@@ -416,20 +439,25 @@ def _parse_zone(body: bytes, base: int) -> Optional[AkaiZone]:
 
 def parse_program(data: bytes, filename: str = "") -> Optional[AkaiProgram]:
     """One AKAI program file -> AkaiProgram, or None if it is not one."""
-    if len(data) < PROGRAM_COMMON or data[0x00] not in (HDR_ID_S1000, HDR_ID_S3000):
+    gen = data[0x00] if data else 0
+    if gen not in (HDR_ID_S1000, HDR_ID_S3000):
+        return None
+    common = PROGRAM_COMMON_BY_GEN[gen]
+    kg_len = KEYGROUP_LEN_BY_GEN[gen]
+    if len(data) < common:
         return None
 
     n_kg = data[0x2A]
     # A corrupt or misidentified file can claim keygroups it does not carry;
     # believe the file length over the header, same as mpc2emu's reader.
-    available = (len(data) - PROGRAM_COMMON) // KEYGROUP_LEN
+    available = (len(data) - common) // kg_len
     if n_kg < 1 or n_kg > available:
         n_kg = available
 
     keygroups: list[AkaiKeygroup] = []
     for i in range(n_kg):
-        off = PROGRAM_COMMON + i * KEYGROUP_LEN
-        if off + KEYGROUP_LEN > len(data):
+        off = common + i * kg_len
+        if off + kg_len > len(data):
             break
         zones = [z for z in (_parse_zone(data, off + b) for b in ZONE_OFFSETS) if z]
         if not zones:

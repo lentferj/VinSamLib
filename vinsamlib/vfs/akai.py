@@ -58,6 +58,7 @@ HD_BLOCK = 0x2000                   # 8 KB
 FL_BLOCK = 0x0400                   # 1 KB
 
 PARTHEAD_BLKS = 3
+VOLDIR_HD_BLKS = 2
 VOLDIR_FL_BLKS = 12
 FLL_HEAD_BLKS = 4                    # low-density floppy header
 FLH_HEAD_BLKS = 5                    # high-density floppy header
@@ -89,6 +90,22 @@ VOL_TYPE_INACTIVE = 0x00
 VOL_TYPE_S1000 = 0x01
 VOL_TYPE_S3000 = 0x03
 VOL_TYPE_CD3000 = 0x07
+
+#: Volume-directory shape by volume type: (blocks, entries). An S1000
+#: volume's directory is ONE block of 126 entries, not the S3000's two of
+#: 510, and the FAT cannot substitute for knowing that: an S1000 hard disk
+#: terminates its directory chain with 0x4000, the very value the S3000 uses
+#: for "reserved for system", so a chain-only walk cannot tell them apart.
+#: Reading an S1000 volume with the S3000 shape walks past the directory and
+#: invents files out of whatever follows -- on a third-party S1000 library
+#: disc that turned 1 799 real files into 2 606, the surplus carrying type
+#: bytes that map to nothing.
+_VOLDIR_LAYOUT = {
+    VOL_TYPE_S1000: (1, 126),
+    VOL_TYPE_S3000: (VOLDIR_HD_BLKS, 510),
+    VOL_TYPE_CD3000: (VOLDIR_HD_BLKS, 510),
+}
+_VOLDIR_DEFAULT = (VOLDIR_HD_BLKS, 510)
 
 #: CD3000 file index: the three blocks right after the partition header.
 CDINFO_BLK = PARTHEAD_BLKS
@@ -332,7 +349,11 @@ class AkaiVolume(Volume):
             is_cdrom=False, has_cdinfo=False,
         )]
 
-    def _volume_dir(self, part: dict, vol: dict) -> bytes:
+    def _volume_dir(self, part: dict, vol: dict) -> tuple[bytes, int]:
+        """One volume's directory bytes, and how many entries it may hold.
+
+        The chain says WHERE the directory lives; the volume's type says how
+        BIG it is, and both are needed -- see _VOLDIR_LAYOUT."""
         block = part["block"]
         fixed = vol.get("dir_blocks")
         if fixed:
@@ -340,10 +361,12 @@ class AkaiVolume(Volume):
             # than a FAT chain: its blocks are marked reserved, so chaining
             # would stop after the first one.
             blocks = list(range(vol["start"], vol["start"] + fixed))
+            max_entries = 510
         else:
+            dir_blks, max_entries = _VOLDIR_LAYOUT.get(vol["vtype"], _VOLDIR_DEFAULT)
             blocks = _chain(part["fat"], vol["start"], part["nblocks"],
-                            (FAT_DIREND, FAT_FILEEND))
-        return self._read_blocks(part["base"], blocks, block)
+                            (FAT_DIREND, FAT_FILEEND))[:dir_blks]
+        return self._read_blocks(part["base"], blocks, block), max_entries
 
     def _read_blocks(self, base: int, blocks: list[int], block: int) -> bytes:
         out = bytearray()
@@ -389,12 +412,12 @@ class AkaiVolume(Volume):
 
     def _list_files(self, part: dict, vol: dict) -> list[Entry]:
         try:
-            dirbytes = self._volume_dir(part, vol)
+            dirbytes, max_entries = self._volume_dir(part, vol)
         except AkaiImageError:
             return []
         block, base, nblocks = part["block"], part["base"], part["nblocks"]
         out: list[Entry] = []
-        for i in range(min(VOLDIR_ENTRIES, len(dirbytes) // 24)):
+        for i in range(min(max_entries, len(dirbytes) // 24)):
             e = dirbytes[24 * i:24 * i + 24]
             ftype = e[16]
             if ftype in (0x00, _FL_S3000_FLAG_TYPE):
