@@ -831,7 +831,80 @@ def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
 
     parsed = _run_captured(akai_parser.parse_akai_program,
                             str(program_path), str(samples_dir))
+    _widen_akai_pan(parsed)
     return _apply_and_write(parsed, opts, _sanitize_stem(name), risks_out)
+
+
+#: Cached result of the pan probe below -- None until first asked.
+_AKAI_PAN_NEEDS_WIDENING: Optional[bool] = None
+
+
+def _akai_pan_needs_widening() -> bool:
+    """Whether mpc2emu's AKAI reader maps pan at HALF width, measured rather
+    than assumed.
+
+    An AKAI zone's pan field runs -50..+50, and those ends are hard left and
+    hard right -- 39 718 zones across nine real library discs are bounded by
+    exactly that, none outside it, with +-50 the two commonest non-centre
+    values (17 760 zones, the hard-panned halves of stereo pairs). mpc2emu's
+    reader divides by 200 instead of 100, so -50 arrives as 0.25 rather than
+    0.0: every hard-panned zone converts at half width. Its own *writer*
+    disagrees with it -- that one maps 0.0 to -50 -- so an E4B pan does not
+    survive a round trip either.
+
+    Probed by behaviour, not by version, so this correction disappears by
+    itself the moment upstream fixes the reader: a one-zone program with a
+    hard-left pan is built and read back, and the correction applies only if
+    what comes back is half of what went in. Any failure to probe answers
+    False -- doing nothing is the safe direction, since a wrong correction
+    would be as bad as the fault.
+    """
+    global _AKAI_PAN_NEEDS_WIDENING
+    if _AKAI_PAN_NEEDS_WIDENING is not None:
+        return _AKAI_PAN_NEEDS_WIDENING
+    _AKAI_PAN_NEEDS_WIDENING = False
+    try:
+        from ..banks import akai as vs_akai
+        body = bytearray(vs_akai.S3000_BLOCK_LEN * 2)
+        body[0x00] = vs_akai.BLOCK_ID_PROGRAM
+        body[0x2A] = 1                                  # one keygroup
+        kg = vs_akai.S3000_BLOCK_LEN
+        body[kg + 0x03], body[kg + 0x04] = 36, 96       # key range
+        z = kg + vs_akai.ZONE_OFFSETS[0]
+        body[z:z + vs_akai.NAME_LEN] = vs_akai.str_to_akai("PROBE")
+        body[z + 0x0C], body[z + 0x0D] = 0, 127         # velocity range
+        body[z + 0x12] = (-50) & 0xFF                   # hard left
+        prog = akai_parser.parse_program_bytes(bytes(body), fallback_name="PROBE")
+        if not prog or not prog["keygroups"]:
+            return False
+        pan = prog["keygroups"][0]["zones"][0]["pan"]
+        if pan != -50:
+            return False              # the field itself is read differently
+        # models.common's 0..1 pan, as build_preset_from_program computes it.
+        as_unit = 0.5 + (pan / 100.0) / 2.0
+        _AKAI_PAN_NEEDS_WIDENING = abs(as_unit - 0.25) < 1e-6
+    except Exception:
+        _AKAI_PAN_NEEDS_WIDENING = False
+    return _AKAI_PAN_NEEDS_WIDENING
+
+
+def _widen_akai_pan(bank: Any) -> int:
+    """Restore full-width pan on a bank read from AKAI, if the reader halved
+    it (see _akai_pan_needs_widening). Doubles each zone's deviation from
+    centre, which is exactly the missing factor -- 0.25 becomes 0.0 and 0.75
+    becomes 1.0, while a centred zone does not move. Returns zones touched."""
+    if not _akai_pan_needs_widening():
+        return 0
+    n = 0
+    for preset in bank.presets:
+        for voice in preset.voices:
+            for zone in voice.zones:
+                pan = getattr(zone, "pan", 0.5)
+                if abs(pan - 0.5) < 1e-6:
+                    continue
+                zone.pan = max(0.0, min(1.0, 0.5 + (pan - 0.5) * 2.0))
+                n += 1
+    return n
 
 
 def _akai_config():
