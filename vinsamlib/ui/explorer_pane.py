@@ -34,8 +34,11 @@ def _format_filters() -> list[str]:
     Five separate entries rather than one grouped chip: unlike the MPC's
     three containers for a single keygroup program, these are five unrelated
     ecosystems, and someone hunting a SoundFont is not hunting an EXS24.
+
+    AKAI is unconditional: its reader is this project's own, so those rows
+    exist with or without mpc2emu -- only CONVERTING one needs it.
     """
-    entries = ["All", "E4B", "KRZ", "EIII", MPC_FILTER]
+    entries = ["All", "E4B", "KRZ", "EIII", "AKAI", MPC_FILTER]
     if foreign_import.available():
         entries.extend(foreign_import.FORMAT_FILTERS)
     return entries

@@ -82,21 +82,48 @@ and **FAT12/16/32** floppies/discs/HDs (K2000 Gotek floppies, EOS FAT
 reader against the public FAT spec — no mpc2emu involved even to read.
 EIII sits between the two: `banks/eiii.py` *reads* EIII/ESI banks with
 no mpc2emu at all, but assembling one needs mpc2emu for the empty-bank
-skeleton it reuses. What genuinely needs mpc2emu: **creating or
+skeleton it reuses. **Akai S1000/S3000** is fully self-contained on the
+read and assemble side — browsing a sampler disc, listing its volumes
+and programs, and building a new AKAI volume in New Bank all work with
+no mpc2emu; only *converting* an AKAI program to another format does,
+and only then. What genuinely needs mpc2emu: **creating or
 appending to any disk image** (every image kind's writer lives there,
 E4B/EIII and KRZ alike), **E4B/EIII** preset-level zone/velocity/
 bit-depth detail in the Detail pane (KRZ's own detail view is
 self-contained), building an EIII bank at all, XPM import, sample-folder
 import, **browsing or importing the soft-sampler formats (SF2, SFZ,
 EXS24, TAL-Sampler, GIG) — without mpc2emu those do not appear in the
-Explorer at all**, and vintage conversion. Settings shows exactly which of
-these is unavailable and why if mpc2emu isn't configured.
+Explorer at all**, converting an AKAI program, and vintage conversion.
+Settings shows exactly which of these is unavailable and why if mpc2emu
+isn't configured.
+
+### Browse an Akai S1000/S3000 library
+
+Point VinSamLib at an Akai sampler disc — a SCSI/ZuluSCSI hard disk
+(`.hda`/`.img`), a CD3000 CD-ROM (`.iso`), or an 800 KB / 1.6 MB AKAI
+floppy — and every volume on it lists as a bank, with its programs as
+presets, keygroups and velocity zones in the Detail pane, and its
+samples in the Samples pane. A folder of loose `.P3`/`.S3` files reads
+the same way. Programs convert to **E4B, KRZ or EIII** through
+Explorer's "Import via mpc2emu…", and can be dragged into New Bank to
+build a new AKAI volume.
+
+Reading needs **no mpc2emu at all** — `banks/akai.py` and `vfs/akai.py`
+are VinSamLib's own, like the E4B and KRZ readers. Converting needs an
+mpc2emu checkout that has AKAI support.
+
+None of it is confirmed on real Akai hardware yet; see
+[Known Limitations](#akai-s1000--s3000). The format was never published
+by Akai, so every byte of it is reconstructed — this project reads nine
+real commercial library discs correctly and writes nothing a sampler has
+been asked to mount.
 
 ### Browse your whole library at once
 
 Point VinSamLib at any number of folders — loose `.e4b`/`.KRZ` files,
 EMU3 CD/HD images, ISO 9660 discs, FAT12/16/32 floppy or hard-disk
-images, folders of Akai MPC programs and projects — and it lazily walks
+images, Akai sampler discs, folders of Akai MPC programs and projects —
+and it lazily walks
 the tree, showing banks, discs, folders, presets, and programs in one
 unified Explorer. A background scanner indexes
 everything into a local search database, so typing in the search box
@@ -435,7 +462,7 @@ you type. Search is **word-prefix matching**: each space-separated word
 you type must *start* a word somewhere in the item's name, and multiple
 words are AND-ed together (so `bass str` matches "Bassoon Strings" but
 not "Bassoon Trumpet"). The format dropdown next to the search box
-(`All`/`E4B`/`KRZ`/`EIII`/`MPC`, plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`
+(`All`/`E4B`/`KRZ`/`EIII`/`AKAI`/`MPC`, plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`
 when mpc2emu is available) filters both the live tree and search results
 to just that format. `MPC` covers all three Akai containers at once —
 `.xpm` programs, `.xty` tracks and `.xpj` projects — because they are
@@ -454,7 +481,7 @@ Right-click (or double-click) behavior depends on what you've selected:
 
 | Item | Double-click | Right-click menu |
 |---|---|---|
-| Preset/program (one or many selected) | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B, KRZ or EIII) — both work on a multi-selection |
+| Preset/program (one or many selected) | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B, KRZ, EIII or AKAI) — both work on a multi-selection |
 | `.xpm` program or `.xty` track | Import (opens the conversion dialog) | "Import …" |
 | `.xpj` project | Expand into its programs | "Import all programs of …" |
 | One program inside a project | Import (opens the conversion dialog) | "Import …" |
@@ -562,8 +589,8 @@ most rows — it is not a defect, and nothing is lost.
 
 ![New Bank column with three presets added and the selection info panel showing a condensed summary](docs/screenshots/02_new_bank.png)
 
-The first preset you add locks the whole bank's format — E4B, KRZ or
-EIII — shown right in the column header (`New Bank [E4B]`); a later drop
+The first preset you add locks the whole bank's format — E4B, KRZ, EIII
+or AKAI — shown right in the column header (`New Bank [E4B]`); a later drop
 of a *different* format is rejected with a status message, matching mpc2emu's own
 "no cross-format conversion in one step" rule (that's what "Import via
 mpc2emu" is for).
@@ -599,6 +626,13 @@ For KRZ it also reports two things the byte count says nothing about:
   built from them), but the K2000 resolves each one at load: measured at
   ~0.37 s apiece, so a bank making 1748 of them takes about eleven
   minutes. Shown, never blocking.
+
+**AKAI counts files, not presets** — `3 program(s), 9 file(s)`. An AKAI
+volume directory holds 510 entries and samples and programs *share*
+them, so 200 one-sample programs is 400 entries, not 200; counting
+presets would let through a volume that then cannot hold itself. Its
+soft RAM threshold is the K2000 spinbox in Settings, since an S3000XL
+tops out at the same 32 MB that setting already defaults to.
 
 **Adding a preset that pushes you over the limit** shows a warning
 dialog with two choices: **Keep Anyway** (leave the new item in place,
@@ -694,7 +728,12 @@ zone. Both are their own piece of work.
 > here and verified against the corpus, but not on hardware. See
 > [Known Limitations](#️-editing-where-a-sample-plays--placement-and-velocity--experimental-not-hardware-confirmed).
 
-**Save as…** writes the exact assembled bytes to a file you choose.
+**Save as…** writes the exact assembled bytes to a file you choose —
+except for **AKAI**, where it asks for a *folder* instead and writes the
+volume's `.P3`/`.S3` files into a subfolder named after the bank. There
+is no single file to name for that format, and the extensions are not
+decoration: an AKAI directory entry's type byte is derived from them, so
+a file that loses its extension cannot be placed on media at all.
 **Send to Image Column** hands the current (bank, preset list, name)
 recipe to **Pending for Image** — the recipe stays editable there, it
 isn't a frozen copy.
@@ -1141,8 +1180,11 @@ their samples instead of silently producing an empty bank.
 ### "Import via mpc2emu"
 
 Generalizes MPC import's exact same pipeline to a preset or program you
-already have natively in your library — E4B, KRZ or EIII, any of the
-three can be the source and any can be the target: right-click it,
+already have natively in your library — E4B, KRZ, EIII or **AKAI**.
+Any of the first three can be the source and any can be the target;
+AKAI is source-only for now (see
+[Known Limitations](#akai-s1000--s3000) for why nothing writes AKAI
+media yet). Right-click it,
 choose options, and get a converted copy in New Bank — without exporting
 anything or leaving the app. This covers exactly the cases a plain "Add"
 can't: converting to a *different* format (source format ≠ New Bank's
@@ -1860,6 +1902,28 @@ practice: mpc2emu's writer emits one voice per window, so an imported folder
 is a *single* voice holding every zone — 156 of them in one measured case —
 and every row was locked. The control worked only on hand-authored banks.
 
+### Akai S1000 / S3000
+
+**Nothing here is confirmed on an Akai sampler.** Akai never published
+the disk or file format; it is reconstructed from Hiroyuki Ohsaki's
+binary analysis, cross-checked against `akaiutil`, and — the part that
+actually settles arguments — against **nine real commercial library
+discs**. That is what the two "verified" columns below mean and do not
+mean.
+
+| Feature | Status |
+|---|---|
+| Reading AKAI media | ✅ hard disk (`.hda`/`.img`), CD3000 CD-ROM (`.iso`) and 800 KB / 1.6 MB floppy, all sniffed by content since those extensions are shared with other formats. Verified against nine real library discs: 895 volumes and 24 334 files on the eight S3000 ones, every file byte-identical to what mpc2emu's independent reader gets from the same image |
+| Reading AKAI programs and samples | ✅ keygroups, velocity zones, key ranges, root notes, loops and rates, all in the Detail and Samples panes with no mpc2emu needed. 99.7 % of every zone name on those discs resolves to a sample on its own volume |
+| Converting AKAI → E4B / KRZ / EIII | ✅ via Explorer's "Import via mpc2emu…", needs an mpc2emu checkout with AKAI support |
+| Building a new AKAI volume | ✅ drag programs into New Bank and Save as… — writes a **folder** of `.P3`/`.S3` files, because an AKAI volume is a set of files and not one file. Sample files are copied verbatim; only a name that had to change is rewritten |
+| Writing AKAI **disk images** | ⚠️ **not offered.** mpc2emu can build them and its output is byte-identical to `akaiutil`'s, but no S3000XL has been asked to mount one. Until that happens, VinSamLib will not put media in front of you that a sampler might refuse. The New Bank folder above is the way out in the meantime |
+| Converting E4B / KRZ / EIII → AKAI | ⚠️ **not offered**, for the same reason, and gated behind its own support check so it cannot appear by accident |
+| AKAI → AKAI | ⚠️ refused on purpose. The pipeline runs through mpc2emu's `Bank` model, which carries a fraction of what an AKAI program file holds (per-keygroup filter and amplitude envelopes, LFO routing, modulation depths), so the round trip would quietly flatten them. New Bank collects AKAI programs **verbatim** instead, which is what a librarian should do |
+| A program whose samples are on another volume | ℹ️ normal, not broken — AKAI libraries were routinely shipped that way. The Detail pane shows the zones regardless, and a conversion is refused with the missing names in the message rather than silently producing a bank of nothing |
+| Stereo samples | ⚠️ AKAI stores one channel per file and pairs halves by a `-L`/`-R` **name suffix**, not by a header flag. Nothing here pairs them automatically, so a stereo sample browses as two mono ones |
+| Names are 12 characters | ℹ️ four fewer than every other format here, and unique only **within one volume** — two volumes may each hold their own `BASS`. Building a volume from several sources renames on collision and patches the zone that named it, so no program ends up sounding another volume's namesake |
+
 ### EIII / ESI-32
 
 | Feature | Status |
@@ -1923,6 +1987,7 @@ vinsamlib/
 │   ├── e4b.py                  # Byte-verbatim E4B container reader/assembler
 │   ├── krz.py                  # Byte-verbatim KRZ container reader/assembler
 │   ├── eiii.py                 # Byte-verbatim EIII/ESI container reader/assembler
+│   ├── akai.py                 # Byte-verbatim AKAI S1000/S3000 volume reader/assembler
 │   └── summary.py              # Zone/velocity/bit-depth/sample-rate summaries for the UI
 ├── build/
 │   ├── convert.py              # mpc2emu resample/reduce wrapper (ConversionOptions)
@@ -1934,6 +1999,7 @@ vinsamlib/
 │   ├── emu3.py                 # EMU3 filesystem (E4XT CD/HD images)
 │   ├── fatvol.py               # FAT12/16/32 (K2000 floppy/HD images)
 │   ├── iso9660.py               # Standard ISO 9660 (K2000 CD images)
+│   ├── akai.py                  # AKAI S1000/S3000 hard disk, CD3000 CD-ROM and floppy
 │   ├── localdir.py              # A plain directory, behind the same protocol
 │   └── detect.py               # Format sniffing/dispatch
 ├── index/
