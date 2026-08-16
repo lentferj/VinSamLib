@@ -509,6 +509,17 @@ class KrzFile:
     path: str
     rest: tuple            # header rest[0..5]; rest[2] = software version (KRZ_SOFTWARE_VERSION)
     osize: int
+    #: Keyed by ID ALONE — and that is safe only because each dict holds
+    #: exactly ONE type. `parse_bytes` routes by `type_code` before inserting,
+    #: so a sample 200 and a keymap 200 land in different dicts and never
+    #: meet. Real banks rely on this: 1631 here number all three types from
+    #: 200 simultaneously.
+    #:
+    #: THE INVARIANT IS ONE MERGE AWAY FROM FALSE. Any by-id dict that spans
+    #: types loses the distinction the format encodes — `_encode_hash` puts
+    #: the type in the hash, so (113, 5) and (111, 5) are different objects.
+    #: `other_by_id()` is exactly such a dict and needs `other_id_collisions()`
+    #: beside it for that reason. Do not add another without the same care.
     programs: dict[int, KrzObject]
     keymaps: dict[int, KrzObject]
     samples: dict[int, KrzObject]
