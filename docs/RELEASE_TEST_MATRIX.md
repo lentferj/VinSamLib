@@ -14,11 +14,11 @@ decision rather than an oversight.
 `tests/` is gitignored (local paths, real libraries), so the test names below
 name files that exist only on a development machine.
 
-**AKAI is not in this file.** Its inputs (hard-disk/CD3000/floppy images,
-loose `.P3`/`.S3` folders), its refused output cells and its own end-to-end
-row live on `feat/akai-s3000xl`, which is unmerged and gated on hardware.
-They rejoin this matrix when that branch does — the version there is the one
-to extend while it stays separate.
+**AKAI lives in its own section at the end of this file**, because this is
+the `feat/akai-s3000xl` branch. On `master` those rows are absent and this
+note says where they are; here they are present and kept together rather than
+scattered through the tables above, so the branch delta stays visible and
+lifts out cleanly if the branch is ever restacked again.
 
 This file lived on that branch first, and that was a mistake worth recording:
 a release-process document on an unmerged feature branch does not get
@@ -635,3 +635,43 @@ these.
 Two standing rules for anything added here: a test must never call
 `Config.save()` against the real config, and must keep `config.library_roots
 = []` so nothing scans. See `CLAUDE.md`.
+
+---
+
+## AKAI — this branch only (`feat/akai-s3000xl`)
+
+Unmerged and gated on hardware. These rows extend the tables above; they are
+kept here rather than inline so that rebasing onto a `master` that has no
+AKAI support does not smear them through every table.
+
+**Inputs**
+
+| # | Input | Notes |
+|---|---|---|
+| I8 | AKAI volume on a hard-disk image | `.hda`/`.img` |
+| I9 | AKAI volume on a CD3000 disc | `.iso`, **not** ISO 9660 |
+| I10 | AKAI volume on a floppy image | 800 KB / 1.6 MB |
+| I11 | AKAI loose folder of `.P3`/`.S3` | |
+
+**Outputs**
+
+| # | Output |
+|---|---|
+| O2 | Save as… a **folder** (AKAI volume) |
+| O11 | AKAI media — **withheld pending hardware**, must be *refused*, not attempted |
+
+**Matrix A** — `| I8–I11 AKAI | ✅ manual_akai_real_discs | ✅ | ✅ manual_akai_search |`
+
+**Matrix B** — AKAI is a valid SOURCE to all three native targets, and is
+never a target: `AKAI → E4B ✅`, `→ KRZ ✅`, `→ EIII ✅`, `→ AKAI ⛔ refused
+by design`. Every other source → AKAI is `⛔ withheld`. AKAI→AKAI is refused
+for a different reason than the rest: the pipeline runs through mpc2emu's
+`Bank` model, which holds a fraction of an AKAI program.
+
+**Matrix C** — AKAI content reaches `O2` (folder) only; every image kind is
+`⛔` until hardware confirms one. Each of Matrix C's rows must ALSO be run
+with AKAI-sourced material, which is ordinary E4B/KRZ/EIII by then and so
+*should* behave identically — a prediction, and the prediction is what needs
+testing. `manual_akai_end_to_end` exists for exactly that row.
+
+**Matrix D** — AKAI pan widening: `manual_akai_convert`.
