@@ -12,6 +12,7 @@ import struct
 from pathlib import Path
 from typing import Optional
 
+from .akai import AkaiVolume, matches as akai_matches
 from .base import Volume
 from .emu3 import EMU3_MAGIC, Emu3Volume
 from .fatvol import Fat12Volume, Fat16Volume, Fat32Volume
@@ -36,6 +37,15 @@ def sniff(path: str) -> Optional[type[Volume]]:
 
     if head[:4] == EMU3_MAGIC:
         return Emu3Volume
+
+    # AKAI S1000/S3000 media, before the FAT checks: an AKAI disk carries no
+    # 55/AA signature and an AKAI floppy is not DOS-formatted at all, so
+    # neither could reach the right reader by falling through. `.img`, `.hda`
+    # and `.iso` are each shared with something else here — an MPC60 disk, an
+    # EMU3 image, a real ISO 9660 CD — which is exactly why this file sniffs
+    # content in the first place.
+    if akai_matches(head, path):
+        return AkaiVolume
 
     if head[510:512] == b"\x55\xAA":
         # Either an MBR (partition table) or a FAT12/16 boot sector sharing
