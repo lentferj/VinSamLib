@@ -281,8 +281,69 @@ def shot_settings(app, win) -> None:
     dlg.deleteLater()
 
 
+def shot_akai_partitions(app, win) -> None:
+    """14_akai_partitions / 15_akai_partition_preview -- the AKAI hierarchy.
+
+    A queue of six AKAI volumes with breaks set after rows 2 and 4, and the
+    New Image dialog previewing the layout those breaks produce.
+
+    Built from SYNTHETIC volumes rather than the demo library, and this is the
+    one recipe here that does not drive the real staging path. The reason is
+    the picture: a queue of six banks assembled from the demo library takes
+    minutes and produces six rows named after WAV folders, where the point of
+    the shot is the PARTITION LETTERS down the left and the break between
+    them. The pane is fed the same entry dicts add_pending() builds, so the
+    rows are rendered by the real _make_item()/_refresh() path -- what is
+    skipped is the assembly that produced them, not the display under test.
+    """
+    from vinsamlib.ui.image_pane import _NewImageDialog
+    from vinsamlib.ui.pending_pane import PendingBanksPane
+
+    names = ["KIT 01", "KIT 02", "PAD 01", "PAD 02", "FX 01", "FX 02"]
+    pane = PendingBanksPane()
+    pane._format = "AKAI"
+    pane._pending = [{"name": n, "format": "AKAI", "items": [None, None],
+                      "convert_opts": None} for n in names]
+    pane._partition_breaks = {2, 4}
+    pane._refresh()
+    # Tall enough for all six rows: the point of the shot is THREE partition
+    # letters, and at 300 px the C rows fell below the fold, so the picture
+    # showed A and B and looked like the two-partition case.
+    pane.resize(430, 470)
+    pane.show()
+    _settle(app, 300)
+    _grab(pane, "14_akai_partitions")
+    pane.close()
+
+    # ...and the preview the same grouping produces in the New Image dialog.
+    work = SCRATCH / "akai_volumes"
+    folders = []
+    for n in names:
+        d = work / n
+        d.mkdir(parents=True, exist_ok=True)
+        # 2 MB apiece: enough that the MB figures in the preview are real
+        # rather than rounding to 0.0, small enough to stay quick.
+        for i in range(2):
+            (d / f"{n.replace(' ', '')}{i}.S3").write_bytes(b"\0" * 1024 * 1024)
+        folders.append(str(d))
+    dlg = _NewImageDialog(config=win._config, seed_paths=folders,
+                          seed_format="AKAI",
+                          seed_partitions=[[0, 1], [2, 3], [4, 5]])
+    for i in range(dlg._kind_box.count()):
+        if dlg._kind_box.itemData(i) == "akai_hd":
+            dlg._kind_box.setCurrentIndex(i)
+            break
+    dlg._path_edit.setText(str(SCRATCH / "LIBRARY.hda"))
+    dlg.resize(660, 520)
+    dlg.show()
+    _settle(app, 400)
+    _grab(dlg, "15_akai_partition_preview")
+    dlg.close()
+
+
 ALL = {"02_new_bank": shot_new_bank, "06_settings": shot_settings,
-       "12_bank_placement": shot_placement, "13_favourites": shot_favourites}
+       "12_bank_placement": shot_placement, "13_favourites": shot_favourites,
+       "14_akai_partitions": shot_akai_partitions}
 
 
 def main(argv: list[str]) -> int:

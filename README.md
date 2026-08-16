@@ -655,6 +655,60 @@ loaded, so a volume that loads onto an empty machine may not load onto
 a busy one. For scale, the largest volume across 1843 real ones in this
 author's library needs 910 objects.
 
+#### Worked example: a multi-volume, multi-partition disc
+
+Every figure below is from a real build; the layout you are shown
+before building is produced by the writer's own planner, so it is what
+gets written.
+
+**Step 1 — one queued bank per volume.** Stage presets in New Bank,
+name it, **Send to Image Column**; then **Clear**, stage the next lot,
+**rename**, and send again. Six sends gives six volumes:
+
+![Pending for Image with six AKAI volumes queued, each row prefixed with the partition letter it will land in: A, A, B, B, C, C](docs/screenshots/14_akai_partitions.png)
+
+**Step 2 — let the partitions fall out, or place them.** With no breaks
+set, volumes are packed in order and a partition opens when the current
+one is full:
+
+| What you queue | What you get |
+|---|---|
+| 4 volumes, ~1 MB each | `Partition A: 4/100 volume(s), 4.1/60 MB` — one partition, 8 MB image |
+| 6 volumes, 25 MB each | A, B and C with two volumes each — `3 of 4 partitions used`, 188 MB image |
+
+To decide instead — a library per partition, rather than wherever the
+packing lands — right-click a row → **Start New Partition Here**. The
+letters renumber as you move it. Six 2 MB volumes with breaks after
+rows 2 and 4:
+
+```
+  Partition A: 2/100 volume(s), 4.1/60 MB — KIT 01, KIT 02
+  Partition B: 2/100 volume(s), 4.1/60 MB — PAD 01, PAD 02
+  Partition C: 2/100 volume(s), 4.1/60 MB — FX 01, FX 02
+  (partition breaks set in Pending for Image)
+```
+
+**Step 3 — check the layout before committing to it.** The New Image
+dialog shows what will be written, while you can still go back and move
+a break:
+
+![New Image dialog for an AKAI hard disk, listing six volumes and previewing three partitions of two volumes each](docs/screenshots/15_akai_partition_preview.png)
+
+> **Forcing breaks costs disk space.** Those same six 2 MB volumes
+> build a **16 MB** image packed into one partition, and a **125 MB**
+> one split across three — each partition is carved from the disk
+> whether or not it is full. Worth it to keep a library together;
+> wasteful if you only wanted the volumes separate, which they already
+> are.
+
+**Volumes and partitions are different counts, and both can be more
+than one.** A volume is what you queue; a partition is how the disc is
+carved. Partitions appear on their own once one fills — 60 MB or 100
+volumes — so a handful of small volumes lands in Partition A alone, and
+that is a full disc, not a limitation. Three 1 MB volumes give one
+partition holding three; six 25 MB volumes give three partitions. You
+can also force one early, below.
+
 **The partition layout is shown before you build.** An AKAI disk is not
 a flat list of volumes: it is carved into **partitions** — at most 60 MB
 and 100 volumes each, 18 to a disk — and the writer fills one before
@@ -848,6 +902,32 @@ sheet that prompted this says `Big Bank 64` where the disc says
 ### Pending for Image
 
 ![Pending for Image column showing one queued bank and its contents](docs/screenshots/03_pending_for_image.png)
+
+**One queued bank becomes one volume.** This is the step that decides
+how many volumes an AKAI disc holds, and it is easy to miss because
+New Bank does *not* empty itself after a send — deliberately, so the
+same bank can go to a second image. To put several volumes on one disc:
+
+1. Stage presets in **New Bank** and set the **Name** — that name
+   becomes the volume name on the disc.
+2. **Send to Image Column.** That is volume 1.
+3. Back in New Bank: **Clear**, stage the next lot, and **change the
+   Name**.
+4. **Send to Image Column** again. That is volume 2. Repeat.
+5. **Build Image →** when the queue holds everything.
+
+Step 3 is the one to watch. Send twice without retyping the name and
+you get two volumes both called `NEWBANK` — two real, distinct volumes
+holding different audio, correct on the disc and impossible to tell
+apart on the sampler's panel. The queue flags it (`⚠ name used twice`
+on both rows, and in the summary) rather than renaming anything: the
+name is yours, and silently changing it would surprise you later on the
+machine with no way back to what you typed.
+
+> **Volume names come from here, not from the New Image dialog.** That
+> dialog's "Volume label" sets the *floppy's* volume name or the
+> *CD3000's* disc label, and for an AKAI hard disk it sets nothing at
+> all — which is why it is hidden for that kind.
 
 Right-click an entry for **Rename…**, **Delete**, or **Send to New Bank**
 — the last one puts the recipe back in New Bank for editing, the same thing
