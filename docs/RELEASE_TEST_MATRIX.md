@@ -643,6 +643,17 @@ becomes invisible. `tests/_skip.py`'s `require_akai()` turns that into an
 honest "could not check" — verified in both directions: rc 0 and running on
 the branch, rc 77 with a reason on master.
 
+**And fixing half of it is worse than it sounds.** `require_akai()` covers one
+skip condition — OUR akai module missing. The suites have a second, unrelated
+one: mpc2emu's checkout lacking AKAI support. That half was left on the old
+`print SKIPPED; return 0`, so within an hour of documenting the fix, three
+suites reported `rc=0` while skipping — counted green by every loop in this
+file. Caught only because upstream switched branches and the skips became
+observable. Every skip in the AKAI suites now goes through `skip()`.
+
+The general point: a test can have MORE THAN ONE reason to skip, and fixing
+the reason you were thinking about leaves the others reading as passes.
+
 ## Assert the content, not the arrival
 
 The single most valuable thing this matrix turned up was not a missing cell.

@@ -165,6 +165,20 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
         raise AkaiWriteUnavailable("an AKAI image needs at least one volume.")
 
     volumes = [volume_from_folder(f) for f in folders]
+
+    # A volume directory holds MAX_FILES_PER_VOLUME entries and no more. This
+    # is checked in banks/akai.py's assemble(), which the New Bank path goes
+    # through -- but NOT on this one: volume_from_folder() returns whatever
+    # AKAI-typed files the user's folder holds, and nothing between it and the
+    # writer counted them. Samples and programs SHARE the directory, so 300
+    # one-sample programs is 600 entries rather than 300.
+    for name, files in volumes:
+        if len(files) > vs_akai.MAX_FILES_PER_VOLUME:
+            raise AkaiWriteUnavailable(
+                f"volume {name!r} holds {len(files)} files; an AKAI volume "
+                f"directory takes {vs_akai.MAX_FILES_PER_VOLUME}. Samples and "
+                f"programs share those entries, so split the folder.")
+
     if kind == "akai_floppy":
         if len(volumes) > 1:
             raise AkaiWriteUnavailable(
