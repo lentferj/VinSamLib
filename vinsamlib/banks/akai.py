@@ -52,7 +52,13 @@ Program file layout (little-endian throughout; `AKAI_S3000_FORMAT.md`
     <block> + n*<block>  keygroup n (block = 0xc0 on the S3000,
                           0x96 on the S1000 -- see S1000_BLOCK_LEN), each:
         0x03/0x04   lo / hi key
-        0x05        tune offset, signed 16-bit
+        0x05        tune offset (KGTUNO), signed 16-bit, in 1/256 of a
+                    SEMITONE -- 0.39 cents per unit, measured on a real
+                    S3000XL over SysEx 2026-08-10. NOT cents: the AKAI
+                    document calls the sample-level field "cent:semi",
+                    which reads like a cents field and is not one. A reader
+                    showing this as cents overstates it 2.56x; one assuming
+                    1/16 semitone, as this file did, overstates it 16x.
         0x07        filter frequency
         0x0c..0x0f  amplitude attack / decay / sustain / release
         0x1f        number of velocity zones in use
@@ -412,7 +418,11 @@ class AkaiZone:
     name_offset: int             # absolute offset of the 12-byte name in the program body
     lo_vel: int
     hi_vel: int
-    tune: int                    # 1/16 semitone, as stored
+    #: As stored. The keygroup's own tune (KGTUNO) is 1/256 semitone --
+    #: see the header map above. This zone-level field has not been measured
+    #: on hardware, so its unit is NOT assumed to match; nothing here scales
+    #: or displays it, and nothing should until it has been.
+    tune: int
     loudness: int
     pan: int
 
