@@ -13,10 +13,12 @@ indexed, so a second scan of an unchanged library is fast.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable, Optional
 
 from .db import IndexDB
+from ..banks import akai as vs_akai
 from ..banks import e4b, eiii, krz
 from ..build import foreign_import, xpm_import
 from ..vfs.base import EntryKind
@@ -28,6 +30,9 @@ ProgressCB = Optional[Callable[[str], None]]
 # mapping): ".xpj" is a project, which the Explorer browses like a bank; the
 # other two are single programs.
 _MPC_EXT_FORMAT = xpm_import.MPC_EXT_FORMAT
+#: Loose AKAI program extensions -- the same set ui/models.py lists a
+#: folder-as-bank row by, kept in step with it.
+_AKAI_PROGRAM_EXTS = {".p3", ".p1", ".a3p", ".s3p"}
 
 
 def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
@@ -60,6 +65,15 @@ def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: s
         entries = vol.list()
     except OSError:
         return
+    # A folder of loose AKAI .P3/.S3 files is one volume's worth of content
+    # and the tree already shows it as a single bank row (ui/models.py's
+    # _list_directory). It has to index the same way, or a program sitting
+    # in such a folder browses perfectly and is unfindable by search --
+    # which is what it did until this was written.
+    if any(os.path.splitext(e.name)[1].lower() in _AKAI_PROGRAM_EXTS
+           for e in entries if e.kind != EntryKind.DIRECTORY):
+        _scan_akai_dir(path, db, progress, seen_paths)
+
     for e in entries:
         if e.kind == EntryKind.DIRECTORY:
             _scan_directory(Path(e.ref), db, progress, seen_paths)
@@ -80,6 +94,37 @@ def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: s
         elif (e.kind == EntryKind.OTHER_FILE
                 and foreign_import.format_for(e.ref) is not None):
             _scan_foreign_container(e.ref, e.size, db, progress, seen_paths)
+
+
+def _scan_akai_dir(path: Path, db: IndexDB, progress: ProgressCB,
+                    seen_paths: set) -> None:
+    """A folder of loose AKAI files, indexed as one bank of programs.
+
+    Only the program files are read -- their samples can run to gigabytes
+    and contribute no searchable name of their own, exactly as for an AKAI
+    volume inside an image (see _scan_vfs_listing)."""
+    key = str(path)
+    seen_paths.add(key)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return
+    if not db.needs_rescan(key, 0, mtime):
+        return
+    if progress:
+        progress(f"Scanning {path.name}…")
+    cid = db.begin_container(key, "directory", "AKAI", 0, mtime)
+    try:
+        bank = vs_akai.parse_dir(str(path))
+    except Exception as ex:
+        db.finish_container(cid, error=str(ex))
+        return
+    item_id = db.add_item(cid, None, "bank", path.name, native_id=path.name,
+                           format="AKAI", ordinal=0)
+    for i, prog in enumerate(bank.programs):
+        db.add_item(cid, item_id, "preset", prog.name.strip() or "(untitled)",
+                    native_id=prog.filename or prog.name, format="AKAI", ordinal=i)
+    db.finish_container(cid)
 
 
 def _scan_bank_container(path: str, size: int, db: IndexDB, progress: ProgressCB,

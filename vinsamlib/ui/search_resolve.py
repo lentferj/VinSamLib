@@ -36,6 +36,8 @@ def resolve_result(result: SearchResult) -> Optional[TreeNode]:
     if result.kind in ("foreign_bank", "foreign_preset"):
         return _resolve_foreign(result)
     container_path = result.container_path
+    if result.format == "AKAI" and Path(container_path).is_dir():
+        return _resolve_akai_dir(container_path, result)
     if sniff(container_path) is None:
         return _resolve_loose_bank(container_path, result)
     return _resolve_in_image(container_path, result)
@@ -79,6 +81,30 @@ def _resolve_foreign(result: SearchResult) -> Optional[TreeNode]:
     return TreeNode("foreign_preset", result.name, None, (path, ordinal),
                     format_label=verdict.format, note=verdict.note,
                     empty_reason=verdict.empty_reason)
+
+
+def _resolve_akai_dir(container_path: str, result: SearchResult) -> Optional[TreeNode]:
+    """A folder of loose AKAI files, which the index stores as one bank.
+
+    The only container here that is a DIRECTORY rather than a file, so it
+    needs its own branch: everything else either sniffs as an image or reads
+    as a bank file, and a directory does neither -- `read_bytes()` on one
+    raises, which is how this used to return None and drop the hit."""
+    from ..banks import akai as vs_akai
+    try:
+        bank = vs_akai.parse_dir(container_path)
+    except Exception:
+        return None
+    bank_node = TreeNode("bank", Path(container_path).name, None,
+                          (None, Path(container_path)), handle=bank,
+                          format_label="AKAI")
+    if result.kind == "bank":
+        return bank_node
+    native_id = result.chain[-1].native_id if result.chain else None
+    prog = _find_preset(bank, "AKAI", native_id)
+    if prog is None:
+        return bank_node
+    return TreeNode("preset", result.name, bank_node, (bank, prog))
 
 
 def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:
