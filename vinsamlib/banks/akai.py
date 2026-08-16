@@ -418,10 +418,31 @@ class AkaiZone:
     name_offset: int             # absolute offset of the 12-byte name in the program body
     lo_vel: int
     hi_vel: int
-    #: As stored. The keygroup's own tune (KGTUNO) is 1/256 semitone --
-    #: see the header map above. This zone-level field has not been measured
-    #: on hardware, so its unit is NOT assumed to match; nothing here scales
-    #: or displays it, and nothing should until it has been.
+    #: As stored, and never scaled or displayed here. This is VTUNO1..4 --
+    #: our zone bases 0x22/0x3A/0x52/0x6A plus 0x0E land on 48/72/96/120,
+    #: where mpc2emu's parser independently lands too.
+    #:
+    #: That agreement rules out TRANSCRIPTION error and nothing more. Both
+    #: parsers read the same document, so a document that is wrong about
+    #: these offsets would produce two identical wrong answers -- the shared
+    #: source is exactly what hardware would falsify. Worth having anyway:
+    #: mis-copying one of four near-identical offsets is the specific thing
+    #: that goes wrong here, and it is how this file got 1/16 for 1/256.
+    #:
+    #: STRONGER THAN INHERITANCE, WEAKER THAN MEASUREMENT, and the distinction
+    #: is worth keeping. VTUNO has never been swept. But the AKAI document
+    #: makes ONE structural claim over four fields at once -- KGTUNO, PTUNO
+    #: and VTUNO1-4 all read "-50.00 to +50.00 (fraction is binary)" -- and
+    #: two of those four were then measured at 0.3928 and 0.3866 cents/unit
+    #: against the 0.390625 that claim predicts. So the basis is not "the
+    #: neighbour was measured"; it is a shared structural claim with two of
+    #: its four members independently confirmed.
+    #:
+    #: STUNO is the control that keeps this honest: different wording
+    #: ("cent:semi"), and measured to do nothing at all. Had VTUNO carried
+    #: STUNO's wording this reasoning would not apply.
+    #:
+    #: This is the line to change first if a zone tune ever disagrees.
     tune: int
     loudness: int
     pan: int
@@ -429,6 +450,89 @@ class AkaiZone:
 
 @dataclass
 class AkaiKeygroup:
+    """Raw stored values. NOTHING here is scaled or displayed — read all of
+    this before it ever is.
+
+    Measured on a real S3000XL over SysEx by the mpc2emu project. **Five of
+    the eight constants first relayed here on 2026-08-10 were withdrawn on
+    2026-08-11 and are corrected below.** The withdrawal is recorded rather
+    than quietly overwritten, because the shape of the error matters more
+    than the numbers.
+
+    WHAT STANDS:
+
+        filter    Hz    = 6.998 * exp(0.07384 * filter_freq)   fitted 50..90
+        tuning    cents = 0.390625 * tune          (= 100/256, EXACT)
+        sustain   dB below full = 0.60832 * (amp_sustain - 99)   r2 0.99995
+
+    Tuning is the STRUCTURAL constant, not a fit. The field is 1/256 of a
+    semitone, which the AKAI document states exactly, where the bench fit
+    (0.391667 with a -0.31 intercept) only approximates it to 0.27%. The
+    intercept was measurement bias and had to go on principle, not on
+    evidence: no tuning offset is no detune, so the law passes through the
+    origin. Prefer a structural constant to a fitted one whenever the format
+    gives you the former.
+
+    WHAT WAS WITHDRAWN, AND WHY IT IS THE INTERESTING PART:
+
+    The envelope laws first recorded here gave attack/decay/release as
+    DURATIONS in seconds. That model is wrong. An envelope value sets a slew
+    RATE, not a time:
+
+        decay    rate = 23525.6 * exp(-0.09776 * amp_decay)   dB/s  fit 45..85
+        release  rate = 22055.3 * exp(-0.09683 * amp_release) dB/s  fit 55..70
+        time = span / rate
+
+    Hold the value and vary the distance the stage travels and the rate holds
+    to 0.27% while the elapsed time moves 18.8%. `amp_decay` 70 is not
+    "339 ms"; it is ~24.7 dB/s, which happened to take 339 ms across the span
+    that bench used. **No cross-check would have caught this**, because the
+    constants were roughly right and it is the QUANTITY that was wrong — the
+    numbers look plausible and mean something else. The exponents are
+    negative, so at least a stale constant inverts rather than degrading
+    quietly.
+
+    `amp_attack` fits NEITHER model and is unresolved. mpc2emu unwired theirs
+    rather than keep a value derived from a retracted law; nothing here
+    consumes it either.
+
+    `amp_sustain` IS measured, and an earlier version of this comment wrongly
+    called it open. It is keygroup 0x0E — SUSTN1, the AMPLITUDE envelope's
+    sustain — dB-linear at 0.60832 dB/unit with r2 0.99995, corroborated by
+    program loudness at 0.6427: two independent level controls, both dB-linear
+    within 5%. The confusion was mine, from "sustain" naming two fields.
+
+    The one that IS open is **SUSTN2, keygroup 0x16, the FILTER envelope's
+    sustain** — never swept, and we do not read it. Reusing SUSTN1's dB law
+    for it would be the same inheritance that produced the 16x on `tune`.
+
+    Both level laws are anchored at 99 = full rather than carrying the bench
+    intercept they were first relayed with. **An intercept is where a law is
+    most likely to encode the APPARATUS rather than the instrument**: the
+    -88.84 and -87.63 first sent were the gain of a converter and the trim on
+    an interface — properties of a room. That rule can be applied before
+    seeing any data, which is what makes it worth stating.
+
+    AND THE RANGES ARE PART OF THE MEASUREMENT. `fitted` is not decoration;
+    a coefficient without the range it was fitted over is half a fact. The
+    ranges first relayed for attack and decay (0..99) were wrong before the
+    retraction — both are 40..99, because the rig cannot resolve a stage
+    faster than its own envelope hop.
+
+    Also from mpc2emu, and true of a display as much as a writer: THE FITTED
+    RANGE IS NOT THE USABLE RANGE. Clamping to the fit refused to
+    extrapolate and made every fully-open filter come out darker than before
+    the calibration existed — caution made the output worse. They resolved it
+    asymmetrically: above the range write the known-wide-open maximum,
+    below it clamp, because only one end had an outside fact available.
+
+    THE TRAP THAT PRODUCED ALL OF THIS, since this file has now paid for it
+    twice: inheriting a neighbour's unit. `tune` said 1/16 semitone against a
+    measured 1/256, out by 16x. These laws are ENVELOPE 1's; envelope 2's
+    fields carry identical wording and identical 0..99 ranges and were never
+    swept. Do not inherit. STUNO is the disproof — same wording as the tuning
+    field, round-trips perfectly, does nothing at all.
+    """
     lo_key: int
     hi_key: int
     tune: int
