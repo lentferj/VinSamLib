@@ -375,10 +375,6 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
         info = akai_image.build_akai_floppy_image(
             files, output_path, volume_name=volume_label or name, density="hd")
     else:
-        # `partitions` is index lists into `volumes` (mpc2emu fdc7e39). Passed
-        # only when the user actually set breaks; None keeps the writer's own
-        # planning, and a grouping identical to what it would have chosen
-        # produces a byte-identical image.
         # `partitions` is index lists into `volumes` (mpc2emu fdc7e39), and
         # since their d391280 an explicit grouping SIZES THE DISK for its own
         # partitions when no size is given. We computed that here first and
@@ -391,6 +387,11 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
             info = akai_image.build_akai_hd_image(
                 volumes, output_path, size_mb=size_mb,
                 cdrom=(kind == "akai_cd3000"),
+                # Only the CD3000 has a disc-level label. A hard disk has no
+                # field for one: its volumes are named individually, from the
+                # folder each came from, so `volume_label` is deliberately
+                # unused here and the dialog hides it for this kind rather
+                # than offering a control that does nothing.
                 cd_label=(volume_label or None) if kind == "akai_cd3000" else None,
                 **kwargs)
         except Exception as ex:

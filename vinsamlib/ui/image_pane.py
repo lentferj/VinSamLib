@@ -661,18 +661,29 @@ class _NewImageDialog(QDialog):
         form.addRow("Kind:", self._kind_box)
 
         self._label_edit = QLineEdit()
-        form.addRow("Volume label:", self._label_edit)
+        # A real QLabel rather than the string overload: the row's TEXT
+        # changes per kind and the whole row is hidden for AKAI hard disks,
+        # neither of which is reachable once QFormLayout has made the label
+        # itself.
+        self._label_row_label = QLabel("Volume label:")
+        form.addRow(self._label_row_label, self._label_edit)
 
         self._size_spin = QSpinBox()
         self._size_spin.setRange(16, 14 * 1024)
         self._size_spin.setSuffix(" MB")
         self._size_spin.setSpecialValueText("auto")
         self._size_spin.setValue(16)   # == minimum -> shows "auto" (size_mb=None)
-        form.addRow("Size:", self._size_spin)
+        # Same orphaned-label problem the Volume label row had: hiding the
+        # FIELD leaves QFormLayout's string caption behind, so the dialog
+        # showed "Size:" and "Floppy size (KB):" with nothing beside them for
+        # every kind that has neither.
+        self._size_row_label = QLabel("Size:")
+        form.addRow(self._size_row_label, self._size_spin)
 
         self._floppy_box = QComboBox()
         self._floppy_box.addItems(["1440", "720"])
-        form.addRow("Floppy size (KB):", self._floppy_box)
+        self._floppy_row_label = QLabel("Floppy size (KB):")
+        form.addRow(self._floppy_row_label, self._floppy_box)
 
         path_row = QHBoxLayout()
         self._path_edit = QLineEdit()
@@ -733,7 +744,33 @@ class _NewImageDialog(QDialog):
         is_floppy = kind == "fat12_floppy"
         needs_size = kind in ("emu3_hd_emu", "emu3_hd_fat", "k2000_fat16")
         self._size_spin.setVisible(needs_size)
+        self._size_row_label.setVisible(needs_size)
         self._floppy_box.setVisible(is_floppy)
+        self._floppy_row_label.setVisible(is_floppy)
+        # "Volume label" means three different things across these kinds, and
+        # one of them is nothing at all:
+        #   AKAI floppy  -- IS the AKAI volume name (a floppy holds exactly one)
+        #   AKAI CD3000  -- the disc's CD-info label, not a volume name
+        #   AKAI hard disk -- UNUSED. Its volumes are named individually, from
+        #                  the queued bank each came from.
+        # Left visible it is a control that silently does nothing, which is the
+        # fault this project has withheld whole features over. So it is hidden
+        # where it is ignored, and named for what it actually sets elsewhere.
+        akai_hd_no_label = kind == "akai_hd"
+        self._label_edit.setVisible(not akai_hd_no_label)
+        self._label_row_label.setVisible(not akai_hd_no_label)
+        if kind == "akai_cd3000":
+            self._label_row_label.setText("Disc label:")
+            self._label_edit.setToolTip(
+                "The CD3000 disc's own label. The volumes on it are named "
+                "individually, from the banks queued in Pending for Image.")
+        elif kind == "akai_floppy":
+            self._label_row_label.setText("Volume name:")
+            self._label_edit.setToolTip(
+                "A floppy holds exactly one AKAI volume, and this names it.")
+        else:
+            self._label_row_label.setText("Volume label:")
+            self._label_edit.setToolTip("")
         self._update_partition_plan()
 
     def _start_dir(self) -> str:

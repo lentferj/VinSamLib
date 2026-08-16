@@ -273,7 +273,14 @@ class PendingBanksPane(QWidget):
                                "voice_velocity": dict(voice_velocity or {})})
         self._refresh()
         self._list.setCurrentRow(len(self._pending) - 1)
-        self.statusMessage.emit(f'Added "{name}" to the pending queue')
+        if (name or "").strip().upper() in self._duplicate_names():
+            noun = "volume" if fmt == "AKAI" else "bank"
+            self.statusMessage.emit(
+                f'Added "{name}" — but another queued bank has that name too, '
+                f'so the image will hold two {noun}s called "{name}". Rename '
+                f'one to tell them apart on the sampler.')
+        else:
+            self.statusMessage.emit(f'Added "{name}" to the pending queue')
         return True
 
     # -- list management --------------------------------------------------------
@@ -296,7 +303,14 @@ class PendingBanksPane(QWidget):
             self._list.addItem(item)
         self._stack.setCurrentIndex(1 if self._pending else 0)
         n = len(self._pending)
-        self._summary_label.setText(f"{n} bank{'s' if n != 1 else ''} pending")
+        dupes = self._duplicate_names()
+        summary = f"{n} bank{'s' if n != 1 else ''} pending"
+        if dupes:
+            # In the summary as well as on the rows: a status message scrolls
+            # away, and the queue is built up over several minutes.
+            summary += (f" — ⚠ {len(dupes)} name"
+                        f"{'s' if len(dupes) != 1 else ''} used more than once")
+        self._summary_label.setText(summary)
         self._build_btn.setEnabled(bool(self._pending))
         needs_e4b_only = self._format in ("KRZ", "EIII")
         self._convert_btn.setEnabled(not needs_e4b_only)
@@ -357,10 +371,34 @@ class PendingBanksPane(QWidget):
             self._partition_breaks.add(row)
         self._refresh()
 
+    def _duplicate_names(self) -> set:
+        """Names carried by more than one queued bank, upper-cased.
+
+        Every queued bank becomes its own volume (AKAI) or its own bank file,
+        and nothing downstream refuses a repeated name -- two volumes called
+        NEWBANK are two real, distinct volumes that are indistinguishable when
+        stepping through them on the sampler's panel. Compared case-insensitively
+        because the AKAI name field is upper-cased on the way out, so names
+        that differ only in case arrive identical.
+        """
+        seen, dupes = set(), set()
+        for entry in self._pending:
+            key = (entry.get("name") or "").strip().upper()
+            if not key:
+                continue
+            (dupes if key in seen else seen).add(key)
+        return dupes
+
     def _make_item(self, entry: dict) -> QListWidgetItem:
         label = f"{entry['name']}  [{entry['format']}]  — {len(entry['items'])} preset(s)"
         if entry.get("convert_opts") is not None:
             label += "  · processing set"
+        if (entry.get("name") or "").strip().upper() in self._duplicate_names():
+            # Named rather than silently renamed: the name is the user's
+            # choice and quietly changing it is the kind of thing that
+            # surprises people later, on the machine, with no way back to
+            # what they typed.
+            label += "  ⚠ name used twice"
         widget_item = QListWidgetItem(label)
         widget_item.setData(Qt.ItemDataRole.UserRole, entry)
         return widget_item
