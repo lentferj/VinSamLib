@@ -86,6 +86,7 @@ Sample file layout:
 
 from __future__ import annotations
 
+import hashlib
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -918,7 +919,44 @@ def parse_dir(directory: str) -> AkaiBank:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
-def _unique_akai_name(base: str, taken: set[str]) -> str:
+def _claim_akai_name(wanted: str, content: bytes, taken: dict) -> str:
+    """A name for `wanted` that no DIFFERENT content already holds.
+
+    `taken` maps upper-cased final name -> a digest of the bytes filed under
+    it, and is shared across every volume of one build so that a name is
+    unique per BUILD rather than per volume.
+
+    WHY THAT MATTERS, and it is not a tidiness concern. s3ked measured that
+    **a load REPLACES a resident item of the same name rather than adding a
+    second one** (five consecutive loads of already-resident volumes moved the
+    object pool by exactly zero). So two volumes of one split that share a
+    name are not two things on the machine, they are one:
+
+      * two PROGRAMS sharing a name -- the second load silently replaces the
+        first, and the user is one program short with nothing saying so.
+      * two SAMPLES sharing a name -- worse, because zones resolve samples BY
+        NAME, so the first volume's programs play the second volume's audio.
+        Wrong sound rather than missing sound.
+
+    WHY CONTENT AND NOT JUST THE NAME. mpc2emu renames on any collision. That
+    is safe but costs media: measured here, splitting one real volume in half
+    puts 10 sample names in both halves and ALL TEN carry byte-identical
+    audio, because the two halves share samples. Renaming those would write
+    the same audio twice under two names for no benefit -- replacement by an
+    identical item is a no-op on the machine. So a name is only moved aside
+    when something DIFFERENT already holds it, which is the case that loses
+    data.
+    """
+    digest = hashlib.blake2b(content, digest_size=16).digest()
+    base = (display_name(wanted).strip() or "SAMPLE")[:NAME_LEN]
+    if taken.get(base.upper()) == digest:
+        return base                      # identical content already has it
+    final = _unique_akai_name(base, taken)
+    taken[final.upper()] = digest
+    return final
+
+
+def _unique_akai_name(base: str, taken) -> str:
     """A free 12-character AKAI name near `base`.
 
     Twelve characters is four fewer than every other format here allows, so
@@ -938,7 +976,9 @@ def _unique_akai_name(base: str, taken: set[str]) -> str:
 
 def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
              sample_names: Optional[dict] = None,
-             volume_name: str = "") -> list[tuple[str, bytes]]:
+             volume_name: str = "",
+             taken_samples: Optional[dict] = None,
+             taken_programs: Optional[dict] = None) -> list[tuple[str, bytes]]:
     """Build one new AKAI volume from selected (source volume, program) pairs.
 
     Returns `[(filename, data), ...]` — a volume is a set of files, so that
@@ -977,8 +1017,11 @@ def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
     requested = {k.strip().upper(): v for k, v in (sample_names or {}).items()}
 
     files: list[tuple[str, bytes]] = []
-    taken_samples: set[str] = set()
-    taken_programs: set[str] = set()
+    # Passed in when a build writes SEVERAL volumes, so a name is unique per
+    # build rather than per volume -- see _claim_akai_name. Defaults to fresh
+    # state, so a single volume still starts from a clean slate.
+    taken_samples = {} if taken_samples is None else taken_samples
+    taken_programs = {} if taken_programs is None else taken_programs
     # (source volume identity, original name) -> final name, so the same
     # sample reached through two programs of the SAME volume stays one file
     # while a namesake from a different volume gets its own.
@@ -1005,8 +1048,7 @@ def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
                 if dedupe in written:
                     final = written[dedupe]
                 else:
-                    final = _unique_akai_name(wanted, taken_samples)
-                    taken_samples.add(final.upper())
+                    final = _claim_akai_name(wanted, samp.body, taken_samples)
                     written[dedupe] = final
                     sbody = bytearray(samp.body)
                     sbody[0x03:0x03 + NAME_LEN] = str_to_akai(final)
@@ -1016,10 +1058,9 @@ def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
             if final.strip().upper() != zone_name.strip().upper():
                 body[name_off:name_off + NAME_LEN] = str_to_akai(final)
 
-        pname = _unique_akai_name(
+        pname = _claim_akai_name(
             volume_name if (volume_name and len(selections) == 1) else program.name,
-            taken_programs)
-        taken_programs.add(pname.upper())
+            program.body, taken_programs)
         # The name lives in the file's own header as well as in its filename;
         # patching one and not the other would show two different names
         # depending on which one a reader trusts.

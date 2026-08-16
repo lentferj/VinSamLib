@@ -58,6 +58,14 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
     conversion for either hasn't been wired up here yet, only per-preset
     via Explorer's "Import via mpc2emu...")."""
     paths: list[str] = []
+    # ONE pair of name registries for the whole build, not one per volume.
+    # A load REPLACES a resident item of the same name rather than adding a
+    # second (s3ked, measured), so two volumes of one build that share a
+    # program name leave the user a program short, and two sharing a SAMPLE
+    # name make the first volume's programs play the second volume's audio --
+    # zones resolve samples by name. Per-volume uniqueness cannot see either.
+    akai_taken_samples: dict = {}
+    akai_taken_programs: dict = {}
     for entry in pending:
         fmt = entry["format"]
         if fmt not in ("E4B", "KRZ", "EIII", "AKAI"):
@@ -69,7 +77,9 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
             # An AKAI volume is a set of files, so what goes to the image
             # builder is a FOLDER rather than a bank file -- the same shape
             # New Bank's Save as… writes, and what build/akai_image.py takes.
-            files = fn(selections, volume_name=name)
+            files = fn(selections, volume_name=name,
+                       taken_samples=akai_taken_samples,
+                       taken_programs=akai_taken_programs)
             vol_dir = tempdirs.session_temp_dir(_PENDING_TEMP_PREFIX) / name
             akai.write_volume(files, str(vol_dir))
             paths.append(str(vol_dir))
