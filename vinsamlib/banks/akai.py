@@ -459,9 +459,18 @@ class AkaiKeygroup:
     than quietly overwritten, because the shape of the error matters more
     than the numbers.
 
-    WHAT STANDS:
+    WHAT STANDS (the filter law was re-derived 2026-08-12; the first one here,
+    6.998 * exp(0.07384 v), came from a SPECTRAL CENTROID and read 20-30% high
+    by a GROWING amount — 0.28 octaves at 40, 0.52 at 99. A centroid is the
+    average frequency of everything the source contains, so it sits above the
+    corner by however much energy lies above it, and that mix moves as the
+    corner moves. The error was in the SLOPE, so no correction factor would
+    have salvaged it. General form worth carrying: a law derived from a
+    spectral-summary statistic — centroid, rolloff, brightness — is probably
+    biased this way, and the bias probably grows):
 
-        filter    Hz    = 6.998 * exp(0.07384 * filter_freq)   fitted 50..90
+        filter    Hz    = 6.4597 * exp(0.07100 * filter_freq)  fitted 44..92
+                                                               r2 0.99984
         tuning    cents = 0.390625 * tune          (= 100/256, EXACT)
         sustain   dB below full = 0.60676 * (amp_sustain - 99)   r2 0.99993
 
