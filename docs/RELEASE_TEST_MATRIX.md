@@ -611,6 +611,15 @@ A suite that prints `SKIPPED` because its material is not on the machine is
 **not** a pass — note it and find the material, or the matrix cell stays
 uncovered.
 
+**`manual_unbound_names.py` is cheap and belongs early in a run.** It walks
+every module and fails on `NAME.attr` where `NAME` is bound nowhere — the
+shape of all three missing-import bugs this project has shipped, each caused
+by a content-based guard deciding an import was already present. It needs
+nothing installed, takes under a second, and its own self-check fails if it
+can no longer see the bug it was written for. `python -c "import m"` does NOT
+substitute: an unbound name inside a function is a runtime error, so the
+module imports fine and fails when the line finally runs.
+
 **Quote a corpus pass rate as a rate with an interval, never as a tally.**
 `roundtrip_krz_corpus.py` reports 427/459. Re-running it is pointless as a
 check — the pass is deterministic, so run-to-run variation is zero. What
