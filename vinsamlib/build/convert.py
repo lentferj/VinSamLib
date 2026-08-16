@@ -801,12 +801,14 @@ def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
         # program sits on one volume and its samples on another. Refused
         # here, before mpc2emu is asked, and with the names in the message --
         # that is the difference between the user knowing where to look and
-        # a bare failure.
+        # a bare failure. And where the samples ARE somewhere on the same
+        # disc, saying which volume turns the refusal into a next step; on
+        # one real disc 14 of its 66 unresolved zones are exactly that case.
         raise ConvertOpError(
             f"{name!r} names {len(missing)} sample(s) that are not on its own "
             f"volume ({', '.join(missing[:4])}{'…' if len(missing) > 4 else ''}), "
-            f"so there is no audio to convert. AKAI libraries often keep a "
-            f"program and its samples on different volumes.")
+            f"so there is no audio to convert."
+            + (f" {_akai_sibling_hint(bank, missing)}" or ""))
 
     # Samples and the program go in SEPARATE directories, and only the
     # sample directory is handed over. mpc2emu's own lookup falls back to
@@ -910,3 +912,45 @@ def _widen_akai_pan(bank: Any) -> int:
 def _akai_config():
     from ..config import Config
     return Config.load()
+
+
+def _akai_sibling_hint(bank: Any, missing: list) -> str:
+    """Name the volumes on the SAME disc that hold the missing samples.
+
+    Only ever runs on the refusal path, which is what makes reopening the
+    image affordable -- and the refusal is exactly where the extra reading
+    earns its cost, because "they are on volume B/STRINGS 2" is a next step
+    and "they are not here" is a dead end.
+
+    Deliberately a hint and not an automatic reach across volumes: a sample
+    name is unique only within one volume, so resolving across a disc is the
+    very collision this format is most exposed to (see banks/akai.py's
+    assemble). Telling the user where to look leaves that choice theirs.
+    """
+    path = str(getattr(bank, "path", ""))
+    image = path.rsplit(":", 1)[0] if ":" in path else ""
+    if not image or not Path(image).is_file():
+        return ("AKAI libraries often keep a program and its samples on "
+                "different volumes.")
+    try:
+        from ..vfs.akai import AkaiVolume
+        vol = AkaiVolume(image)
+        want = {n.strip().upper() for n in missing}
+        holders: dict[str, int] = {}
+        for folder in vol.list():
+            names = {e.meta.get("akai_name", "").strip().upper()
+                     for e in vol.list(folder)
+                     if e.meta.get("role") == "sample"}
+            hit = len(want & names)
+            if hit:
+                holders[folder.name] = hit
+    except Exception:
+        return ("AKAI libraries often keep a program and its samples on "
+                "different volumes.")
+    if not holders:
+        return ("They are not on this disc at all — AKAI libraries are often "
+                "split across several, so look for the rest of the set.")
+    best = sorted(holders.items(), key=lambda kv: -kv[1])[:3]
+    where = ", ".join(f"{v} ({n} of them)" for v, n in best)
+    return (f"They are on this same disc, under {where} — add that volume's "
+            f"program instead, or convert from there.")
