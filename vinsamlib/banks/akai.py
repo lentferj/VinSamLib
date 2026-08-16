@@ -18,8 +18,8 @@ reason `banks/e4b.py` is independent of `writers/e4b_writer.py`:
 
   **Assembly here is file-level surgery, not parse-and-re-serialize.** An
   AKAI program carries per-keygroup filter and amplitude envelopes, LFO
-  routing, modulation depths and pitch-bend settings across its 192-byte
-  common block and 192 bytes per keygroup. mpc2emu's `parse_program_bytes`
+  routing, modulation depths and pitch-bend settings across its common
+  block and one block per keygroup. mpc2emu's `parse_program_bytes`
   reads about a dozen of those fields, which is everything its `Bank` model
   can hold and the right scope for *converting*. Copying the program file
   verbatim keeps all of them, which is the right scope for *librarying*.
@@ -40,7 +40,8 @@ see its docstring.
 
 Program file layout (little-endian throughout; `AKAI_S3000_FORMAT.md`
 "Program file"):
-    0x00        header id: 1 = S1000, 3 = S3000
+    0x00        block id: 1 = program common (NOT a generation marker --
+                see BLOCK_ID_PROGRAM)
     0x03..0x0f  name, 12 bytes, AKAI-encoded
     0x0f        MIDI program number
     0x11        polyphony
@@ -48,7 +49,8 @@ Program file layout (little-endian throughout; `AKAI_S3000_FORMAT.md`
     0x15        octave shift (signed)
     0x18/0x19   pan (signed) / loudness
     0x2a        number of keygroups, 1..99
-    0xc0 + n*0xc0   keygroup n, each:
+    <block> + n*<block>  keygroup n (block = 0xc0 on the S3000,
+                          0x96 on the S1000 -- see S1000_BLOCK_LEN), each:
         0x03/0x04   lo / hi key
         0x05        tune offset, signed 16-bit
         0x07        filter frequency
@@ -63,7 +65,7 @@ Program file layout (little-endian throughout; `AKAI_S3000_FORMAT.md`
             +0x10   loudness (signed)  +0x12  pan (signed)
 
 Sample file layout:
-    0x00        header id (1 or 3)
+    0x00        block id: 3 = sample header
     0x01        bandwidth: 0 = 10 kHz, 1 = 20 kHz
     0x02        root note
     0x03..0x0f  name, 12 bytes
@@ -73,7 +75,7 @@ Sample file layout:
     0x26/0x2c   loop 1 start / length, 32-bit
     0x30        loop 1 repeats; 0 means the loop is unused
     0x8a        sample rate, 16-bit
-    0xc0        PCM, 16-bit mono
+    <block>     PCM, 16-bit mono
 """
 
 from __future__ import annotations
@@ -97,27 +99,29 @@ _AKAI_SPACE = _AKAI_REVERSE[" "]
 
 NAME_LEN = 12
 
-SAMPLE_HDR = 0xC0
-
-#: Program block sizes **by sampler generation**. The S3000 program is an
-#: extension of the S1000 one, and "extension" is literal: the S3000 appends
-#: 42 bytes to each block, so its common block and keygroups are 0xC0 where
-#: the S1000's are 0x96.
+#: Block lengths differ **by sampler generation**, and the same figure
+#: applies to a sample header, a program common block and a keygroup alike:
+#: an S1000 block is 0x96 (150) and an S3000 block is that plus 42 bytes.
 #:
 #: Measured, not assumed. On a third-party S1000 library disc, 93 of 93
-#: programs satisfy `len(file) == 0x96 + keygroup_count * 0x96` exactly, and
+#: programs satisfy `len(file) == 0x96 + keygroup_count * 0x96` exactly and
 #: none fits the S3000 shape. Using 0xC0 for both puts keygroup 0 at byte 192
 #: of a program whose first keygroup starts at 150, so every zone name after
 #: that reads out of the middle of something else -- names like `002.5##00.00`
 #: and `.0...1`, of which only 19% happened to match a real sample. With the
-#: right sizes it is 99%+, in line with the S3000 discs.
-PROGRAM_COMMON_BY_GEN = {1: 0x96, 3: 0xC0}
-KEYGROUP_LEN_BY_GEN = {1: 0x96, 3: 0xC0}
+#: right lengths it is 99.9%. For a sample it means the PCM starts 42 bytes
+#: late, which is not a misread name but wrong audio.
+S1000_BLOCK_LEN = 0x96
+S3000_BLOCK_LEN = 0xC0
 
-#: The S3000 sizes, kept under the old names for readers that only ever deal
-#: with S3000 material.
-PROGRAM_COMMON = 0xC0
-KEYGROUP_LEN = 0xC0
+#: The S3000 lengths under their old names, for the S3000-only paths.
+SAMPLE_HDR = S3000_BLOCK_LEN
+PROGRAM_COMMON = S3000_BLOCK_LEN
+KEYGROUP_LEN = S3000_BLOCK_LEN
+
+
+def block_len(s3000: bool) -> int:
+    return S3000_BLOCK_LEN if s3000 else S1000_BLOCK_LEN
 
 #: Velocity-zone offsets within a keygroup: a **uniform 0x18 stride**, which
 #: is 12 name bytes plus a 12-byte parameter record. The same for both
@@ -151,8 +155,20 @@ ZONE_STRIDE = 0x18
 MAX_KEYGROUPS = 99
 MAX_ZONES_PER_KEYGROUP = len(ZONE_OFFSETS)
 
-HDR_ID_S1000 = 1
-HDR_ID_S3000 = 3
+#: Byte 0x00 is a **block id**, not a generation marker: 1 = program common,
+#: 2 = keygroup, 3 = sample header, and identical on both generations. Both
+#: of the format's references call it "header id -- 1 = S1000, 3 = S3000",
+#: and that reading is wrong: a real S1000 disc's 1 464 samples all carry 3
+#: and its 335 programs all carry 1, exactly as on an S3000 disc.
+#:
+#: **The generation is not recorded in the file at all.** It comes from the
+#: directory entry's type byte -- `.P1`/`.S1` against `.P3`/`.S3` -- which is
+#: why parse_program/parse_sample take it as an argument and `parse_volume`
+#: supplies it from the extension. Do not read byte 0x00 as a generation
+#: again; it silently sizes an S3000 program as an S1000 one.
+BLOCK_ID_PROGRAM = 1
+BLOCK_ID_KEYGROUP = 2
+BLOCK_ID_SAMPLE = 3
 
 #: The file type is a letter naming the kind of file, in one of three ranges
 #: by sampler generation: `A`-`Z` for the S900, `a`-`z` for the S1000, and
@@ -280,16 +296,19 @@ class AkaiSample:
     """One `.S3`/`.S1` file, held verbatim."""
 
     name: str
-    body: bytes                  # 0xC0-byte header + 16-bit mono PCM
+    body: bytes                  # header block + 16-bit mono PCM
     filename: str = ""
+    #: Which generation wrote it, which is what sizes the header block. Not
+    #: derivable from the bytes -- see BLOCK_ID_PROGRAM.
+    is_s3000: bool = True
 
     @property
     def size(self) -> int:
         return len(self.body)
 
     @property
-    def is_s3000(self) -> bool:
-        return bool(self.body) and self.body[0] == HDR_ID_S3000
+    def header_len(self) -> int:
+        return block_len(self.is_s3000)
 
     @property
     def root_key(self) -> int:
@@ -310,12 +329,13 @@ class AkaiSample:
         if len(self.body) < 0x1E:
             return 0
         declared = _u32(self.body, 0x1A)
-        physical = max(0, len(self.body) - SAMPLE_HDR) // 2
+        physical = max(0, len(self.body) - self.header_len) // 2
         return min(declared, physical) if declared else physical
 
     @property
     def pcm(self) -> bytes:
-        return self.body[SAMPLE_HDR:SAMPLE_HDR + self.frame_count * 2]
+        start = self.header_len
+        return self.body[start:start + self.frame_count * 2]
 
     @property
     def loop(self) -> str:
@@ -332,14 +352,41 @@ class AkaiSample:
         return "none"
 
 
-def parse_sample(data: bytes, filename: str = "") -> Optional[AkaiSample]:
-    """One AKAI sample file -> AkaiSample, or None if it is not one."""
-    if len(data) < SAMPLE_HDR or data[0x00] not in (HDR_ID_S1000, HDR_ID_S3000):
+def parse_sample(data: bytes, filename: str = "",
+                 s3000: Optional[bool] = None,
+                 typed: bool = False) -> Optional[AkaiSample]:
+    """One AKAI sample file -> AkaiSample, or None if it is not one.
+
+    `s3000` is the generation, and it decides where the PCM starts. Pass it
+    from the directory entry's type byte (`.S3` against `.S1`); None falls
+    back to inferring it, which is what a loose file with no usable
+    extension leaves available."""
+    if len(data) < S1000_BLOCK_LEN:
+        return None
+    if data[0x00] != BLOCK_ID_SAMPLE and not typed:
+        return None
+    if s3000 is None:
+        s3000 = _infer_sample_gen(data)
+    if len(data) < block_len(s3000):
         return None
     name = akai_to_str(data[0x03:0x03 + NAME_LEN])
     if not name:
         name = Path(filename).stem.upper()[:NAME_LEN]
-    return AkaiSample(name=name, body=data, filename=filename)
+    return AkaiSample(name=name, body=data, filename=filename, is_s3000=s3000)
+
+
+def _infer_sample_gen(data: bytes) -> bool:
+    """Which generation wrote a sample, from where its PCM has to start.
+
+    `data length` at 0x1a is in frames and sits inside the first 0x96, so it
+    is readable either way; the header length is then whatever the file
+    length leaves over. Only usable when the file is not padded, which is
+    true of an extracted file and not of one still on a disc -- so this is
+    the fallback, and the directory entry's type byte is the answer."""
+    want = _u32(data, 0x1A) * 2 if len(data) > 0x1E else 0
+    if want and len(data) - want in (S1000_BLOCK_LEN, S3000_BLOCK_LEN):
+        return len(data) - want == S3000_BLOCK_LEN
+    return True
 
 
 # ── programs ─────────────────────────────────────────────────────────────────
@@ -376,10 +423,8 @@ class AkaiProgram:
     body: bytes
     filename: str = ""
     keygroups: list[AkaiKeygroup] = field(default_factory=list)
-
-    @property
-    def is_s3000(self) -> bool:
-        return bool(self.body) and self.body[0] == HDR_ID_S3000
+    #: Which generation wrote it -- see AkaiSample.is_s3000.
+    is_s3000: bool = True
 
     @property
     def midi_program(self) -> int:
@@ -437,13 +482,30 @@ def _parse_zone(body: bytes, base: int) -> Optional[AkaiZone]:
         loudness=_s8(body[base + 0x10]), pan=_s8(body[base + 0x12]))
 
 
-def parse_program(data: bytes, filename: str = "") -> Optional[AkaiProgram]:
-    """One AKAI program file -> AkaiProgram, or None if it is not one."""
-    gen = data[0x00] if data else 0
-    if gen not in (HDR_ID_S1000, HDR_ID_S3000):
+def parse_program(data: bytes, filename: str = "",
+                  s3000: Optional[bool] = None,
+                  typed: bool = False) -> Optional[AkaiProgram]:
+    """One AKAI program file -> AkaiProgram, or None if it is not one.
+
+    `s3000` is the generation, which sizes the common block and every
+    keygroup. Pass it from the directory entry's type byte (`.P3` against
+    `.P1`); None infers it from the file's length, which is exact whenever
+    the file is not padded.
+
+    `typed` says the caller already knows this is a program from its
+    directory entry, so the block-id byte is not allowed to veto that. Same
+    rule this module applies everywhere: **an AKAI file's type comes from
+    its directory entry, never from its contents.** It matters concretely --
+    mpc2emu wrote the sample block id into every program it produced until
+    2026-08-05, and refusing those would mean refusing a file the disc
+    itself says is a program."""
+    if not data:
         return None
-    common = PROGRAM_COMMON_BY_GEN[gen]
-    kg_len = KEYGROUP_LEN_BY_GEN[gen]
+    if data[0x00] != BLOCK_ID_PROGRAM and not typed:
+        return None
+    if s3000 is None:
+        s3000 = _infer_program_gen(data)
+    common = kg_len = block_len(s3000)
     if len(data) < common:
         return None
 
@@ -472,7 +534,20 @@ def parse_program(data: bytes, filename: str = "") -> Optional[AkaiProgram]:
     name = akai_to_str(data[0x03:0x03 + NAME_LEN])
     if not name:
         name = Path(filename).stem.upper()[:NAME_LEN]
-    return AkaiProgram(name=name, body=data, filename=filename, keygroups=keygroups)
+    return AkaiProgram(name=name, body=data, filename=filename,
+                       keygroups=keygroups, is_s3000=s3000)
+
+
+def _infer_program_gen(data: bytes) -> bool:
+    """Which generation wrote a program, from its length: a whole number of
+    blocks of one size or the other. Only one of the two divides cleanly for
+    most real programs; when both do, the S3000 is the safer guess because
+    it is what everything written this century produces."""
+    fits3000 = len(data) % S3000_BLOCK_LEN == 0
+    fits1000 = len(data) % S1000_BLOCK_LEN == 0
+    if fits1000 and not fits3000:
+        return False
+    return True
 
 
 # ── a volume ─────────────────────────────────────────────────────────────────
@@ -518,24 +593,28 @@ def parse_volume(files: Iterable[tuple[str, bytes]], name: str = "",
     """Build an AkaiBank from `(filename, data)` pairs — one volume's files,
     however they were obtained (a disk image, a folder, an archive).
 
-    Type comes from the extension, since that is the only place the format
-    keeps it; a file whose extension does not name a type is still offered to
-    both readers, because several extraction tools emit `.a3p`/`.a3s` or no
-    extension at all and the header id then settles it.
+    Both the type AND the generation come from the extension, since that is
+    where the format keeps them -- an S1000 file is `.P1`/`.S1` and an S3000
+    one `.P3`/`.S3`. The generation is what sizes every block, and it is
+    NOT in the file: byte 0x00 is a block id that reads the same on both.
+    A file whose extension names no type at all is still offered to both
+    readers, because several extraction tools drop it, and each then infers
+    the generation from the file's own length.
     """
     bank = AkaiBank(path=path or name, name=name, partition=partition)
     for filename, data in files:
         ext = filename.rpartition(".")[2].upper()
         ftype = ext_to_ftype(ext)
+        s3000 = _gen_of_ext(ext)
         if ftype in PROGRAM_TYPES or ext in ("A3P", "S3P"):
-            prog = parse_program(data, filename)
+            prog = parse_program(data, filename, s3000=s3000, typed=True)
             if prog is not None:
                 bank.programs.append(prog)
             else:
                 bank.warnings.append(f"{filename}: not a readable AKAI program")
             continue
         if ftype in SAMPLE_TYPES or ext in ("A3S", "S3S"):
-            samp = parse_sample(data, filename)
+            samp = parse_sample(data, filename, s3000=s3000, typed=True)
             if samp is not None:
                 _add_sample(bank, samp, filename)
             else:
@@ -560,6 +639,20 @@ def parse_volume(files: Iterable[tuple[str, bytes]], name: str = "",
         if samp is not None:
             _add_sample(bank, samp, filename)
     return bank
+
+
+def _gen_of_ext(ext: str) -> Optional[bool]:
+    """The sampler generation an extension names, or None if it names none.
+
+    `.P1`/`.S1` are the S1000 forms and `.P3`/`.S3` the S3000 ones; the
+    tool-emitted `.a3p`/`.a3s` and `.s3p`/`.s3s` are S3000 by their own
+    convention. Anything else leaves the generation to be inferred."""
+    ext = ext.upper()
+    if ext in ("P1", "S1"):
+        return False
+    if ext in ("P3", "S3", "A3P", "A3S", "S3P", "S3S", "M3"):
+        return True
+    return None
 
 
 def _add_sample(bank: AkaiBank, samp: AkaiSample, filename: str) -> None:
