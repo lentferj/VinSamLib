@@ -480,16 +480,37 @@ def _parse_zone(body: bytes, base: int) -> Optional[AkaiZone]:
     name = akai_to_str(raw)
     if not name:
         return None
-    # An unused slot is not always blank. On real discs a keygroup that uses
-    # two zones commonly leaves stale bytes in the third slot -- 3 323 of the
-    # 3 873 nested slot-3 reads across eight library discs, of which just 1%
-    # name a real sample, against 99.5% for the coherent ones. A velocity
-    # range that is inverted or past the MIDI ceiling is the tell, and it
-    # costs nothing to require what the field means: a zone like that could
-    # not sound anyway.
-    lo_vel, hi_vel = body[base + 0x0C], body[base + 0x0D]
-    if lo_vel > hi_vel or hi_vel > 127:
+    # **A zone is disabled by hi_vel == 0, not by a blank name.** Real
+    # programs switch a zone off through the velocity range and leave
+    # whatever was in the name field, so a non-blank name is no evidence the
+    # zone is live: one library leaves the sampler's ROM waveform names
+    # (SAWTOOTH, PULSE, SQUARE) in the slot, another leaves its own branding.
+    # Neither is a file, and neither ever resolves.
+    #
+    # `hi_vel == 0` rather than an inverted range, because publishers spell
+    # it differently and only this covers both. Measured over 57 179 named
+    # zones on eleven discs:
+    #
+    #     hi_vel == 0   10 970 zones,  5.52% name a sample on the volume
+    #     hi_vel >  0   46 209 zones, 96.96% do
+    #
+    # and the disabled ones split into exactly two spellings -- (0, 0) on
+    # 5 163 and (1, 0) on 5 807, one library each. An inverted-range test
+    # catches the second and reads the first as live. MIDI velocity 0 is
+    # note-off, so a zone that tops out at 0 is unreachable however it was
+    # written, which is why this is the general form rather than a third
+    # convention to collect.
+    #
+    # Nothing else is tested. An earlier version also dropped hi_vel > 127,
+    # which sounds harmless and is not: across the corpus it cost 2 zones and
+    # one named a real sample. A value past the MIDI ceiling is something to
+    # clamp when displaying, not a reason to drop a zone the hardware would
+    # sound. Keygroup byte 0x1f is not a count of zones in use either --
+    # every keygroup on every disc carries 4 regardless.
+    hi_vel = body[base + 0x0D]
+    if hi_vel == 0:
         return None
+    lo_vel = body[base + 0x0C]
     return AkaiZone(
         sample_name=name, name_offset=base,
         lo_vel=body[base + 0x0C], hi_vel=body[base + 0x0D],

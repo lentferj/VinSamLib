@@ -439,7 +439,7 @@ def summarize_akai_program(bank: akai.AkaiBank,
             zones.append(ZoneSummary(
                 sample_name=z.sample_name,
                 lo_key=lo_key, hi_key=hi_key,
-                lo_vel=z.lo_vel, hi_vel=z.hi_vel,
+                lo_vel=_clamp_key(z.lo_vel), hi_vel=_clamp_key(z.hi_vel),
                 root_key=samp.root_key if samp else 60,
                 loop=samp.loop if samp else "?",
                 sample_rate=samp.sample_rate if samp else None,

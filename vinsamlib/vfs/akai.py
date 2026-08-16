@@ -245,6 +245,9 @@ class AkaiVolume(Volume):
                 f"magic is missing, and it is not an 800 KB / 1.6 MB AKAI "
                 f"floppy either.")
         self._parts: Optional[list[dict]] = None
+        #: Files listed in a directory whose data is not in this image --
+        #: see truncation_warning().
+        self._truncated = 0
 
     # ── structure ────────────────────────────────────────────────────────────
 
@@ -430,6 +433,16 @@ class AkaiVolume(Volume):
                 blocks = _chain(part["fat"], start, nblocks, (FAT_FILEEND,))
             except AkaiImageError:
                 continue
+            # A file whose blocks run past the end of the image is not there
+            # to read. That happens for real: a half-downloaded disc image
+            # keeps its whole partition table and directory -- those live at
+            # the front -- so it lists its full contents and can only deliver
+            # the beginning of them. Skipped and counted rather than served
+            # short, because a truncated sample is not a smaller sample, it
+            # is the wrong audio with a plausible length.
+            if base + (max(blocks) + 1) * block > self._size:
+                self._truncated += 1
+                continue
             name = vs_akai.akai_to_str(e[0:vs_akai.NAME_LEN])
             ext = vs_akai.ftype_to_ext(ftype)
             kind = (EntryKind.BANK if ftype in vs_akai.PROGRAM_TYPES
@@ -501,6 +514,32 @@ class AkaiVolume(Volume):
         with open(self.path, "rb") as f:
             f.seek(off)
             return vs_akai.akai_to_str(f.read(vs_akai.NAME_LEN))
+
+    def declared_size(self) -> int:
+        """How many bytes the image's own partition table says it should be.
+
+        A partition table and its volume directories live at the front of the
+        disc, so a half-downloaded image still lists its whole contents and
+        can deliver only the beginning of them."""
+        total = 0
+        for part in self._partitions():
+            total = max(total, part["base"] + part["nblocks"] * part["block"])
+        return total
+
+    def truncation_warning(self) -> str:
+        """A sentence naming what this image is missing, or "" if it is
+        whole. Worth surfacing rather than swallowing: without it, a partial
+        download converts to a plausible-looking subset of a library and
+        nothing says which files were never there."""
+        declared = self.declared_size()
+        if declared <= self._size and not self._truncated:
+            return ""
+        pct = 100.0 * self._size / declared if declared else 100.0
+        return (f"this image holds {self._size:,} bytes of the "
+                f"{declared:,} its own partition table declares ({pct:.0f}%)"
+                + (f"; {self._truncated} file(s) listed in its directories are "
+                   f"not in it and were skipped" if self._truncated else "")
+                + ". It looks like an incomplete copy.")
 
     def media_kind(self) -> str:
         """'floppy' | 'cdrom' | 'harddisk' — what the image actually is,

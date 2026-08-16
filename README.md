@@ -115,8 +115,8 @@ mpc2emu checkout that has AKAI support.
 None of it is confirmed on real Akai hardware yet; see
 [Known Limitations](#akai-s1000--s3000). The format was never published
 by Akai, so every byte of it is reconstructed — this project reads
-**twenty real commercial library discs** (four libraries from three
-publishers, 1 835 volumes, evenly split S1000/S3000) correctly, and
+**twenty-five real commercial library discs** (nine libraries under seven
+publisher badges, 2 276 volumes, both S1000 and S3000) correctly, and
 writes nothing a sampler has been asked to mount.
 
 ### Browse your whole library at once
@@ -1908,27 +1908,30 @@ and every row was locked. The control worked only on hand-authored banks.
 **Nothing here is confirmed on an Akai sampler.** Akai never published
 the disk or file format; it is reconstructed from Hiroyuki Ohsaki's
 binary analysis, cross-checked against `akaiutil`, and — the part that
-actually settles arguments — against **twenty real commercial library
-discs**, four libraries from three publishers, evenly split between the
-S1000 and S3000 generations. That is what the ✅ column below means and
+actually settles arguments — against **twenty-five real commercial library
+discs**, nine libraries under seven publisher badges, in both the S1000 and
+S3000 formats. That is what the ✅ column below means and
 does not mean.
 
-Four separate faults survived the "two implementations agree" stage and
+Five separate faults survived the "two implementations agree" stage and
 were caught only by real discs — including one that read *past* the end of
-every S1000 directory and invented files out of what followed. Two of them
-needed material that actually *uses* the feature, not more material: a
-corpus can be large and still never exercise the field you got wrong.
+every S1000 directory and invented files out of what followed. Three of
+them needed material that actually *uses* the field, not more material: a
+corpus can be large and still never exercise the one you got wrong. The
+last of the five survived twenty discs and 56 000 files across four
+libraries before a fifth publisher's disc surfaced it.
 
 | Feature | Status |
 |---|---|
 | Reading AKAI media | ✅ hard disk (`.hda`/`.img`), CD3000 CD-ROM (`.iso`) and 800 KB / 1.6 MB floppy, all sniffed by content since those extensions are shared with other formats. Verified across **1 904 volumes and 58 716 files**, every one byte-identical to what mpc2emu's independent reader gets from the same image. One library ships a plain ISO 9660 PC disc in the same box as its sampler discs, and that one is correctly handed to the ISO 9660 reader instead — the AKAI test is tried first (an AKAI disc has no 55/AA signature and an AKAI floppy is not DOS-formatted, so neither could fall through), which is only safe because it does not over-match |
-| Reading AKAI programs and samples | ✅ keygroups, velocity zones, key ranges, root notes, loops and rates, all in the Detail and Samples panes with no mpc2emu needed. **8 226 programs** parsed, and 99.8 % of their zone names resolve to a sample on the same volume. The audio is checked too, not just the file bytes: **8 689 samples decoded and compared frame-for-frame** against mpc2emu's own reader, since the block length that decides where PCM starts differs by generation and getting it wrong is silent |
+| Reading AKAI programs and samples | ✅ keygroups, velocity zones, key ranges, root notes, loops and rates, all in the Detail and Samples panes with no mpc2emu needed. Around 99.8 % of zone names resolve to a sample on the same volume. A zone is treated as switched off when its **top velocity is 0**, which is how real programs disable one — they leave whatever was in the name field, often a ROM waveform like `SAWTOOTH` or the publisher's own branding, neither of which is a file. Measured over 57 179 named zones on eleven discs: a zone topping out at 0 names a real sample 5.5 % of the time, one topping out higher **97.0 %**. Publishers spell it two ways, `(0, 0)` and `(1, 0)`, so testing for an inverted range alone would read half of them as live. The audio is checked too, not just the file bytes: **8 689 samples decoded and compared frame-for-frame** against mpc2emu's own reader, since the block length that decides where PCM starts differs by generation and getting it wrong is silent |
 | Converting AKAI → E4B / KRZ / EIII | ✅ via Explorer's "Import via mpc2emu…", needs an mpc2emu checkout with AKAI support |
 | Search | ✅ AKAI volumes index as banks and their programs as presets, the same shape the tree uses, so a hit resolves onto a row that exists. Only the programs are read at scan time, never sample audio — **1 835 volumes and 7 991 programs across 12.3 GB of media index in 3.6 s** |
 | Building a new AKAI volume | ✅ drag programs into New Bank and Save as… — writes a **folder** of `.P3`/`.S3` files, because an AKAI volume is a set of files and not one file. Sample files are copied verbatim; only a name that had to change is rewritten |
 | Writing AKAI **disk images** | ⚠️ **not offered.** mpc2emu can build them and its output is byte-identical to `akaiutil`'s, but no S3000XL has been asked to mount one. Until that happens, VinSamLib will not put media in front of you that a sampler might refuse. The New Bank folder above is the way out in the meantime |
 | Converting E4B / KRZ / EIII → AKAI | ⚠️ **not offered**, for the same reason, and gated behind its own support check so it cannot appear by accident |
 | AKAI → AKAI | ⚠️ refused on purpose. The pipeline runs through mpc2emu's `Bank` model, which carries a fraction of what an AKAI program file holds (per-keygroup filter and amplitude envelopes, LFO routing, modulation depths), so the round trip would quietly flatten them. New Bank collects AKAI programs **verbatim** instead, which is what a librarian should do |
+| An incomplete disc image | ℹ️ detected and reported. A partition table and its volume directories sit at the front of a disc, so a half-downloaded image still lists its whole contents and can only deliver the beginning of them. Files whose data is not in the image are skipped rather than served short — a truncated sample is not a smaller sample, it is the wrong audio at a plausible length — and the image says what fraction of itself it holds and how many files went missing |
 | A program whose samples are on another volume | ℹ️ normal, not broken — AKAI libraries were routinely shipped that way. The Detail pane shows the zones regardless, and a conversion is refused with the missing names in the message rather than silently producing a bank of nothing |
 | Stereo samples | ⚠️ AKAI stores one channel per file and pairs halves by a `-L`/`-R` **name suffix**, not by a header flag. Nothing here pairs them automatically, so a stereo sample browses as two mono ones. The stereo *image* is not lost, though: each half carries its own hard pan (−50/+50) and that survives conversion — one library disc is 1 313 stereo halves out of 1 464 samples, and they convert hard left and hard right as intended |
 | Names are 12 characters | ℹ️ four fewer than every other format here, and unique only **within one volume** — two volumes may each hold their own `BASS`. Building a volume from several sources renames on collision and patches the zone that named it, so no program ends up sounding another volume's namesake |
