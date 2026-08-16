@@ -45,7 +45,22 @@ def _ensure_installed() -> None:
 class _Lazy:
     """Defers the mpc2emu import until first attribute access, so importing
     vinsamlib.mpc2emu_bridge never requires mpc2emu to already be on disk —
-    only *using* it does."""
+    only *using* it does.
+
+    WHAT THAT COSTS, and it is easy to forget when reading a green test run:
+    **a clean import proves almost nothing about this surface.** Importing a
+    module establishes that its module-level names resolve at import time. It
+    says nothing about names used only inside a function, only on a branch —
+    or, here, anything reached through one of these proxies, because none of
+    them has touched mpc2emu yet.
+
+    So `importlib.import_module("vinsamlib.build.convert")` succeeding does
+    not mean `krz_parser.parse_krz` exists, or that the attribute a caller
+    asks for is spelled correctly. The first evidence of either is the call
+    itself. That is sharper for us than for a project importing eagerly, and
+    it is why three missing-import bugs here survived import-time checks and
+    one shipped — see tests/manual_unbound_names.py, which asks the question
+    an import cannot."""
 
     def __init__(self, modname: str):
         self._modname = modname
