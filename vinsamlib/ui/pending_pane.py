@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDia
 
 from . import workers
 from .. import tempdirs
+from ..banks import akai
 from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _sanitize_bank_name
 from .convert_options_dialog import ConvertOptionsDialog
 from ..build.convert import (apply_conversion, load_sources_samples_for_test,
@@ -59,11 +60,21 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
     paths: list[str] = []
     for entry in pending:
         fmt = entry["format"]
-        if fmt not in ("E4B", "KRZ", "EIII"):
+        if fmt not in ("E4B", "KRZ", "EIII", "AKAI"):
             raise ValueError(f"Pending for Image doesn't support building a {fmt} queue")
         fn = _ASSEMBLE_FNS[fmt]
         selections = [(bank, preset) for bank, preset, _name in entry["items"]]
         name = _sanitize_bank_name(entry["name"])
+        if fmt == "AKAI":
+            # An AKAI volume is a set of files, so what goes to the image
+            # builder is a FOLDER rather than a bank file -- the same shape
+            # New Bank's Save as… writes, and what build/akai_image.py takes.
+            files = fn(selections, volume_name=name)
+            vol_dir = tempdirs.session_temp_dir(_PENDING_TEMP_PREFIX) / name
+            akai.write_volume(files, str(vol_dir))
+            paths.append(str(vol_dir))
+            continue
+
         kwargs = {"bank_name": name} if fmt == "EIII" else {}
         # All three native formats take this. It read ("E4B", "EIII") until
         # 2026-08-09: written when KRZ genuinely could not rename, and not
@@ -71,6 +82,8 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         # meter and Save as… but was silently dropped on the way to an IMAGE.
         # Kept as a list rather than "not AKAI" so adding a format is a
         # deliberate edit here, which is exactly what did not happen last time.
+        # AKAI is absent because its assemble() takes no such argument, and it
+        # returns early above regardless.
         renames = entry.get("sample_renames") or {}
         if renames and fmt in ("E4B", "EIII", "KRZ"):
             kwargs["sample_names"] = renames

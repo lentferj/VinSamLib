@@ -265,17 +265,18 @@ class BankPane(QWidget):
             self.statusMessage.emit("Can't send an over-limit bank — remove some presets first")
             return
         if self._format == "AKAI":
-            # Refused here rather than at build time. Pending for Image ends
-            # in an AKAI disk image, and writing AKAI media is deliberately
-            # withheld until an S3000XL has mounted one -- so a queue built
-            # from these would fill up and then fail on the last step, which
-            # is the worst moment to learn it. "Save as…" writes the volume
-            # as a folder in the meantime.
-            self.statusMessage.emit(
-                "AKAI can't go to the Image column yet — writing AKAI media "
-                "is unverified on hardware. Use Save as… to write the volume "
-                "as a folder.")
-            return
+            # Still refused at the button rather than at the end of a build,
+            # but now only when this checkout genuinely cannot write AKAI
+            # media -- the queue ends in one, so filling it first and failing
+            # on the last step is the worst moment to find out. Where the
+            # support IS present the queue is allowed: the hardware gate is
+            # that this branch stays unmerged, not that the code is absent.
+            ok, reason = self._config.check_akai_write_support()
+            if not ok:
+                self.statusMessage.emit(
+                    f"AKAI can't go to the Image column here — {reason} "
+                    f"Use Save as… to write the volume as a folder.")
+                return
         name = _sanitize_bank_name(self._name_edit.text())
         # The renames travel WITH the recipe. Pending re-assembles from
         # (bank, preset) pairs rather than from the bytes this pane already

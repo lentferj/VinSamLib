@@ -28,6 +28,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import akai_image
 from ..filenames import safe_path_component
 from ..mpc2emu_bridge import fat12, hda_builder, iso_builder
 from ..vfs.base import Entry, EntryKind
@@ -41,7 +42,18 @@ IMAGE_KINDS: dict[str, tuple[str, str, str]] = {
     "k2000_fat16": ("KRZ", "K2000 FAT16 disk (CD or SCSI HD, any OS)", "K2000"),
     "k2000_iso9660": ("KRZ", "K2000 ISO 9660 CD (OS v3.87+, burn-once)", "K2000"),
     "fat12_floppy": ("KRZ", "Gotek FAT12 floppy", "K2000"),
+    # AKAI media. Content is a FOLDER per volume, not a bank file -- an AKAI
+    # volume is a set of files (see build/akai_image.py). Gated on
+    # Config.check_akai_write_support(); nothing offers these unless an
+    # mpc2emu checkout with the writer is configured, and the branch they
+    # live on stays unmerged until an S3000XL has mounted one.
+    "akai_hd": ("AKAI", "AKAI S3000 hard disk (SCSI/ZuluSCSI)", "VOLUME 001"),
+    "akai_cd3000": ("AKAI", "AKAI CD3000 CD-ROM (raw, not ISO 9660)", "VOLUME 001"),
+    "akai_floppy": ("AKAI", "AKAI floppy, 1.6 MB high density", "VOLUME 001"),
 }
+
+#: The kinds whose `bank_paths` are folders rather than files.
+FOLDER_INPUT_KINDS = frozenset(akai_image.AKAI_IMAGE_KINDS)
 
 # Kinds append_banks() can grow via a *fast, true in-place* append (mpc2emu
 # has a real incremental-append function and the image was built with spare
@@ -57,7 +69,8 @@ IMAGE_KINDS: dict[str, tuple[str, str, str]] = {
 # kind that is genuinely create-once here — matching a real K2000 factory
 # CD before OS v3.87 made ISO 9660 readable at all. A floppy's ~1.4 MB
 # leaves no realistic room to grow either way.
-APPENDABLE_KINDS = {"emu3_cd", "emu3_hd_emu", "emu3_hd_fat", "k2000_fat16"}
+APPENDABLE_KINDS = ({"emu3_cd", "emu3_hd_emu", "emu3_hd_fat", "k2000_fat16"}
+                    | set(akai_image.AKAI_APPENDABLE))
 
 
 class ImageOpError(RuntimeError):
@@ -98,6 +111,22 @@ def create_image(kind: str, output_path: str, bank_paths: list[str],
 
     _, default_label, _ = IMAGE_KINDS[kind]
     label = volume_label or IMAGE_KINDS[kind][2]
+
+    if kind in FOLDER_INPUT_KINDS:
+        # AKAI takes folders, one per volume -- see build/akai_image.py. Its
+        # own gate raises AkaiWriteUnavailable, which is already a sentence
+        # fit to show, so it just changes class here.
+        try:
+            # `volume_label` raw, not the defaulted `label`: an AKAI volume
+            # already has a name -- its folder's -- and that is more specific
+            # than this table's generic fallback. Passing the default made a
+            # floppy staged as VOL1 come back named "VOLUME 001".
+            return akai_image.create_image(kind, output_path, bank_paths,
+                                            volume_label=volume_label,
+                                            size_mb=size_mb)
+        except Exception as ex:
+            _cleanup_partial(output_path)
+            raise ImageOpError(str(ex)) from ex
 
     try:
         if kind == "emu3_cd":
@@ -181,6 +210,12 @@ def append_banks(image_path: str, bank_format: str, bank_paths: list[str],
     from each bank's own bytes rather than assuming E4B -- see mpc2emu's
     `_bank_props()`, added alongside EIII output support)."""
     def _do(tmp_path: str) -> tuple[int, str]:
+        if bank_format == "AKAI":
+            try:
+                return akai_image.append_volumes(tmp_path, bank_paths,
+                                                  on_duplicate=on_duplicate)
+            except Exception as ex:
+                raise ImageOpError(str(ex)) from ex
         if bank_format in ("E4B", "EIII"):
             fs = hda_builder.detect_hda_fs(tmp_path)
             if fs == "emu":
