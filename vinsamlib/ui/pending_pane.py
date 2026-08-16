@@ -122,12 +122,16 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
 class PendingBanksPane(QWidget):
     statusMessage = Signal(str)
     moveToNewBankRequested = Signal(str, str, list, dict, dict, dict)   # (+ voice_velocity)
-    buildRequested = Signal(list, str)                # (temp_file_paths, format)
+    buildRequested = Signal(list, str, list)          # (paths, format, partition groups)
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self._pending: list[dict[str, Any]] = []
+        #: Queue rows that START a new AKAI partition. Row 0 always opens
+        #: partition A and is never in here. Indices, so every path that
+        #: removes or reorders a row must fix them up -- see _shift_breaks.
+        self._partition_breaks: set[int] = set()
         self._format: Optional[str] = None
         self._live_workers: list[workers.Worker] = []
 
@@ -276,8 +280,20 @@ class PendingBanksPane(QWidget):
 
     def _refresh(self) -> None:
         self._list.clear()
-        for entry in self._pending:
-            self._list.addItem(self._make_item(entry))
+        for row, entry in enumerate(self._pending):
+            item = self._make_item(entry)
+            # AKAI only: the partition each volume will land in, shown on the
+            # row itself. A disk is carved into partitions and the writer
+            # fills one before opening the next, so this follows the ORDER --
+            # and a break makes it follow the user instead.
+            if self._format == "AKAI":
+                letter = self._partition_letter(row)
+                item.setText(f"{letter}   {item.text()}")
+                if row in self._partition_breaks:
+                    item.setToolTip(
+                        f"Starts partition {letter}. Right-click to remove "
+                        f"the break and let it follow the one before.")
+            self._list.addItem(item)
         self._stack.setCurrentIndex(1 if self._pending else 0)
         n = len(self._pending)
         self._summary_label.setText(f"{n} bank{'s' if n != 1 else ''} pending")
@@ -292,6 +308,54 @@ class PendingBanksPane(QWidget):
                  "to the SELECTED pending bank's next Build Image (per bank, "
                  "not the whole queue)")
         self._update_contents_preview()
+
+    def _shift_breaks_after_delete(self, row: int) -> None:
+        """Keep the breaks pointing at the same VOLUMES after a deletion.
+
+        They are row indices, so deleting a row above a break moves the
+        boundary onto a different volume unless the index moves with it. A
+        break ON the deleted row is dropped: the volume that asked for it is
+        gone, and silently promoting its neighbour would put a partition
+        boundary somewhere the user never chose.
+        """
+        moved = set()
+        for b in self._partition_breaks:
+            if b == row:
+                continue
+            moved.add(b - 1 if b > row else b)
+        self._partition_breaks = {b for b in moved if 0 < b < len(self._pending)}
+
+    def _partition_letter(self, row: int) -> str:
+        """Partition this row falls in, counting breaks before it."""
+        n = sum(1 for r in self._partition_breaks if r <= row)
+        return chr(ord("A") + n)
+
+    def partition_groups(self) -> list[list[int]]:
+        """[[queue index, ...], ...] — the grouping the user has set.
+
+        Empty when no break is set, which means "let the writer plan it" and
+        keeps the default path exactly as it was. Contiguous by construction:
+        a marker cannot put one volume in two partitions or leave one out, so
+        the two errors the writer validates against are unreachable from this
+        UI rather than merely refused by it.
+        """
+        if not self._partition_breaks or self._format != "AKAI":
+            return []
+        groups: list[list[int]] = [[]]
+        for row in range(len(self._pending)):
+            if row in self._partition_breaks and groups[-1]:
+                groups.append([])
+            groups[-1].append(row)
+        return [g for g in groups if g]
+
+    def _toggle_partition_break(self, row: int) -> None:
+        if row <= 0:
+            return                      # row 0 always starts partition A
+        if row in self._partition_breaks:
+            self._partition_breaks.discard(row)
+        else:
+            self._partition_breaks.add(row)
+        self._refresh()
 
     def _make_item(self, entry: dict) -> QListWidgetItem:
         label = f"{entry['name']}  [{entry['format']}]  — {len(entry['items'])} preset(s)"
@@ -387,8 +451,26 @@ class PendingBanksPane(QWidget):
         rename_action = menu.addAction("Rename…")
         delete_action = menu.addAction("Delete")
         menu.addSeparator()
+        break_action = None
+        if self._format == "AKAI":
+            row = index.row()
+            here = row in self._partition_breaks
+            break_action = menu.addAction(
+                "Remove Partition Break" if here else "Start New Partition Here")
+            # Row 0 opens partition A by definition, so a break there would
+            # mean nothing -- disabled rather than hidden, so the entry stays
+            # in the same place in the menu wherever the user right-clicks.
+            break_action.setEnabled(row > 0)
+            break_action.setToolTip(
+                "An AKAI disk is carved into partitions of 60 MB / 100 "
+                "volumes; this one starts here instead of when the previous "
+                "one fills up.")
+            menu.addSeparator()
         move_action = menu.addAction("Send to New Bank")
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+        if break_action is not None and chosen == break_action:
+            self._toggle_partition_break(index.row())
+            return
         if chosen == rename_action:
             self._rename_selected()
         elif chosen == delete_action:
@@ -413,8 +495,10 @@ class PendingBanksPane(QWidget):
         if row < 0:
             return
         del self._pending[row]
+        self._shift_breaks_after_delete(row)
         if not self._pending:
             self._format = None
+            self._partition_breaks.clear()
         self._refresh()
 
     def _move_selected_to_new_bank(self) -> None:
@@ -422,8 +506,13 @@ class PendingBanksPane(QWidget):
         if row < 0:
             return
         entry = self._pending.pop(row)
+        # Same fix-up as _delete_selected: this is the second path that
+        # removes a row, and a break left pointing at the old index would
+        # move the boundary onto a different volume.
+        self._shift_breaks_after_delete(row)
         if not self._pending:
             self._format = None
+            self._partition_breaks.clear()
         self._refresh()
         # Renames go back too, or double-clicking a bank into New Bank and
         # sending it straight back would quietly strip them -- the round trip
@@ -435,6 +524,7 @@ class PendingBanksPane(QWidget):
 
     def _clear(self) -> None:
         self._pending = []
+        self._partition_breaks.clear()
         self._format = None
         self._refresh()
 
@@ -488,7 +578,7 @@ class PendingBanksPane(QWidget):
         # second image; Clear (or Delete per-row) is how the user empties
         # it, same as New Bank's own explicit Clear button.
         self._build_btn.setEnabled(bool(self._pending))
-        self.buildRequested.emit(paths, fmt)
+        self.buildRequested.emit(paths, fmt, self.partition_groups())
         # Voice-budget findings from the per-bank conversions above, if any
         # bank had convert options set (see build/convert.py's
         # polyphony_risk()) -- reported after the handoff, since the banks

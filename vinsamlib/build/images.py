@@ -100,7 +100,8 @@ def _cleanup_partial(path: str) -> None:
 
 def create_image(kind: str, output_path: str, bank_paths: list[str],
                   volume_label: str = "", size_mb: Optional[int] = None,
-                  floppy_kind: str = "1440") -> str:
+                  floppy_kind: str = "1440",
+                  partitions: Optional[list] = None) -> str:
     """Build a brand-new image at `output_path` containing `bank_paths` (may
     be empty for the appendable kinds, to create a blank starter image).
     Returns the captured build log."""
@@ -123,7 +124,8 @@ def create_image(kind: str, output_path: str, bank_paths: list[str],
             # floppy staged as VOL1 come back named "VOLUME 001".
             return akai_image.create_image(kind, output_path, bank_paths,
                                             volume_label=volume_label,
-                                            size_mb=size_mb)
+                                            size_mb=size_mb,
+                                            partitions=partitions)
         except Exception as ex:
             _cleanup_partial(output_path)
             raise ImageOpError(str(ex)) from ex

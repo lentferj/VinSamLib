@@ -241,6 +241,48 @@ def plan_partitions(volumes: Sequence[tuple], kind: str = "akai_hd",
                                        sys_blocks=sys_blocks)
 
 
+def describe_partition_groups(volumes: Sequence[tuple], groups: Sequence[Sequence[int]],
+                              kind: str = "akai_hd", part_mb: int = 60) -> list[str]:
+    """Describe a grouping the USER chose, rather than one the writer planned.
+
+    Same shape of output as describe_partition_plan so the dialog reads the
+    same either way, but each partition is a group the user set with a break
+    in the Pending queue. Over-full groups are FLAGGED here rather than left
+    for the writer to raise on: the point of a preview is to be told before
+    the build, and a break that cannot be honoured is exactly what a user
+    would want to move.
+    """
+    akai_image_mod = akai_image
+    sys_blocks = akai_image_mod.PARTHEAD_BLKS + (
+        akai_image_mod.CDINFO_BLKS if kind == "akai_cd3000" else 0)
+    part_blocks = min(
+        akai_image_mod.PART_MAX_BLOCKS,
+        max(sys_blocks + akai_image_mod.VOLDIR_HD_BLKS,
+            (part_mb * 1048576) // akai_image_mod.HD_BLOCK))
+    cap_mb = part_blocks * akai_image_mod.HD_BLOCK / 1048576
+
+    lines = []
+    for i, group in enumerate(groups):
+        used = sys_blocks + sum(
+            akai_image_mod.VOLDIR_HD_BLKS
+            + sum(akai_image_mod._blocks(len(d), akai_image_mod.HD_BLOCK)
+                  for _n, d in volumes[gi][1])
+            for gi in group)
+        used_mb = used * akai_image_mod.HD_BLOCK / 1048576
+        names = ", ".join(volumes[gi][0] for gi in group[:4])
+        more = f" +{len(group) - 4} more" if len(group) > 4 else ""
+        over = "  ⚠ over" if used > part_blocks else ""
+        letter = chr(ord("A") + i)
+        lines.append(
+            f"  Partition {letter}: {len(group)}/{akai_image_mod.ROOTDIR_ENTRIES} "
+            f"volume(s), {used_mb:.1f}/{cap_mb:.0f} MB — {names}{more}{over}")
+    if any("⚠ over" in ln for ln in lines):
+        lines.append("  ⚠ a partition break puts more than a partition holds "
+                     "— move or remove it, or the build will refuse")
+    lines.append("  (partition breaks set in Pending for Image)")
+    return lines
+
+
 def describe_partition_plan(volumes: Sequence[tuple], kind: str = "akai_hd",
                             part_mb: int = 60) -> list[str]:
     """One line per partition: how full it is, and what lands in it.
@@ -298,7 +340,8 @@ def describe_partition_plan(volumes: Sequence[tuple], kind: str = "akai_hd",
 
 def create_image(kind: str, output_path: str, folders: Sequence[str],
                  volume_label: str = "", size_mb: Optional[int] = None,
-                 config: Optional[Config] = None) -> str:
+                 config: Optional[Config] = None,
+                 partitions: Optional[Sequence[Sequence[int]]] = None) -> str:
     """Build AKAI media from folders of loose AKAI files. Returns a log line."""
     ensure_available(config)
     if kind not in AKAI_IMAGE_KINDS:
@@ -332,10 +375,36 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
         info = akai_image.build_akai_floppy_image(
             files, output_path, volume_name=volume_label or name, density="hd")
     else:
-        info = akai_image.build_akai_hd_image(
-            volumes, output_path, size_mb=size_mb,
-            cdrom=(kind == "akai_cd3000"),
-            cd_label=(volume_label or None) if kind == "akai_cd3000" else None)
+        # `partitions` is index lists into `volumes` (mpc2emu fdc7e39). Passed
+        # only when the user actually set breaks; None keeps the writer's own
+        # planning, and a grouping identical to what it would have chosen
+        # produces a byte-identical image.
+        # `partitions` is index lists into `volumes` (mpc2emu fdc7e39), and
+        # since their d391280 an explicit grouping SIZES THE DISK for its own
+        # partitions when no size is given. We computed that here first and
+        # deleted it: two copies of one sizing rule is the drift this project
+        # refused for the partition PLANNER a day earlier, and refusing it
+        # there while keeping it here would be inconsistent. An older mpc2emu
+        # raises instead, which is loud -- see the re-raise below.
+        kwargs = {"partitions": [list(g) for g in partitions]} if partitions else {}
+        try:
+            info = akai_image.build_akai_hd_image(
+                volumes, output_path, size_mb=size_mb,
+                cdrom=(kind == "akai_cd3000"),
+                cd_label=(volume_label or None) if kind == "akai_cd3000" else None,
+                **kwargs)
+        except Exception as ex:
+            # An mpc2emu predating d391280 sizes the disk from the CONTENT and
+            # then cannot fit the partitions the grouping asks for. Its message
+            # says "raise --hda-size", which is its CLI flag and means nothing
+            # here, so the hint is restated in this program's terms.
+            if partitions and "partitions but a" in str(ex):
+                raise AkaiWriteUnavailable(
+                    f"{ex}\n\nThe partition breaks need a larger disk than "
+                    f"this content. Update mpc2emu (its writer sizes the disk "
+                    f"for an explicit grouping), or remove some breaks."
+                ) from ex
+            raise
     lines = [_describe(kind, info)]
     lines += [describe_ram_cost(n, f) for n, f in volumes]
     return "\n".join(lines)

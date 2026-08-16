@@ -302,7 +302,8 @@ class ImagePane(QWidget):
 
     # -- public entry point for the New Bank column's "Send to Image Column" ----
 
-    def receive_bank_files(self, paths: list[str], fmt: str) -> None:
+    def receive_bank_files(self, paths: list[str], fmt: str,
+                            partitions: Optional[list] = None) -> None:
         """Entry point for the Pending for Image column's "Build Image ->"
         -- a batch of already-assembled bank files, in the order they
         should end up on the image. Seeds a brand-new image (pre-filling
@@ -313,8 +314,18 @@ class ImagePane(QWidget):
         if not paths:
             return
         if self._path is None:
-            self._new_image(seed_paths=paths, seed_format=fmt)
+            self._new_image(seed_paths=paths, seed_format=fmt,
+                            seed_partitions=partitions)
             return
+        # Appending to an existing disk: the partition grouping describes a
+        # disk being CREATED, and the volumes here are going into partitions
+        # that already exist with their own contents. Ignored rather than
+        # half-applied, and said out loud, because silently dropping it would
+        # look like the markers had been honoured.
+        if partitions:
+            self.statusMessage.emit(
+                "Partition breaks apply when creating an image; appending "
+                "puts volumes wherever the disk has room")
         self._append_paths(paths)
 
     # -- opening / creating -------------------------------------------------------
@@ -386,8 +397,11 @@ class ImagePane(QWidget):
         self.statusMessage.emit(f"Opened {Path(path).name} ({len(entries)} bank(s))")
 
     def _new_image(self, seed_paths: Optional[list[str]] = None,
-                    seed_format: Optional[str] = None) -> None:
-        dlg = _NewImageDialog(self, self._config, seed_paths=seed_paths, seed_format=seed_format)
+                    seed_format: Optional[str] = None,
+                    seed_partitions: Optional[list] = None) -> None:
+        dlg = _NewImageDialog(self, self._config, seed_paths=seed_paths,
+                              seed_format=seed_format,
+                              seed_partitions=seed_partitions)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         spec = dlg.result_spec()
@@ -398,7 +412,7 @@ class ImagePane(QWidget):
             f"Building {Path(spec['output_path']).name}…",
             workers.Worker(images.create_image, spec["kind"], spec["output_path"],
                            spec["bank_paths"], spec["volume_label"], spec["size_mb"],
-                           spec["floppy_kind"]),
+                           spec["floppy_kind"], spec.get("partitions")),
             on_done=lambda _log, p=spec["output_path"], k=spec["kind"]:
                 self._open_image(p, known_kind=k),
         )
@@ -621,11 +635,15 @@ class _NewImageDialog(QDialog):
 
     def __init__(self, parent=None, config: Optional[Config] = None,
                  seed_paths: Optional[list[str]] = None,
-                 seed_format: Optional[str] = None):
+                 seed_format: Optional[str] = None,
+                 seed_partitions: Optional[list] = None):
         super().__init__(parent)
         self.setWindowTitle("New Image")
         self._config = config
         self._bank_paths: list[str] = list(seed_paths or [])
+        #: Index lists into _bank_paths, from the Pending queue's partition
+        #: breaks. Empty means "let the writer plan it".
+        self._partitions: list = [list(g) for g in (seed_partitions or [])]
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -751,7 +769,15 @@ class _NewImageDialog(QDialog):
             return
         try:
             volumes = [akai_image.volume_from_folder(f) for f in self._bank_paths]
-            lines = akai_image.describe_partition_plan(volumes, kind=kind)
+            if self._partitions:
+                # The user set breaks in the Pending queue, so preview THOSE
+                # rather than what the writer would have chosen — showing the
+                # automatic plan here would contradict the markers they can
+                # see one column to the left.
+                lines = akai_image.describe_partition_groups(
+                    volumes, self._partitions, kind=kind)
+            else:
+                lines = akai_image.describe_partition_plan(volumes, kind=kind)
         except Exception as ex:
             self._plan_label.setText(
                 f"Partition layout could not be previewed: {ex}")
@@ -769,6 +795,11 @@ class _NewImageDialog(QDialog):
         for p in paths:
             self._bank_paths.append(p)
             self._bank_list.addItem(QListWidgetItem(Path(p).name))
+        # The grouping indexes the list that arrived from Pending; adding or
+        # removing here renumbers it, so it is dropped rather than reindexed
+        # against a list the user has since changed.
+        if self._partitions:
+            self._partitions = []
         self._update_partition_plan()
 
     def _remove_bank_file(self) -> None:
@@ -776,6 +807,8 @@ class _NewImageDialog(QDialog):
         if row >= 0:
             del self._bank_paths[row]
             self._bank_list.takeItem(row)
+            if self._partitions:
+                self._partitions = []
             self._update_partition_plan()
 
     def _try_accept(self) -> None:
@@ -797,6 +830,7 @@ class _NewImageDialog(QDialog):
             "volume_label": self._label_edit.text().strip(),
             "size_mb": size_mb,
             "floppy_kind": self._floppy_box.currentText(),
+            "partitions": [list(g) for g in self._partitions] or None,
         }
         self.accept()
 

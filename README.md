@@ -673,6 +673,19 @@ rule, so it cannot drift from what gets written; a test builds a real
 image, reads it back and compares which volume landed in which
 partition.
 
+**You can place the boundaries yourself.** By default the writer fills
+each partition before opening the next. To decide instead — a library
+in its own partition, or room left in A to append to later — right-click
+a row in **Pending for Image** → **Start New Partition Here**. Rows show
+the partition they will land in (`A`, `B`, …) and renumber as you move
+the break; right-click again to remove it. The disk is sized to hold the
+partitions you asked for, which is more than the content alone would
+need.
+
+Breaks apply when an image is **created**. Appending to an existing disk
+puts volumes wherever it has room, and says so rather than pretending
+the markers were honoured.
+
 Note the limits sit on **two different axes** and it is worth keeping
 them apart: a *volume* is capped at 510 directory entries and is the
 unit the sampler **loads**; a *partition* is capped at 60 MB and 100
