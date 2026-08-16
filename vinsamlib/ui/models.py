@@ -25,7 +25,7 @@ from PySide6.QtCore import (QAbstractItemModel, QMimeData, QModelIndex,
 from PySide6.QtGui import QColor
 
 from . import dnd, workers
-from ..banks import e4b, eiii, krz
+from ..banks import akai, e4b, eiii, krz
 from ..build import foreign_import, xpm_import
 from ..build.convert import ConvertOpError
 from ..vfs.base import EntryKind
@@ -112,7 +112,7 @@ def _guess_format(name: str, meta_format: str = "") -> str:
     accurate for EMU3 entries (meta already carries a magic-sniffed value),
     a plausible guess from the extension otherwise (corrected once the bank
     node is actually fetched and its own magic bytes are checked)."""
-    if meta_format in ("E4B", "EIII"):
+    if meta_format in ("E4B", "EIII", "AKAI"):
         return meta_format
     if meta_format and meta_format != "system":
         return ""   # an unrecognised detected format — not one this app shows as a bank
@@ -230,10 +230,29 @@ def _dir_has_content(path: Path, budget: list[int]) -> bool:
     return any(_dir_has_content(p, budget) for p in subdirs)
 
 
+#: Extensions a loose AKAI program file can carry. `.P3`/`.P1` is the
+#: sampler's own (the directory-entry type byte is derived from it, so it is
+#: not decoration); `.a3p`/`.s3p` is what several extraction tools emit.
+_AKAI_PROGRAM_EXTS = {".p3", ".p1", ".a3p", ".s3p"}
+
+
 def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
     vol = LocalDirVolume(str(path))
     out: list[TreeNode] = []
-    for e in vol.list():
+    entries = vol.list()
+
+    # A folder of loose AKAI files is one volume's worth of content: the
+    # programs and the samples they name, side by side, exactly as they sat
+    # on the disk they were extracted from. So the FOLDER is the bank row,
+    # not each .P3 in it -- which is also the only affordable shape, since
+    # every program in such a folder resolves against the same samples and
+    # one row per program would re-read all of them once per row.
+    if any(os.path.splitext(e.name)[1].lower() in _AKAI_PROGRAM_EXTS
+           for e in entries if e.kind != EntryKind.DIRECTORY):
+        out.append(TreeNode("bank", path.name, node, (None, path),
+                             format_label="AKAI"))
+
+    for e in entries:
         if e.kind == EntryKind.DIRECTORY:
             out.append(TreeNode("directory", e.name, node, Path(e.ref)))
         elif e.kind == EntryKind.BANK:
@@ -342,7 +361,15 @@ def _fetch_folder(node: TreeNode) -> list[TreeNode]:
 def _fetch_vfs_listing(vol, folder_entry, parent_node: TreeNode) -> list[TreeNode]:
     out: list[TreeNode] = []
     for e in vol.list(folder_entry):
-        if e.kind == EntryKind.FOLDER:
+        if e.kind == EntryKind.FOLDER and e.meta.get("akai_volume"):
+            # An AKAI volume IS the bank: it holds the programs and the
+            # samples they name, and the sampler resolves a name within it
+            # and nowhere else. So it becomes a bank row expanding to its
+            # programs, not a folder row expanding to files -- samples are
+            # never tree rows in this browser, in any format.
+            out.append(TreeNode("bank", e.name, parent_node, (vol, e),
+                                 format_label="AKAI"))
+        elif e.kind == EntryKind.FOLDER:
             out.append(TreeNode("folder", e.name, parent_node, (vol, e)))
         elif e.kind == EntryKind.BANK:
             out.append(TreeNode("bank", e.name, parent_node, (vol, e), size=e.size,
@@ -531,6 +558,17 @@ def _project_program_labels(path: Path, presets: list) -> list[str]:
 
 def _fetch_bank(node: TreeNode) -> list[TreeNode]:
     vol, entry = node.payload
+    if node.handle is None and node.format_label == "AKAI":
+        # AKAI has no bank FILE to sniff -- a bank is a volume on a disk, or
+        # a folder of loose .P3/.S3 files, so the payload names one of those
+        # rather than a file to read bytes from.
+        node.handle = (akai.parse_dir(str(entry)) if vol is None
+                       else vol.volume_bank(entry))
+        if not node.handle.programs:
+            node.empty_reason = (
+                f"{node.label} holds {len(node.handle.samples)} sample(s) but "
+                f"no program, so there is nothing to import as a preset.")
+            return []
     if node.handle is None:
         data = vol.read(entry)
         if data[:4] == b"FORM" and data[8:12] == b"E4B0":
@@ -585,6 +623,11 @@ def bank_presets(bank) -> list:
     attribute only E4B has -- see `_samples_of` in bank_pane.py, where the
     rename dialog opened with zero rows for the same reason.
     """
+    # AKAI keeps a LIST of programs where KRZ keeps a dict keyed by object
+    # id -- three shapes for the same idea, which is the whole reason this
+    # helper is the single place that knows.
+    if isinstance(bank, akai.AkaiBank):
+        return list(bank.programs)
     if isinstance(bank, e4b.E4BFile) or isinstance(bank, eiii.EIIIFile):
         return list(bank.presets)
     return list(bank.programs.values())

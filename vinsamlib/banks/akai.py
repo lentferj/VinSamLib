@@ -54,7 +54,9 @@ Program file layout (little-endian throughout; `AKAI_S3000_FORMAT.md`
         0x07        filter frequency
         0x0c..0x0f  amplitude attack / decay / sustain / release
         0x1f        number of velocity zones in use
-        zones at 0x22, 0x3a, 0x53, 0x6a (NOT a uniform stride), each:
+        zones at 0x22, 0x3a, 0x52, 0x6a (a uniform 0x18 stride -- the
+        primary spec's 0x53 for the third one is off by one; see
+        ZONE_OFFSETS for the measurement), each:
             +0x00   sample name, 12 bytes
             +0x0c   lo velocity        +0x0d  hi velocity
             +0x0e   tune, signed 16-bit
@@ -99,11 +101,29 @@ SAMPLE_HDR = 0xC0
 PROGRAM_COMMON = 0xC0
 KEYGROUP_LEN = 0xC0
 
-#: Velocity-zone offsets within a keygroup. Deliberately a literal table and
-#: not `0x22 + i * stride`: the spacing between them is NOT uniform, and
-#: computing it reads a zone's name out of the middle of its neighbour --
-#: which still decodes to *something*, so it would not look broken.
-ZONE_OFFSETS = (0x22, 0x3A, 0x53, 0x6A)
+#: Velocity-zone offsets within a keygroup: a **uniform 0x18 stride**, which
+#: is 12 name bytes plus a 12-byte parameter record.
+#:
+#: The primary spec lists the third one as 0x53, making the deltas
+#: 0x18/0x19/0x17, and both implementations built on it copied that. It is
+#: off by one, and 29 372 keygroups on eight commercial library discs say so
+#: three independent ways:
+#:
+#:   - Zones fill in order, so slot 3 should be populated only when 1 and 2
+#:     are. At 0x52 that holds for 99.1%; at 0x53, 50.9% -- noise.
+#:   - Zones 1 and 2, whose offsets nobody disputes, end their record with
+#:     ff ff ff ff. At 0x52 so does slot 3, in 25 842 keygroups. At 0x53,
+#:     in none.
+#:   - A name field names real samples. Of the slot-3 zones whose record is
+#:     coherent at 0x52, **547 of 550 (99.5%)** name a sample on their own
+#:     volume -- better than slot 1's own 88.5% baseline. At 0x53: **0 of
+#:     29 180**, and every name comes back with a spurious trailing "0",
+#:     which is what 0x00 decodes to in this alphabet.
+#:
+#: Reading at 0x53 shifts that zone's name and every one of its parameters
+#: by a byte. Writing there puts the name where the sampler will not find it.
+ZONE_OFFSETS = (0x22, 0x3A, 0x52, 0x6A)
+ZONE_STRIDE = 0x18
 
 MAX_KEYGROUPS = 99
 MAX_ZONES_PER_KEYGROUP = len(ZONE_OFFSETS)
@@ -111,10 +131,22 @@ MAX_ZONES_PER_KEYGROUP = len(ZONE_OFFSETS)
 HDR_ID_S1000 = 1
 HDR_ID_S3000 = 3
 
-#: File-type byte by extension. The S3000 types are the S1000 letter with
-#: bit 7 set. The extension is not decoration — the directory entry stores
-#: only this byte, so it is the sole place a file's type comes from, and a
-#: file without a recognised one cannot be placed on AKAI media at all.
+#: The file type is a letter naming the kind of file, in one of three ranges
+#: by sampler generation: `A`-`Z` for the S900, `a`-`z` for the S1000, and
+#: the S1000 letters with bit 7 set for the S3000. A sample is `s`, so an
+#: S3000 one is 0xF3; a program is `p`, so 0xF0.
+#:
+#: The extension is not decoration — the directory entry stores only this
+#: byte, so it is the sole place a file's type comes from, and a file without
+#: a recognised one cannot be placed on AKAI media at all.
+_S900_RANGE = (ord("A"), ord("Z"))
+_S1000_RANGE = (ord("a"), ord("z"))
+_S3000_RANGE = (ord("a") | 0x80, ord("z") | 0x80)
+
+_FTYPE_CDSETUP = ord("T")                 # CD3000 CD-ROM setup   -> .CD
+_FTYPE_CDSAMPLE = ord("h") | 0x80         # CD3000 sample params  -> .s+
+
+#: The types this project itself writes, kept as names for readability.
 FILE_TYPES = {
     "S3": ord("s") | 0x80,
     "P3": ord("p") | 0x80,
@@ -122,7 +154,44 @@ FILE_TYPES = {
     "S1": ord("s"),
     "P1": ord("p"),
 }
-TYPE_EXT = {v: k for k, v in FILE_TYPES.items()}
+
+
+def ftype_to_ext(ftype: int) -> str:
+    """The extension for a file-type byte.
+
+    A rule rather than a table, and the difference is measurable: only
+    `.S1`/`.P1` carry the generation digit in the S1000 range — an FX file is
+    `.X`, not `.X1` — plus two special cases. mpc2emu's five-entry table left
+    375 files unnamed across eight real library discs (344 `.X`, 17 `.M3`,
+    9 `.D`, 5 `.Q`), and the extension is the one thing that says what such a
+    file is.
+    """
+    if ftype == _FTYPE_CDSETUP:
+        return "CD"
+    if ftype == _FTYPE_CDSAMPLE:
+        return "s+"
+    if _S900_RANGE[0] <= ftype <= _S900_RANGE[1]:
+        return f"{chr(ord('A') + ftype - _S900_RANGE[0])}9"
+    if _S1000_RANGE[0] <= ftype <= _S1000_RANGE[1]:
+        letter = chr(ord("A") + ftype - _S1000_RANGE[0])
+        return f"{letter}1" if ftype in (ord("p"), ord("s")) else letter
+    if _S3000_RANGE[0] <= ftype <= _S3000_RANGE[1]:
+        return f"{chr(ord('A') + ftype - _S3000_RANGE[0])}3"
+    return f"x{ftype:02x}"
+
+
+_EXT_FTYPE = {ftype_to_ext(t).upper(): t
+              for t in (list(range(_S900_RANGE[0], _S900_RANGE[1] + 1))
+                        + list(range(_S1000_RANGE[0], _S1000_RANGE[1] + 1))
+                        + list(range(_S3000_RANGE[0], _S3000_RANGE[1] + 1))
+                        + [_FTYPE_CDSETUP, _FTYPE_CDSAMPLE])}
+
+
+def ext_to_ftype(ext: str) -> Optional[int]:
+    """The file-type byte an extension stands for, or None if it names no
+    AKAI type at all. The inverse of `ftype_to_ext`, built from it so the
+    two cannot drift."""
+    return _EXT_FTYPE.get(ext.upper().lstrip("."))
 
 SAMPLE_TYPES = {FILE_TYPES["S3"], FILE_TYPES["S1"]}
 PROGRAM_TYPES = {FILE_TYPES["P3"], FILE_TYPES["P1"]}
@@ -328,6 +397,16 @@ def _parse_zone(body: bytes, base: int) -> Optional[AkaiZone]:
     name = akai_to_str(raw)
     if not name:
         return None
+    # An unused slot is not always blank. On real discs a keygroup that uses
+    # two zones commonly leaves stale bytes in the third slot -- 3 323 of the
+    # 3 873 nested slot-3 reads across eight library discs, of which just 1%
+    # name a real sample, against 99.5% for the coherent ones. A velocity
+    # range that is inverted or past the MIDI ceiling is the tell, and it
+    # costs nothing to require what the field means: a zone like that could
+    # not sound anyway.
+    lo_vel, hi_vel = body[base + 0x0C], body[base + 0x0D]
+    if lo_vel > hi_vel or hi_vel > 127:
+        return None
     return AkaiZone(
         sample_name=name, name_offset=base,
         lo_vel=body[base + 0x0C], hi_vel=body[base + 0x0D],
@@ -419,7 +498,7 @@ def parse_volume(files: Iterable[tuple[str, bytes]], name: str = "",
     bank = AkaiBank(path=path or name, name=name, partition=partition)
     for filename, data in files:
         ext = filename.rpartition(".")[2].upper()
-        ftype = FILE_TYPES.get(ext)
+        ftype = ext_to_ftype(ext)
         if ftype in PROGRAM_TYPES or ext in ("A3P", "S3P"):
             prog = parse_program(data, filename)
             if prog is not None:
@@ -435,8 +514,16 @@ def parse_volume(files: Iterable[tuple[str, bytes]], name: str = "",
                 bank.warnings.append(f"{filename}: not a readable AKAI sample")
             continue
         if ftype is not None:
-            continue                     # a multi (.M3) or other typed file
-        # Untyped: let the header id decide, rather than dropping it.
+            # A typed file that is neither a program nor a sample: a multi
+            # (.M3), an effects file (.X), a cue list (.Q), drum settings
+            # (.D). Its type byte already says what it is, so it must NOT
+            # fall through to the header sniff below -- an effects file
+            # begins with the same header id a program does, and 90 of them
+            # on one library disc read as 90 phantom programs with key
+            # ranges like 200-0 before this line existed.
+            continue
+        # No recognised extension at all -- several extraction tools drop it.
+        # Only here does the header id get to decide.
         prog = parse_program(data, filename)
         if prog is not None and prog.keygroups:
             bank.programs.append(prog)

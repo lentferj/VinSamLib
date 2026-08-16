@@ -14,14 +14,19 @@ semantic reader to lean on:
   `parsers.eiii_parser.parse_eiii()` for the rich, hardware-accurate
   `models.common` zone model — the same reuse-not-reinvent approach the rest
   of this project takes toward mpc2emu.
-- **KRZ**: walks `banks/krz.py`'s own reference graph directly, so that
+- **KRZ** and **AKAI**: walks `banks/krz.py`'s / `banks/akai.py`'s own model
+  directly, so that
   browsing a K2000 library needs no mpc2emu checkout at all (mpc2emu has had
   a KRZ reader since 2026-07-27, but reaching for it here would make the
   Explorer's KRZ support conditional on configuration the E4B path can
   demand and this one doesn't need). A keymap's entries are collapsed into
   runs of consecutive keys pointing at the same sample, since a K2000 keymap
   has no explicit key-range field at all (KRZ_FORMAT.md §3.2) — each entry
-  just names its own sample, and entry `i` sounds at key `i + 12`.
+  just names its own sample, and entry `i` sounds at key `i + 12`. AKAI
+  carries its zone semantics openly in the program file, so there is nothing
+  to re-derive there; and its mpc2emu support sits on an unmerged branch,
+  which would make an Explorer row that depended on it appear or vanish with
+  whichever branch the configured checkout happens to be on.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import e4b, eiii, krz
+from . import akai, e4b, eiii, krz
 from ..mpc2emu_bridge import e4b_parser, eiii_parser
 
 _LOOP_NAMES = {0: "none", 1: "forward", 2: "alternating", 3: "forward (release)"}
@@ -377,6 +382,76 @@ def summarize_eiii_preset(bank: eiii.EIIIFile, preset: eiii.EIIIPreset) -> Prese
                           total_sample_bytes=sum(sample_sizes.values()))
 
 
+# ── AKAI ─────────────────────────────────────────────────────────────────────
+#
+# Walks banks/akai.py's own model directly, like the KRZ path above and for
+# the same reason -- only more so. mpc2emu's AKAI support is on an unmerged
+# branch, so making the Explorer's AKAI rows depend on it would mean they
+# appear or vanish with whichever branch the configured checkout is on.
+
+def _clamp_key(k: int) -> int:
+    return max(0, min(127, k))
+
+
+def summarize_akai_bank(bank: akai.AkaiBank) -> BankSummary:
+    return BankSummary(
+        name=bank.path,
+        format="AKAI",
+        preset_count=len(bank.programs),
+        sample_count=len(bank.samples),
+        total_size=bank.total_size,
+        preset_names=[p.name.strip() for p in bank.programs],
+    )
+
+
+def summarize_akai_program(bank: akai.AkaiBank,
+                            prog: akai.AkaiProgram) -> PresetSummary:
+    """One AKAI program's zones.
+
+    The nesting is the inverse of every other format here: an AKAI *keygroup*
+    owns a key range and holds up to four VELOCITY zones inside it, where an
+    E4B voice holds zones that each carry their own key range. So one
+    keygroup expands to one ZoneSummary per velocity zone, all sharing the
+    keygroup's key span.
+
+    A zone's root key and loop come from the SAMPLE, not from the program:
+    AKAI keeps the root note in the sample header and the keygroup only tunes
+    away from it. A zone naming a sample this volume doesn't hold still gets
+    a row -- that is normal for a library split across floppies (see
+    AkaiBank.missing_samples), and dropping it would hide the reason a
+    program sounds incomplete.
+
+    Key ranges are clamped to the keyboard, not filtered on. 145 of 29 180
+    keygroups on eight real library discs declare something outside it -- a
+    few inverted by one (89-88), the rest inside files typed as programs
+    that plainly hold something else. They carry 412 zones between them, and
+    14 of those do name a real sample, so refusing the keygroup outright
+    would drop real content to tidy away an artifact. Clamping keeps the row
+    honest and the number meaningful."""
+    zones: list[ZoneSummary] = []
+    sample_sizes: dict[str, int] = {}
+    for kg in prog.keygroups:
+        lo_key, hi_key = _clamp_key(kg.lo_key), _clamp_key(kg.hi_key)
+        for z in kg.zones:
+            samp = bank.find_sample(z.sample_name)
+            if samp is not None and z.sample_name not in sample_sizes:
+                sample_sizes[z.sample_name] = samp.size
+            zones.append(ZoneSummary(
+                sample_name=z.sample_name,
+                lo_key=lo_key, hi_key=hi_key,
+                lo_vel=z.lo_vel, hi_vel=z.hi_vel,
+                root_key=samp.root_key if samp else 60,
+                loop=samp.loop if samp else "?",
+                sample_rate=samp.sample_rate if samp else None,
+                # The format carries 16-bit PCM and no bit-depth field,
+                # because there is nothing else it could be.
+                bit_depth=16 if samp else None,
+            ))
+    return PresetSummary(name=prog.name.strip(), format="AKAI",
+                          voice_count=len(prog.keygroups), zones=zones,
+                          total_sample_bytes=sum(sample_sizes.values()))
+
+
 # ── generic dispatch (what the UI actually calls) ───────────────────────────
 
 def summarize_bank(bank) -> BankSummary:
@@ -386,6 +461,8 @@ def summarize_bank(bank) -> BankSummary:
         return summarize_krz_bank(bank)
     if isinstance(bank, eiii.EIIIFile):
         return summarize_eiii_bank(bank)
+    if isinstance(bank, akai.AkaiBank):
+        return summarize_akai_bank(bank)
     raise TypeError(f"not a recognised bank type: {type(bank)!r}")
 
 
@@ -396,6 +473,8 @@ def summarize_preset(bank, obj) -> PresetSummary:
         return summarize_krz_program(bank, obj)
     if isinstance(bank, eiii.EIIIFile):
         return summarize_eiii_preset(bank, obj)
+    if isinstance(bank, akai.AkaiBank):
+        return summarize_akai_program(bank, obj)
     raise TypeError(f"not a recognised bank type: {type(bank)!r}")
 
 

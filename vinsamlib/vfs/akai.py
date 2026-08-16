@@ -268,7 +268,9 @@ class AkaiVolume(Volume):
                     letter=chr(ord("A") + pi), base=base, nblocks=nblocks,
                     block=HD_BLOCK, fat=fat,
                     volumes=self._root_volumes(head, nblocks),
-                    is_cdrom=self._looks_like_cdrom(head),
+                    has_cdinfo=self._has_cdinfo(head),
+                    is_cdrom=(self._has_cdinfo(head)
+                              or self._has_cd3000_volumes(head)),
                 ))
             return parts
 
@@ -287,12 +289,28 @@ class AkaiVolume(Volume):
         return vols
 
     @staticmethod
-    def _looks_like_cdrom(head: bytes) -> bool:
-        """A CD3000 partition is the one whose blocks right after the header
-        are also marked reserved-for-system — that is where its file index
-        sits. Reported for information only; nothing here reads that index."""
+    def _has_cdinfo(head: bytes) -> bool:
+        """Whether this partition carries the CD-ROM file index: the three
+        blocks right after the header, marked reserved-for-system in the FAT
+        like the header itself.
+
+        Reported for information only; nothing here reads that index. It is a
+        cache the sampler browses, the files live where the FAT says, and a
+        disc whose index went stale still reads correctly here."""
         return all(_u16(head, _OFF_FAT + 2 * b) == FAT_SYS
                    for b in range(CDINFO_BLK, CDINFO_BLK + CDINFO_BLKS))
+
+    @staticmethod
+    def _has_cd3000_volumes(head: bytes) -> bool:
+        """Whether any volume is typed CD3000 (0x07) rather than S3000.
+
+        Separate from `_has_cdinfo` because the two are independent, which
+        only real discs revealed: of eight commercial library CD-ROMs, seven
+        are CD3000-typed but just three carry the info block, and one is
+        typed plain S3000. Either alone would mislabel half of them."""
+        return any(head[_OFF_ROOTDIR + 16 * i + 12] == VOL_TYPE_CD3000
+                   for i in range(ROOTDIR_ENTRIES)
+                   if _OFF_ROOTDIR + 16 * i + 12 < len(head))
 
     def _read_floppy(self) -> list[dict]:
         hd = self._size == FLH_SIZE * FL_BLOCK
@@ -311,7 +329,7 @@ class AkaiVolume(Volume):
             letter="FL", base=0, nblocks=total, block=FL_BLOCK, fat=fat,
             volumes=[dict(name=name or "FLOPPY", vtype=VOL_TYPE_S3000,
                           start=head_blks, index=0, dir_blocks=VOLDIR_FL_BLKS)],
-            is_cdrom=False,
+            is_cdrom=False, has_cdinfo=False,
         )]
 
     def _volume_dir(self, part: dict, vol: dict) -> bytes:
@@ -390,11 +408,11 @@ class AkaiVolume(Volume):
             except AkaiImageError:
                 continue
             name = vs_akai.akai_to_str(e[0:vs_akai.NAME_LEN])
-            ext = vs_akai.TYPE_EXT.get(ftype)
+            ext = vs_akai.ftype_to_ext(ftype)
             kind = (EntryKind.BANK if ftype in vs_akai.PROGRAM_TYPES
                     else EntryKind.OTHER_FILE)
             out.append(Entry(
-                name=f"{name}.{ext}" if ext else name, kind=kind, size=size,
+                name=f"{name}.{ext}", kind=kind, size=size,
                 ref=(base, block, tuple(blocks), size),
                 meta={"format": "AKAI", "akai_type": ftype,
                       "akai_name": name,
@@ -428,7 +446,9 @@ class AkaiVolume(Volume):
         parts = self._partitions()
         if self._floppy and parts and parts[0]["volumes"]:
             return parts[0]["volumes"][0]["name"]
-        if parts and parts[0]["is_cdrom"]:
+        if parts and parts[0]["has_cdinfo"]:
+            # Only the info block holds a label. A CD3000-typed disc without
+            # one has no label to show, which is most of them.
             return self._cd_label(parts[0])
         return ""
 

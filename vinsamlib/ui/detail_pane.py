@@ -162,7 +162,11 @@ class DetailPane(QWidget):
     def _apply_preset(self, gen: int, ps: summary.PresetSummary) -> None:
         if gen != self._gen:
             return
-        voice_label = "Keymaps" if ps.format == "KRZ" else "Voices"
+        # Each format calls its own layer of nesting something different, and
+        # they are not the same thing: an AKAI keygroup owns a KEY range and
+        # holds velocity zones inside it, while an E4B voice holds zones that
+        # each carry their own key range.
+        voice_label = {"KRZ": "Keymaps", "AKAI": "Keygroups"}.get(ps.format, "Voices")
         html = (f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br>"
                 f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
                 f"{zone_stats_lines(ps.zones)}")
