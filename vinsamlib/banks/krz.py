@@ -511,15 +511,20 @@ class KrzFile:
     osize: int
     #: Keyed by ID ALONE — and that is safe only because each dict holds
     #: exactly ONE type. `parse_bytes` routes by `type_code` before inserting,
-    #: so a sample 200 and a keymap 200 land in different dicts and never
-    #: meet. Real banks rely on this: 1631 here number all three types from
-    #: 200 simultaneously.
+    #: so a sample 200 and a keymap 200 land in different dicts and never meet.
     #:
-    #: THE INVARIANT IS ONE MERGE AWAY FROM FALSE. Any by-id dict that spans
-    #: types loses the distinction the format encodes — `_encode_hash` puts
-    #: the type in the hash, so (113, 5) and (111, 5) are different objects.
-    #: `other_by_id()` is exactly such a dict and needs `other_id_collisions()`
-    #: beside it for that reason. Do not add another without the same care.
+    #: THE INVARIANT IS ONE MERGE AWAY FROM FALSE, AND FAILING IT IS NOT A
+    #: CORNER CASE. **1799 of 2222 banks here — 81% — hold at least one id in
+    #: more than one type**, up to 99 such ids in a single bank. A by-id dict
+    #: spanning types would not misfire on some exotic file; it would pick the
+    #: wrong object on four banks in five. (Quoted as a proportion on purpose:
+    #: this was first written as "1631 banks do it", which is a count and says
+    #: nothing about how normal it is — 1631 could have been 1631 of 200 000.)
+    #:
+    #: What such a dict discards is what the format encodes: `_encode_hash`
+    #: puts the type in the hash, so (113, 5) and (111, 5) are different
+    #: objects. `other_by_id()` is exactly such a dict, which is why
+    #: `other_id_collisions()` sits beside it. Do not add another without it.
     programs: dict[int, KrzObject]
     keymaps: dict[int, KrzObject]
     samples: dict[int, KrzObject]
