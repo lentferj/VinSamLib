@@ -552,6 +552,26 @@ class KrzFile:
                 out.append(fid)
         return out
 
+    def other_id_collisions(self) -> dict[int, list[int]]:
+        """{id: [types]} for any id held by MORE THAN ONE non-P/K/S type.
+
+        The format permits this — `_encode_hash` puts the type in the hash, so
+        type 113 id 5 and type 111 id 5 are distinct objects with distinct
+        hashes. A 0x0F reference carries only the ID, so if both are present
+        nothing in the file says which is meant.
+
+        `other_by_id()` takes the first encountered, and 0 of 10 985 in-bank
+        resolutions across 2237 banks hit this — but that is a fact about the
+        corpus, not about the format, and the material that would exercise it
+        is a bank nobody here has. Surfaced so a silent wrong pick becomes a
+        visible one if such a bank ever turns up."""
+        by_id: dict[int, list[int]] = {}
+        for o in self.other_objects:
+            by_id.setdefault(o.id, [])
+            if o.type not in by_id[o.id]:
+                by_id[o.id].append(o.type)
+        return {i: ts for i, ts in by_id.items() if len(ts) > 1}
+
     def other_by_id(self) -> dict[int, KrzObject]:
         """FX/Studio objects keyed by id, first occurrence winning.
 
@@ -1075,6 +1095,16 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
     fx_lookup: dict[tuple[int, int], KrzObject] = {}
     for src, prog in prog_list:
         owned = src.other_by_id()
+        if warnings_out is not None:
+            clash = src.other_id_collisions()
+            for fid in src.program_fx_refs(prog):
+                if fid in clash:
+                    warnings_out.append(
+                        f"effect id {fid} names more than one object in "
+                        f"{str(src.path).split('/')[-1]} (types "
+                        f"{', '.join(str(t) for t in clash[fid])}) — a 0x0F "
+                        f"reference carries no type, so which one is meant is "
+                        f"undecidable from the file. Taking the first.")
         for fid in src.program_fx_refs(prog):
             key = (id(src), fid)
             obj = owned.get(fid)
