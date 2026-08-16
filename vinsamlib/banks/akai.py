@@ -755,6 +755,47 @@ class AkaiBank:
         return (sum(p.size for p in self.programs)
                 + sum(s.size for s in self.samples.values()))
 
+    #: Bytes of header in front of a sample's audio on disk. MEASURED, not
+    #: documented: across all 60 samples s3ked could compare against their
+    #: loaded SLNGTH, the disk file was exactly 150 bytes longer, with no
+    #: exceptions and no other value (2026-08-12, relayed via mpc2emu).
+    SAMPLE_HEADER_BYTES = 150
+
+    #: A sampler reports memory in 16-BIT WORDS. A 32 MB S3000XL reports
+    #: 16 777 216 of them, and x2 is 32 MB exactly — which is itself the
+    #: confirmation that the word is a 16-bit sample.
+    S3000XL_MAX_WORDS = 16_777_216
+
+    def ram_words(self) -> int:
+        """Audio words this volume needs in sample RAM.
+
+        NOT `total_size`. Programs cost nothing — their file size is header
+        data — and every sample file carries SAMPLE_HEADER_BYTES that never
+        reach RAM. So file bytes OVERSTATE the requirement, which is the safe
+        direction but not the true one.
+
+        Verified against data it was not fitted to: predicting from directory
+        records alone gave 16 424 982 words against a loaded SLNGTH sum of
+        16 424 982, difference zero. s3ked are precise that this confirms the
+        SIZE FIELD rather than the 150, which was fitted on those same samples
+        and has its own separate evidence.
+
+        WHY A LIBRARY TOOL SHOULD CARE, and it is the part that is invisible
+        from the front panel: a volume larger than the machine's RAM does not
+        refuse to load. It HALF-LOADS. One measured CD-ROM volume needing
+        30 768 270 words on a 32 MB machine loaded 10 programs and 60 of 88
+        samples — 53% — announced "insufficient waveform memory!" ONCE, and
+        then behaved as though nothing were wrong. Every keygroup pointing at
+        one of the 28 absent samples plays SILENCE. A user auditioning a few
+        pads will not find that.
+
+        A single FILE cannot cause it: the directory's size field is three
+        bytes, so one file caps at 16 777 215 bytes (~3.2 minutes mono at
+        44.1 kHz). A volume overflows by having many files, never one.
+        """
+        return sum(max(0, s.size - self.SAMPLE_HEADER_BYTES) // 2
+                   for s in self.samples.values())
+
     def missing_samples(self, program: Optional[AkaiProgram] = None) -> list[str]:
         """Sample names this volume's programs play but do not contain.
 

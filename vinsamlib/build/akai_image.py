@@ -99,6 +99,59 @@ def volume_from_folder(folder: str) -> tuple[str, list[tuple[str, bytes]]]:
     return vs_akai.display_name(d.name) or "VOLUME 001", files
 
 
+#: Bytes of header on a sample file that never reach sample RAM. MEASURED on
+#: 60 samples by s3ked (2026-08-12, via mpc2emu), 60 of 60 with no other value
+#: appearing — good evidence, but not documented, so an absolute figure
+#: inherits that uncertainty. Say "about" at a boundary.
+_SAMPLE_HEADER_BYTES = 150
+
+#: Sample memory in 16-bit WORDS, which is how a sampler reports it: a 32 MB
+#: S3000XL says 16 777 216, and x2 is 32 MB exactly.
+_MACHINE_WORDS = {8: 4_194_304, 16: 8_388_608, 32: 16_777_216}
+
+
+def volume_ram_words(files: Sequence[tuple[str, bytes]]) -> int:
+    """Audio words a volume will need in the sampler's sample RAM.
+
+    NOT the volume's size on media. Programs cost nothing — their bytes are
+    header data — and every sample carries `_SAMPLE_HEADER_BYTES` that never
+    reach RAM, so media size OVERSTATES the requirement.
+
+    WHY THIS IS REPORTED AT BUILD TIME. An over-RAM volume does not refuse to
+    load: it HALF-LOADS. A measured CD-ROM volume needing 30 768 270 words on
+    a 32 MB machine loaded 10 programs and 60 of 88 samples, said
+    "insufficient waveform memory!" ONCE, and then behaved normally — every
+    keygroup pointing at one of the 28 absent samples playing silence.
+    Nothing at build time knows the machine's size and nothing at load time
+    says it twice, so the user meets it as a bank with holes in it.
+
+    A CONVERTER can cap its output because it chooses what goes in. An
+    ASSEMBLER cannot: `volume_from_folder()` takes whatever the user's folder
+    holds, and a CD3000 image has ~650 MB to fill, so exceeding any S3000XL
+    is easy and looks like nothing at build time. Hence a figure and not a
+    limit — refusing a 40 MB volume would be wrong for someone with a plan
+    for it.
+
+    Measured across 499 real volumes in this author's library: none exceeds a
+    32 MB machine, median 1.8 MB, largest 48%. That is a fact about volumes
+    somebody already made fit a sampler, and says nothing about what this
+    builder can emit from an arbitrary folder.
+    """
+    return sum(max(0, len(data) - _SAMPLE_HEADER_BYTES) // 2
+               for name, data in files
+               if name.upper().endswith((".S3", ".S1")))
+
+
+def describe_ram_cost(name: str, files: Sequence[tuple[str, bytes]]) -> str:
+    """One line per volume: what it needs, and which machines it overruns."""
+    w = volume_ram_words(files)
+    mb = w * 2 / 1048576
+    over = [f"{m} MB" for m, cap in sorted(_MACHINE_WORDS.items()) if w > cap]
+    note = (f" — exceeds {', '.join(over)}, will HALF-LOAD there"
+            if over else "")
+    return f"  {name}: about {w:,} words ({mb:.1f} MB) of sample RAM{note}"
+
+
 def create_image(kind: str, output_path: str, folders: Sequence[str],
                  volume_label: str = "", size_mb: Optional[int] = None,
                  config: Optional[Config] = None) -> str:
@@ -125,7 +178,9 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
             volumes, output_path, size_mb=size_mb,
             cdrom=(kind == "akai_cd3000"),
             cd_label=(volume_label or None) if kind == "akai_cd3000" else None)
-    return _describe(kind, info)
+    lines = [_describe(kind, info)]
+    lines += [describe_ram_cost(n, f) for n, f in volumes]
+    return "\n".join(lines)
 
 
 def append_volumes(image_path: str, folders: Sequence[str],
