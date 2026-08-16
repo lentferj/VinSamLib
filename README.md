@@ -1393,6 +1393,36 @@ your last update are the ones that can still be sitting in your files.
 > Measured upstream, it is also what makes a bank load quickly: 600 programs
 > over 600 keymaps take about 20 s to load, the same 600 sharing one take 11.5.
 
+### If you imported an `.sfz` or `.exs` before 2026-08-12, check which samples it got
+
+**Affects:** any SFZ or EXS24 instrument imported through this program where
+the same sample filename exists in more than one folder mpc2emu's resolver
+searches — Logic's `Sampler Instruments/` + `Samples/` layout is exactly that
+shape, and so is any library with a `wavs/` and a `samples/` directory.
+
+**What went wrong:** this program deliberately does not resolve sample files
+itself — it hands that to mpc2emu's `sfz_parser` and `exs24_parser`, whose
+resolvers are better than anything worth writing here. Those built their
+fallback index with an unsorted directory walk and kept the FIRST match per
+filename, so which file a reference resolved to rode on **filesystem
+directory order**. On ext4 that is creation order. An instrument referencing
+`kick.wav`, with a `kick.wav` in two searched folders, got whichever folder
+happened to be created first — and a large library also hit an 80 000-entry
+cap that truncated the walk at an arbitrary point.
+
+**Why it looked correct:** the import succeeds, the zone counts are right, the
+names are right. It is the wrong *audio*, and only in the specific case of a
+duplicated filename — so it is invisible unless you know both files.
+
+**How to find them:** look for the referenced basename appearing in more than
+one folder under the instrument's library root. If it appears once, you were
+never affected.
+
+**What to do:** re-import, with a current mpc2emu (fixed there in `73212a4`,
+2026-08-12, and on `main`). Nothing in VinSamLib changed — the defect was
+never ours to cause or to prevent, but it reached users through our import,
+which is why it is listed here.
+
 ### If you built a KRZ bank whose programs use their own EFFECTS before 2026-08-10, rebuild it
 
 **Affects:** any `.KRZ` this program assembled from a source bank that ships
