@@ -463,7 +463,7 @@ class AkaiKeygroup:
 
         filter    Hz    = 6.998 * exp(0.07384 * filter_freq)   fitted 50..90
         tuning    cents = 0.390625 * tune          (= 100/256, EXACT)
-        sustain   dB below full = 0.60832 * (amp_sustain - 99)   r2 0.99995
+        sustain   dB below full = 0.60676 * (amp_sustain - 99)   r2 0.99993
 
     Tuning is the STRUCTURAL constant, not a fit. The field is 1/256 of a
     semitone, which the AKAI document states exactly, where the bench fit
@@ -498,9 +498,33 @@ class AkaiKeygroup:
 
     `amp_sustain` IS measured, and an earlier version of this comment wrongly
     called it open. It is keygroup 0x0E — SUSTN1, the AMPLITUDE envelope's
-    sustain — dB-linear at 0.60832 dB/unit with r2 0.99995, corroborated by
-    program loudness at 0.6427: two independent level controls, both dB-linear
-    within 5%. The confusion was mine, from "sustain" naming two fields.
+    sustain — dB-linear at **0.60676 dB/unit, r2 0.99993** (re-measured
+    2026-08-11). The confusion was mine, from "sustain" naming two fields.
+
+    THE FIRST FIGURE WAS 0.60832, AND WHY IT MOVED IS WORTH MORE THAN THE
+    VALUE. Every sweep in the original calibration had program loudness pinned
+    to 99, its MAXIMUM, with the voice level at its factory 20 — a 6.8 dB
+    boost running into the output ceiling. Pinning a variable to its extreme
+    is not neutralising it.
+
+    AND THE CORROBORATION ARGUMENT THAT USED TO STAND HERE WAS UNSOUND. It
+    read: "corroborated by program loudness at 0.6427 — two independent level
+    controls, both dB-linear within 5%." Independent as FIELDS, yes; but both
+    were swept on one rig, in one session, against the same ceiling. What they
+    shared is exactly what turned out to be wrong, so the agreement could not
+    have detected it and did not — the §AGREEMENT rule this project sharpened
+    elsewhere, pointed at a claim made here.
+
+    The conclusion survived anyway, which is a separate fact and not a rescue:
+
+        as first cited   0.60832 vs 0.6427    5.3% apart
+        re-measured      0.60676 vs 0.61872   1.9% apart
+
+    Both moved and the agreement IMPROVED. So "two dB-linear level controls
+    with the same slope" passed a test it could have failed. Keep the claim,
+    keep the numbers, and do not keep the reasoning: an argument that reaches
+    a conclusion which later survives a real test was lucky, not validated,
+    and the next thing built the same way may not be.
 
     The one that IS open is **SUSTN2, keygroup 0x16, the FILTER envelope's
     sustain** — never swept, and we do not read it. Reusing SUSTN1's dB law
