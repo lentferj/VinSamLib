@@ -655,6 +655,32 @@ loaded, so a volume that loads onto an empty machine may not load onto
 a busy one. For scale, the largest volume across 1843 real ones in this
 author's library needs 910 objects.
 
+**The partition layout is shown before you build.** An AKAI disk is not
+a flat list of volumes: it is carved into **partitions** — at most 60 MB
+and 100 volumes each, 18 to a disk — and the writer fills one before
+opening the next, so the *order* you queue volumes in decides which
+partition each lands in. The New Image dialog previews that:
+
+```
+Will be written as:
+  Partition A: 2/100 volume(s), 50.1/60 MB — DRUMS 01, DRUMS 02
+  Partition B: 1/100 volume(s), 25.0/60 MB — STRINGS
+  (the disk may carry further empty partitions, sized for later appends)
+```
+
+The preview calls the writer's own planner rather than reproducing its
+rule, so it cannot drift from what gets written; a test builds a real
+image, reads it back and compares which volume landed in which
+partition.
+
+Note the limits sit on **two different axes** and it is worth keeping
+them apart: a *volume* is capped at 510 directory entries and is the
+unit the sampler **loads**; a *partition* is capped at 60 MB and 100
+volumes and is how the **media** is carved. The object pool and sample
+RAM are neither — they bound what is **resident at once**, across
+whatever you have loaded from wherever, so there is deliberately no
+per-partition total of either.
+
 **Program numbers are assigned by position** when a volume is
 assembled: the first program in New Bank becomes program 0, the second
 1, and so on, matching the order you arranged them in. This is not

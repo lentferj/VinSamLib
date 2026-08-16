@@ -215,6 +215,87 @@ def describe_ram_cost(name: str, files: Sequence[tuple[str, bytes]]) -> str:
     return f"  {name}: about {w:,} words ({mb:.1f} MB) of sample RAM{note}"
 
 
+def plan_partitions(volumes: Sequence[tuple], kind: str = "akai_hd",
+                    part_mb: int = 60) -> list[list[tuple]]:
+    """Group volumes into partitions exactly as the build will.
+
+    Calls mpc2emu's OWN `_plan_partitions` rather than reimplementing the
+    rule. A preview that merely resembles the build is worse than none: it
+    would be read as a promise, and the whole point is to see the layout at
+    the moment it can still be changed. Their function is private, so this
+    couples to an underscore name — that is deliberate. An import that breaks
+    is loud; a copied rule that drifts is silent, and this project has been
+    caught by the silent kind more than once this week.
+
+    Raises whatever the writer raises (a volume too big for any partition,
+    for instance), so the preview refuses in exactly the cases the build
+    would rather than showing a layout that cannot be written.
+    """
+    sys_blocks = akai_image.PARTHEAD_BLKS + (
+        akai_image.CDINFO_BLKS if kind == "akai_cd3000" else 0)
+    part_blocks = min(
+        akai_image.PART_MAX_BLOCKS,
+        max(sys_blocks + akai_image.VOLDIR_HD_BLKS,
+            (part_mb * 1048576) // akai_image.HD_BLOCK))
+    return akai_image._plan_partitions(list(volumes), part_blocks,
+                                       sys_blocks=sys_blocks)
+
+
+def describe_partition_plan(volumes: Sequence[tuple], kind: str = "akai_hd",
+                            part_mb: int = 60) -> list[str]:
+    """One line per partition: how full it is, and what lands in it.
+
+    THE HIERARCHY IS disk -> PARTITION -> VOLUME -> program/sample, and the
+    limits sit on two different axes that must not be run together:
+
+      * a VOLUME holds at most MAX_FILES_PER_VOLUME directory entries, and it
+        is the unit the sampler LOADS;
+      * a PARTITION holds at most 60 MB and 100 volumes, and a disk at most 18
+        partitions -- structural limits of the media;
+      * the OBJECT POOL and sample RAM are neither. They bound what is
+        RESIDENT at once, across whatever has been loaded from wherever, so a
+        per-partition total of either would look informative and mean nothing.
+
+    So this reports only the structural facts, and the per-volume object and
+    RAM figures stay where they are.
+    """
+    parts = plan_partitions(volumes, kind=kind, part_mb=part_mb)
+    sys_blocks = akai_image.PARTHEAD_BLKS + (
+        akai_image.CDINFO_BLKS if kind == "akai_cd3000" else 0)
+    part_blocks = min(
+        akai_image.PART_MAX_BLOCKS,
+        max(sys_blocks + akai_image.VOLDIR_HD_BLKS,
+            (part_mb * 1048576) // akai_image.HD_BLOCK))
+    cap_mb = part_blocks * akai_image.HD_BLOCK / 1048576
+
+    lines = []
+    for i, part in enumerate(parts):
+        used = sys_blocks + sum(
+            akai_image.VOLDIR_HD_BLKS
+            + sum(akai_image._blocks(len(d), akai_image.HD_BLOCK)
+                  for _n, d in files)
+            for _name, files in part)
+        used_mb = used * akai_image.HD_BLOCK / 1048576
+        letter = chr(ord("A") + i)
+        names = ", ".join(n for n, _f in part[:4])
+        more = f" +{len(part) - 4} more" if len(part) > 4 else ""
+        lines.append(
+            f"  Partition {letter}: {len(part)}/{akai_image.ROOTDIR_ENTRIES} "
+            f"volume(s), {used_mb:.1f}/{cap_mb:.0f} MB — {names}{more}")
+    if len(parts) > akai_image.MAX_PARTITIONS:
+        lines.append(f"  ⚠ {len(parts)} partitions — a disk holds "
+                     f"{akai_image.MAX_PARTITIONS}")
+    elif len(parts) > 1:
+        # The built disk can carry MORE partitions than this: it is auto-sized
+        # to the content plus a quarter, then carved into whole partitions, so
+        # the last one or two may come out empty and ready for later appends.
+        # Said here because a user who reads "A and B" and then finds a C on
+        # the sampler would reasonably think the preview lied.
+        lines.append("  (the disk may carry further empty partitions, sized "
+                     "for later appends)")
+    return lines
+
+
 def create_image(kind: str, output_path: str, folders: Sequence[str],
                  volume_label: str = "", size_mb: Optional[int] = None,
                  config: Optional[Config] = None) -> str:
@@ -276,7 +357,42 @@ def append_volumes(image_path: str, folders: Sequence[str],
 
 
 def _describe(kind: str, info: dict) -> str:
+    """The writer's summary as a sentence, leading with the hierarchy.
+
+    It used to print the dict as `k=v, k=v`, which buried the one number the
+    user cannot get anywhere else -- how many PARTITIONS their queue turned
+    into -- among block counts they have no use for.
+    """
     if not isinstance(info, dict):
         return str(info)
-    bits = [f"{k}={v}" for k, v in info.items()]
-    return f"{AKAI_IMAGE_KINDS.get(kind, (kind,))[0]}: " + ", ".join(bits)
+    label = AKAI_IMAGE_KINDS.get(kind, (kind,))[0]
+    parts = info.get("partitions")
+    vols = info.get("volumes")
+    files = info.get("files")
+    if parts is None and vols is None and info.get("partitions_used") is None:
+        bits = [f"{k}={v}" for k, v in info.items()]
+        return f"{label}: " + ", ".join(bits)
+    # Two counts, and they answer different questions (mpc2emu fdc7e39,
+    # after this project read one as the other): 'partitions' is the SLOTS the
+    # disk was carved into, which follow from its size; 'partitions_used' is
+    # how many hold a volume. The user wants to know where their volumes went,
+    # so that leads -- but the spare slots are worth naming rather than
+    # hiding, since they are what a later append will fill.
+    used = info.get("partitions_used")
+    head = f"{label}: "
+    if used is not None and parts is not None and parts != used:
+        head += f"{used} of {parts} partitions used, "
+    elif used is not None:
+        head += f"{used} partition{'s' if used != 1 else ''}, "
+    elif parts is not None:
+        head += f"{parts} partition{'s' if parts != 1 else ''}, "
+    head += f"{vols} volume{'s' if vols != 1 else ''}"
+    if files is not None:
+        head += f", {files} file{'s' if files != 1 else ''}"
+    total = info.get("bytes")
+    if total:
+        head += f", {total / 1048576:.1f} MB"
+    free = info.get("free_blocks")
+    if free is not None:
+        head += f" ({free} free block{'s' if free != 1 else ''})"
+    return head

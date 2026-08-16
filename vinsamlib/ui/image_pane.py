@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogBut
 from . import workers
 from .models import human_size
 from ..banks import eiii
-from ..build import images
+from ..build import akai_image, images
 from ..config import Config
 from ..filenames import safe_path_component
 from ..vfs.base import Entry, EntryKind, Volume, WritableVolume
@@ -672,6 +672,19 @@ class _NewImageDialog(QDialog):
         for p in self._bank_paths:
             self._bank_list.addItem(QListWidgetItem(Path(p).name))
         layout.addWidget(self._bank_list)
+        # The AKAI hierarchy, shown where it can still be changed. A disk is
+        # carved into PARTITIONS (60 MB / 100 volumes each, 18 max) and the
+        # writer fills one before opening the next, so which volume lands in
+        # which partition is decided by the order above -- and was invisible
+        # until after the build. Blank for every other format, which has no
+        # such layer.
+        self._plan_label = QLabel("")
+        self._plan_label.setWordWrap(True)
+        self._plan_label.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;")
+        layout.addWidget(self._plan_label)
+        self._update_partition_plan()
+
         bank_buttons = QHBoxLayout()
         add_btn = QPushButton("Add Files…")
         add_btn.clicked.connect(self._add_bank_files)
@@ -703,6 +716,7 @@ class _NewImageDialog(QDialog):
         needs_size = kind in ("emu3_hd_emu", "emu3_hd_fat", "k2000_fat16")
         self._size_spin.setVisible(needs_size)
         self._floppy_box.setVisible(is_floppy)
+        self._update_partition_plan()
 
     def _start_dir(self) -> str:
         return str(self._config.last_image_dir) if self._config and self._config.last_image_dir else ""
@@ -719,6 +733,31 @@ class _NewImageDialog(QDialog):
         if path:
             self._path_edit.setText(path)
 
+    def _update_partition_plan(self) -> None:
+        """Show how the chosen folders will be carved into partitions.
+
+        Uses the writer's own planner (build/akai_image.plan_partitions), so
+        the preview cannot drift from the build. Anything that stops it being
+        computable -- mpc2emu absent, a volume too large for any partition --
+        is REPORTED rather than swallowed: a blank panel would read as "one
+        partition, all fine", which is the failure this exists to prevent.
+        """
+        kind = self._current_kind()
+        if kind not in akai_image.AKAI_IMAGE_KINDS or kind == "akai_floppy":
+            self._plan_label.setText("")
+            return
+        if not self._bank_paths:
+            self._plan_label.setText("")
+            return
+        try:
+            volumes = [akai_image.volume_from_folder(f) for f in self._bank_paths]
+            lines = akai_image.describe_partition_plan(volumes, kind=kind)
+        except Exception as ex:
+            self._plan_label.setText(
+                f"Partition layout could not be previewed: {ex}")
+            return
+        self._plan_label.setText("Will be written as:\n" + "\n".join(lines))
+
     def _add_bank_files(self) -> None:
         kind = self._current_kind()
         fmt, _label, _dl = images.IMAGE_KINDS[kind]
@@ -730,12 +769,14 @@ class _NewImageDialog(QDialog):
         for p in paths:
             self._bank_paths.append(p)
             self._bank_list.addItem(QListWidgetItem(Path(p).name))
+        self._update_partition_plan()
 
     def _remove_bank_file(self) -> None:
         row = self._bank_list.currentRow()
         if row >= 0:
             del self._bank_paths[row]
             self._bank_list.takeItem(row)
+            self._update_partition_plan()
 
     def _try_accept(self) -> None:
         kind = self._current_kind()
