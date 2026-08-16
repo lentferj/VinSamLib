@@ -149,6 +149,21 @@ MAX_IDS = {"sample": 999, "keymap": 999, "program": 999}
 PCM_SHORTFALL_SLACK = 64
 
 
+# THE PER-OBJECT COST IS THE OBJECT'S OWN `size` FIELD (offset 6), EXACTLY.
+# Confirmed 6/6 against a photographed K2000R object list: the machine shows
+# 432/430/434 for keymaps and 272/224/230 for programs, and each is that
+# object's `size` verbatim. An earlier reading of the same photographs called
+# it "block length minus 4 or 6" and treated the 2-byte spread as unexplained
+# noise -- it is the `size`-versus-padded-`blocksize` difference this module
+# already documents in _rename_block, and looking at the right field removes
+# the fudge entirely.
+#
+# So a bank's PRAM cost is computable exactly from the file, with no
+# constants: sum every object's `size`. The fixed figures below remain only
+# because they are what mpc2emu's splitter uses for banks it WRITES, where
+# one keymap per voice makes them correct.
+
+
 # ── PRAM: what actually limits a KRZ bank ─────────────────────────────────────
 # A K2000 keeps its OBJECTS -- programs, keymaps, sample headers -- in PRAM,
 # separately from the sample RAM the audio lives in. Object COUNT is not what
