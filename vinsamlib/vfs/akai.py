@@ -248,6 +248,10 @@ class AkaiVolume(Volume):
         #: Files listed in a directory whose data is not in this image --
         #: see truncation_warning().
         self._truncated = 0
+        #: Entries refused because their FAT chain cannot cover the size they
+        #: declare -- see _list_files. Counted rather than silent so a disc
+        #: that trips it can be recognised as unusual.
+        self._short_chain = 0
 
     # ── structure ────────────────────────────────────────────────────────────
 
@@ -442,6 +446,25 @@ class AkaiVolume(Volume):
             # is the wrong audio with a plausible length.
             if base + (max(blocks) + 1) * block > self._size:
                 self._truncated += 1
+                continue
+            # The chain must actually COVER what the entry declares. A junk
+            # directory slot whose type byte happens to land on a live value
+            # would otherwise be emitted as a file: `_chain` does not raise
+            # when a chain runs off its end into a free or reserved block, it
+            # returns what it has, and `read()` truncates to `size` without
+            # noticing it got less. A phantom PROGRAM is caught by the parser;
+            # a phantom SAMPLE is raw PCM by definition and would enter a bank
+            # as ordinary audio, which is the case worth closing.
+            #
+            # Measured before adding it: across 21 discs, 1843 volumes and
+            # 49 984 emitted files, exactly 0 entries fail this — and 0 of the
+            # 375 623 unallocated slots carry a non-zero type byte at all, so
+            # the exposure was theoretical here. It is kept because that is a
+            # property of the tools that wrote these discs (they clear the
+            # type byte and little else), not of the format: a disc written by
+            # something less thorough puts this straight into play.
+            if len(blocks) * block < size:
+                self._short_chain += 1
                 continue
             name = vs_akai.akai_to_str(e[0:vs_akai.NAME_LEN])
             ext = vs_akai.ftype_to_ext(ftype)

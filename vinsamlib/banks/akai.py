@@ -260,6 +260,24 @@ PROGRAM_TYPES = {FILE_TYPES["P3"], FILE_TYPES["P1"]}
 #: directory"), which is the real ceiling on what assemble() may produce.
 MAX_FILES_PER_VOLUME = 510
 
+#: MIDI program number inside a program file (see the header map above).
+#: 0-based; the S3000XL panel displays it 1-based.
+_OFF_PRGNUM = 0x0f
+
+#: Highest MIDI program number the field can express. Past this many programs
+#: some collision is unavoidable -- 128 numbers is the whole MIDI address
+#: space -- so the only choice is WHERE the damage goes, and the extras are
+#: CLAMPED to this value.
+#:
+#: The first version left them alone, which is the worst of the three options
+#: and took mpc2emu's 0e87a7e to see: an untouched byte keeps its SOURCE
+#: number, which for authored AKAI programs is usually 0, so the overflow
+#: lands squarely on the low numbers most likely to be reached for -- the
+#: exact collision this renumbering exists to prevent. Wrapping is the same
+#: fault by arithmetic. Clamping concentrates it on the tail instead, leaving
+#: 0..126 individually addressable.
+MAX_PROGRAM_NUMBER = 127
+
 
 class AkaiFormatError(ValueError):
     pass
@@ -968,7 +986,7 @@ def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
     # (final name, content) -> already written, for cross-volume dedupe.
     written: dict[tuple[str, bytes], str] = {}
 
-    for src, program in selections:
+    for prgnum, (src, program) in enumerate(selections):
         body = bytearray(program.body)
         for name_off, zone_name in program.zone_refs:
             key = (id(src), zone_name.strip().upper())
@@ -1006,6 +1024,29 @@ def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
         # patching one and not the other would show two different names
         # depending on which one a reader trusts.
         body[0x03:0x03 + NAME_LEN] = str_to_akai(pname)
+        # MIDI program number, byte 0x0f: assigned from this program's
+        # POSITION in the assembled volume, not copied from its source.
+        #
+        # Copying it verbatim collides by construction, and this is the
+        # librarian's central case rather than an edge one: programs sharing a
+        # number STACK on an S3000XL — one program change fires all of them at
+        # once, measured by s3ked with fifteen programs resident and four
+        # sharing a number. Pulling program 0 out of six different source
+        # volumes therefore gives six programs answering the same program
+        # change, in one volume, with nothing on the machine to say why.
+        #
+        # Positional, by Jan's decision (2026-08-14), over the alternative of
+        # keeping the source numbers when they happen to be distinct: the
+        # order shown in New Bank is the order the user arranged, so it is the
+        # one they can predict without opening anything. The cost is that a
+        # deliberate authored numbering is discarded — rare for our inputs,
+        # which are authored AKAI programs that mostly all start at 0.
+        #
+        # The byte is 0-BASED and the panel displays it 1-based (confirmed
+        # twice on hardware, for this field and the volume register, so it is
+        # a machine-wide convention). Program 0 here shows as "1" there.
+        if len(body) > _OFF_PRGNUM:
+            body[_OFF_PRGNUM] = min(prgnum, MAX_PROGRAM_NUMBER)
         ext = "P1" if not program.is_s3000 else "P3"
         files.append((f"{pname.strip()}.{ext}", bytes(body)))
 

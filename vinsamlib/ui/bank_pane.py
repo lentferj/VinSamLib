@@ -45,6 +45,7 @@ from .detail_pane import _escape, zone_stats_lines
 from .sample_placement_dialog import SamplePlacementDialog, vel_window
 from .sample_rename_dialog import SampleRenameDialog
 from ..banks import akai, e4b, eiii, krz, summary
+from ..build import akai_image
 from ..filenames import safe_filename
 from ..config import Config
 
@@ -1249,13 +1250,30 @@ class BankPane(QWidget):
         """
         total = sum(len(d) for _fn, d in files)
         limit_bytes = self._config.krz_bank_limit_mb * 1024 * 1024
+        # Objects, not just files. The directory limit is not what stops a
+        # volume loading -- keygroups are counted by the sampler and appear in
+        # no directory, so a volume can sit well inside 510 entries and still
+        # be refused. See build/akai_image.volume_objects.
+        objs = akai_image.volume_objects(files)
+        budget = self._config.akai_max_objects
         self._meter_label.setText(
             f"{n} program(s), {len(files)} file(s) — "
-            f"{_human(total)} / {_human(limit_bytes)}")
-        over = total > limit_bytes or len(files) > _AKAI_MAX_FILES
+            f"{_human(total)} / {_human(limit_bytes)} — "
+            f"{objs} / {budget} objects")
+        over = (total > limit_bytes or len(files) > _AKAI_MAX_FILES
+                or objs > budget)
         detail = (f"{len(files)} files exceed the {_AKAI_MAX_FILES}-entry AKAI "
                   f"volume directory (samples and programs share it)."
                   if len(files) > _AKAI_MAX_FILES else
+                  f"{objs} resident objects (programs + keygroups + samples) "
+                  f"exceed the {budget} an S3000XL holds at once — even "
+                  f"though this is inside "
+                  f"the {_AKAI_MAX_FILES}-file directory limit. What the "
+                  f"machine does then is NOT verified: the sample-RAM ceiling "
+                  f"half-loads rather than refusing, and this may too. The figure in "
+                  f"Settings… is one 32 MB machine and is shared with whatever "
+                  f"is already loaded."
+                  if objs > budget else
                   f"{_human(total)} exceeds your configured {_human(limit_bytes)} "
                   f"sampler RAM limit (Settings…).")
         self._meter_label.setStyleSheet(

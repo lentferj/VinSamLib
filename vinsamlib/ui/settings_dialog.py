@@ -70,6 +70,12 @@ class SettingsDialog(QDialog):
         self._krz_pram_spin.setSuffix(" KB")
         self._krz_pram_spin.setValue(config.krz_pram_kb)
         limits_form.addRow("K2000 object memory (PRAM):", self._krz_pram_spin)
+        # The AKAI equivalent of the PRAM row: a second ceiling that is not a
+        # size and cannot be expressed in MB.
+        self._akai_obj_spin = QSpinBox()
+        self._akai_obj_spin.setRange(64, 16384)
+        self._akai_obj_spin.setValue(config.akai_max_objects)
+        limits_form.addRow("S3000XL resident objects:", self._akai_obj_spin)
         layout.addLayout(limits_form)
         pram_hint = QLabel(
             "A K2000 keeps programs, keymaps and sample headers in PRAM, "
@@ -84,6 +90,18 @@ class SettingsDialog(QDialog):
         pram_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         pram_hint.setWordWrap(True)
         layout.addWidget(pram_hint)
+        akai_hint = QLabel(
+            "An S3000XL counts programs, KEYGROUPS and samples against one "
+            "pool of resident objects — its LOAD page shows it as free P/K/S "
+            "— so a volume can sit inside the 510-file directory limit and "
+            "still refuse to load. 1006 is a measured 32 MB machine; whether "
+            "it moves with fitted memory is untested. It is shared with "
+            "whatever is already loaded, so New Bank's figure is a floor: a "
+            "volume that loads onto an empty machine may not load onto a "
+            "full one.")
+        akai_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        akai_hint.setWordWrap(True)
+        layout.addWidget(akai_hint)
         limits_hint = QLabel(
             "A soft warning in New Bank once a bank exceeds this size — the "
             "most common real RAM configuration, not the format's absolute "
@@ -136,7 +154,8 @@ class SettingsDialog(QDialog):
         path_changed = new_path != self._config.mpc2emu_path
         limits_changed = (self._e4b_limit_spin.value() != self._config.e4b_bank_limit_mb
                            or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb
-                           or self._krz_pram_spin.value() != self._config.krz_pram_kb)
+                           or self._krz_pram_spin.value() != self._config.krz_pram_kb
+                           or self._akai_obj_spin.value() != self._config.akai_max_objects)
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
@@ -144,6 +163,7 @@ class SettingsDialog(QDialog):
             self._config.e4b_bank_limit_mb = self._e4b_limit_spin.value()
             self._config.krz_bank_limit_mb = self._krz_limit_spin.value()
             self._config.krz_pram_kb = self._krz_pram_spin.value()
+            self._config.akai_max_objects = self._akai_obj_spin.value()
         if path_changed or limits_changed:
             self._config.save()
         super().accept()

@@ -635,6 +635,38 @@ presets would let through a volume that then cannot hold itself. Its
 soft RAM threshold is the K2000 spinbox in Settings, since an S3000XL
 tops out at the same 32 MB that setting already defaults to.
 
+**...and objects, which are what actually stop a volume loading** —
+`3 program(s), 9 file(s) — 1.2 MB / 32.0 MB — 217 / 1006 objects`. An
+S3000XL keeps programs, **keygroups** and samples in one pool of
+resident objects; its LOAD page shows it as `free P/K/S`. Keygroups
+appear in no directory, so the 510-entry limit above is roughly five
+times too loose to protect you: six converted programs typically use 21
+directory entries and about 216 objects. A volume can therefore sit
+comfortably inside 510 files and still overrun the machine. **What
+happens then is not verified** — the one ceiling that has been measured,
+sample RAM, does not refuse but *half-loads*: one warning, then normal
+behaviour with every keygroup pointing at an absent sample playing
+silence. The object pool may well behave the same way.
+
+The 1006 default is one measured 32 MB machine — whether it moves with
+fitted memory is untested — and it is adjustable in Settings. Treat the
+figure as a **floor**: the pool is shared with whatever is already
+loaded, so a volume that loads onto an empty machine may not load onto
+a busy one. For scale, the largest volume across 1843 real ones in this
+author's library needs 910 objects.
+
+**Program numbers are assigned by position** when a volume is
+assembled: the first program in New Bank becomes program 0, the second
+1, and so on, matching the order you arranged them in. This is not
+cosmetic. Programs that share a MIDI program number **stack** on an
+S3000XL — one program change fires all of them at once — and authored
+AKAI programs mostly all carry number 0, so pulling one program out of
+each of six volumes would otherwise give six sounds answering the same
+program change, with nothing on the machine to explain it. The byte is
+0-based and the sampler's panel displays it 1-based, so program 0 here
+shows as `1` there. Past 128 programs the numbers run out and the
+extras are left alone rather than wrapped.
+
 **Adding a preset that pushes you over the limit** shows a warning
 dialog with two choices: **Keep Anyway** (leave the new item in place,
 deal with it later) or **Undo Last Add** (revert to exactly the state

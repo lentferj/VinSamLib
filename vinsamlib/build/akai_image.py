@@ -142,6 +142,69 @@ def volume_ram_words(files: Sequence[tuple[str, bytes]]) -> int:
                if name.upper().endswith((".S3", ".S1")))
 
 
+#: Resident objects an S3000XL can hold at once — STAT.max_blocks, measured
+#: on Jan's 32 MB machine by s3ked and relayed 2026-08-14. Programs, KEYGROUPS
+#: and samples all cost exactly 1 and share this one pool; the LOAD page shows
+#: it as `free P/K/S`. Their measurement: max_blocks 1006, free 884, and
+#: 2 programs + 58 keygroups + 62 samples = 122 used, exact.
+#:
+#: A DEFAULT, not a constant, for two reasons. It is one machine, and whether
+#: it moves with fitted memory is untested. And it is a ceiling on what is
+#: RESIDENT, shared with whatever is already loaded, so a volume that loads
+#: onto an empty machine may not load onto a full one — any check computed
+#: from a file alone is a floor.
+RESIDENT_OBJECTS_DEFAULT = 1006
+
+
+def volume_objects(files: Sequence[tuple[str, bytes]]) -> int:
+    """Resident objects a volume costs: programs + KEYGROUPS + samples.
+
+    WHY THIS EXISTS BESIDE THE FILE COUNT. `MAX_FILES_PER_VOLUME = 510` is the
+    directory's limit and it is not what stops a volume loading. Keygroups
+    are counted by the sampler and appear in no directory, so a volume can sit
+    comfortably inside 510 entries and still overrun the pool (what the
+    machine does then is unverified -- see describe_object_cost). Measured on material
+    this program converts: six programs from E4B use 21 directory entries and
+    216 objects — about 32 keygroups per program. Filled to the 510-entry cap
+    a volume would ask for roughly 5 200 objects against 1 006, so the
+    directory limit is about five times too loose to protect anyone.
+
+    The keygroup count is read from byte 0x2a of each program file, the same
+    field the parser uses, so this cannot drift from what the writer emits.
+
+    Like `volume_ram_words`, a FIGURE and not a limit — see that docstring for
+    why an assembler must not refuse what a user may have a plan for.
+    """
+    total = 0
+    for name, data in files:
+        upper = name.upper()
+        if upper.endswith((".S3", ".S1")):
+            total += 1                                   # the sample itself
+        elif upper.endswith((".P3", ".P1")):
+            # 1 for the program, plus one per keygroup. A program too short to
+            # carry the field is counted as itself alone rather than guessed
+            # at: an unreadable program is not evidence of zero keygroups.
+            total += 1 + (data[0x2a] if len(data) > 0x2a else 0)
+    return total
+
+
+def describe_object_cost(name: str, files: Sequence[tuple[str, bytes]],
+                         budget: int = RESIDENT_OBJECTS_DEFAULT) -> str:
+    """One line per volume: objects needed against the resident pool."""
+    n = volume_objects(files)
+    # NOT "will not load". Nobody has verified what the machine does when the
+    # object pool is exceeded, and the one ceiling that IS measured -- sample
+    # RAM -- does not refuse, it HALF-loads: one warning, then normal
+    # behaviour with every keygroup pointing at an absent sample playing
+    # silence. Asserting a failure mode we have not seen would be the same
+    # unverified confidence this project keeps catching elsewhere. Put to
+    # s3ked; until then the wording says what is known and what is not.
+    note = (f" — exceeds the {budget}-object pool; what the machine does then "
+            f"is unverified (the RAM ceiling half-loads rather than refusing)"
+            if n > budget else "")
+    return f"  {name}: about {n:,} resident objects (P/K/S){note}"
+
+
 def describe_ram_cost(name: str, files: Sequence[tuple[str, bytes]]) -> str:
     """One line per volume: what it needs, and which machines it overruns."""
     w = volume_ram_words(files)
