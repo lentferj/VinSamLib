@@ -78,7 +78,19 @@ Sample file layout:
     0x13        playback type; 2 (and only 2) means "no loop"
     0x14        pitch offset, signed 16-bit fixed point (cents * 256)
     0x1a        length in SAMPLES, 32-bit
-    0x26/0x2c   loop 1 start / length, 32-bit
+    0x26        loop 1 END (LOOPAT1), 32-bit -- the point playback RETURNS
+                TO, not where the loop begins. 0x2c (LLNGTH1) measures
+                BACKWARDS from it, so the loop is [LOOPAT - LLNGTH, LOOPAT].
+                Measured by s3ked on an S3000XL 2026-08-22, by content rather
+                than by period: the period is LLNGTH under either reading,
+                which is why several earlier probes looked decisive and were
+                not. Against references regenerated from the sample's own seed,
+                the end reading correlated 0.7998 and the start reading 0.0412.
+                Nothing here reads 0x26 -- `loop` below uses only the playback
+                type, the length and the repeats -- so this note is the only
+                place the project could have got it wrong, which is precisely
+                why it is corrected rather than left.
+    0x2c        loop 1 length, 32-bit (see above)
     0x30        loop 1 repeats; 0 means the loop is unused
     0x8a        sample rate, 16-bit
     <block>     PCM, 16-bit mono

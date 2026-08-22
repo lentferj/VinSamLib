@@ -1535,6 +1535,33 @@ material with a current mpc2emu and VinSamLib.
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
 
+### If you CONVERTED a bank to KRZ before 2026-08-22, rebuild it — three defects in mpc2emu's KRZ writer
+
+Fixed upstream on 2026-08-22 and measured on real hardware. All three
+affect the same thing: KRZ files this program produced **by conversion**.
+
+| What was wrong | What you heard |
+|---|---|
+| LFO→pitch depth scaled onto the depth byte directly | **vibrato ~20× too shallow** — 4 cents where 80 were asked for, which is inaudible rather than subtle, so in practice a converted program with vibrato had none |
+| Filter-envelope depth | **quiet sweeps missing entirely** |
+| Filter cutoff not routed through Hz | the corner **up to 1.80 octaves** off |
+
+**Which of your files are affected — the distinction matters here.**
+Only banks that went through a *conversion*: Convert Options, the
+format-convert dialog, "Import via mpc2emu…", Sample Folder import, and
+any SF2 / SFZ / EXS / TAL / GIG source, whenever the target was KRZ.
+
+**A bank you assembled in New Bank from existing KRZ programs is not
+affected.** That path uses this program's own assembler, which copies
+each object's block bytes verbatim and never re-authors a filter or an
+LFO, so there was nothing for these defects to touch.
+
+Nothing will show you which is which after the fact: as mpc2emu notes,
+their own reader carried the same error mirrored, so re-reading an
+affected bank reports the depth the source asked for and looks correct.
+Rebuild from the original source with a current mpc2emu. Their README's
+"Fixed defects" section has the measured tables.
+
 > **KRZ banks share keymaps, and that is visible on the machine.** When two
 > presets you stage came from one source bank and used the same keymap, the
 > built bank keeps them sharing it — the same object, referenced twice, exactly
