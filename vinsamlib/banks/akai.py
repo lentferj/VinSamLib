@@ -367,11 +367,42 @@ class AkaiSample:
         root = self.body[0x02] if len(self.body) > 0x02 else 60
         return root if 0 < root < 128 else 60
 
+    #: The two rates an S3000 plays at. Byte 0x01 INDEXES this; the field at
+    #: 0x8A only declares one, and the loader ignores the declaration when the
+    #: two disagree.
+    _PLAYBACK_RATES = (22050, 44100)
+
     @property
     def sample_rate(self) -> int:
+        """The rate the SAMPLER PLAYS AT, which is not always the one declared.
+
+        Measured by s3ked (§143) from a disc built for the question and loaded
+        from disc rather than sent over SysEx, with both conflicting cases
+        resolving to the index in OPPOSITE directions -- so it is neither a
+        default nor a one-way coincidence:
+
+            0x01=1  declared 44100  ->  300 Hz     control
+            0x01=0  declared 22050  ->  150 Hz     control
+            0x01=1  declared 22050  ->  300 Hz     the INDEX wins
+            0x01=0  declared 44100  ->  150 Hz     the INDEX wins
+
+        Reading the declared field misreports 22.0% of 19 340 factory headers,
+        including 1 290 that declare 48000 -- a rate the machine cannot produce
+        at all, so that reading was not merely imprecise but impossible.
+
+        S1000 is EXCLUDED deliberately, and this is behaviour rather than an
+        oversight: byte 0x01 reads 1 in all 35 990 .S1 headers of that corpus,
+        so it carries no information there, and preferring it would move 3 242
+        read rates on an inference drawn from the other generation's machine.
+        ConvertWithMoss has seen it vary on machine-recorded S1000 material,
+        which bounds the corpus rather than the machine.
+        """
         if len(self.body) < 0x8C:
             return 44100
-        return _u16(self.body, 0x8A) or 44100
+        declared = _u16(self.body, 0x8A) or 44100
+        if not self.is_s3000:
+            return declared
+        return self._PLAYBACK_RATES[1 if self.body[0x01] else 0]
 
     @property
     def frame_count(self) -> int:
