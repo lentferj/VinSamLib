@@ -366,9 +366,27 @@ def resolve_ordinal(bank, listed: list, ordinal: int) -> int:
 
     These are not the same number, and assuming they are is how a user asks
     for one preset and gets its neighbour. ``sf2_parser`` and ``gig_parser``
-    both drop an entry that yielded no zones, so a file listing 21 presets
-    can parse to 19 -- measured at 27 dropped entries across a 25-file SF2
-    sample here.
+    both drop an entry that yielded no zones, so a file listing 8 presets can
+    parse to 5.
+
+    **RARE, and an earlier number here was wrong.** This docstring used to
+    claim "27 dropped entries across a 25-file SF2 sample". Re-measured
+    2026-09-05 over the whole local library -- 446 of 474 SoundFonts parsed
+    (the rest too large to parse in one pass, or unreadable) -- the real
+    figure is **2 files and 4 entries**, which mpc2emu's independent scan of
+    504 files agrees with exactly.
+
+    The old number conflated this with TRUNCATION, which is a different
+    mechanism and two orders of magnitude more common: mpc2emu's
+    ``max_presets`` defaults to 64 for SF2 and 32 for GIG, and with that
+    default in play the same 446 files lose **900 entries across 10 files**.
+    One of them loses exactly 27, which is very likely where the old figure
+    came from. Truncation is why ``parse_foreign`` passes the listed count at
+    every call site; it is not why this function exists.
+
+    Do not re-derive either number by sampling: drops are concentrated in a
+    couple of files, so a small random sample reports either zero or a wildly
+    inflated rate. Measure the whole set and print the denominator.
 
     Two cases, and nothing in between:
 
