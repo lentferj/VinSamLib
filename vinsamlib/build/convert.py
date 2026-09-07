@@ -40,9 +40,10 @@ from typing import Any, Callable, Optional
 
 from .. import tempdirs
 from ..filenames import safe_filename
-from ..mpc2emu_bridge import (bank_splitter, e4b_parser, e4b_writer, eiii_parser,
-                                eiii_writer, krz_parser, krz_writer, models_common,
-                                resampler, start_trim, tail_trim, zone_reducer)
+from ..mpc2emu_bridge import (bank_splitter, diagnostics, e4b_parser, e4b_writer,
+                                eiii_parser, eiii_writer, krz_parser, krz_writer,
+                                models_common, resampler, start_trim, tail_trim,
+                                zone_reducer)
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
@@ -85,6 +86,20 @@ class ConversionOptions:
     trim_tail_db: Optional[float] = None
     trim_tail_fade_ms: float = 5.0
     trim_tail_keep_loops: bool = False
+    # KRZ only, and both are mpc2emu's own flags (--krz-faithful,
+    # --krz-drum-program) rather than anything this project invents.
+    #
+    # WHY THEY ARE HERE AT ALL. A K2000 program with more than three SPLIT
+    # layers is a drum program, and a drum program is silent on every normal
+    # MIDI channel. mpc2emu shipped faithful output as the only behaviour,
+    # which meant a four-layer piano converted cleanly, passed every check,
+    # and made no sound. Since 2026-08-24 their default is the opposite: fuse
+    # disjoint layers until three remain, averaging the continuous fields.
+    # That default arrives here whether or not anything asks for it, so the
+    # choice has to be reachable from the GUI and the change has to be
+    # visible -- see _collect_diagnostics below for the visible half.
+    krz_faithful_layers: bool = False
+    krz_drum_program: bool = False
 
     def is_noop(self, source_format: str = "E4B") -> bool:
         """`source_format` matters now that KRZ can be a source too: a
@@ -95,6 +110,13 @@ class ConversionOptions:
         Defaults to "E4B" for existing callers that only ever process
         E4B sources (the Pending-pane per-bank feature, the HW test
         matrix) and don't pass this explicitly."""
+        # krz_faithful_layers is deliberately NOT in this list. On a KRZ->KRZ
+        # request it asks for the layers the source already has, and skipping
+        # the round trip delivers exactly that while also keeping every
+        # advanced parameter mpc2emu's Bank model does not carry -- forcing a
+        # rewrite to honour it would lose fidelity in the name of preserving
+        # it. krz_drum_program IS in the list: asking for a drum program is
+        # asking for a file the source is not.
         return (self.target_format == source_format
                 and self.resample_profile is None
                 and not self.max_sample_rate
@@ -102,6 +124,7 @@ class ConversionOptions:
                 and self.reduce_velocity_layers_pct <= 0
                 and self.mono is None
                 and self.pan_law == "hardware"
+                and not self.krz_drum_program
                 and self.trim_start_db is None
                 and self.trim_tail_db is None)
 
@@ -369,8 +392,153 @@ def load_sources_samples_for_test(sources: list, fmt: str) -> list:
         return load_samples_for_test(str(tmp_path))
 
 
+# ── mpc2emu's structured conversion warnings ────────────────────────────────
+
+#: Severities worth interrupting the user for. INFO records are the running
+#: commentary a CLI prints as it works; a message box is not a log.
+_DIAG_SEVERITIES = ("warning", "error")
+
+
+@contextlib.contextmanager
+def _collect_diagnostics():
+    """Collect mpc2emu's structured diagnostics for the block, if it has them.
+
+    WHY THIS EXISTS. _run_captured reads its captured stdout only inside
+    `except`, so everything a SUCCESSFUL writer printed is discarded. That is
+    not a small loss: mpc2emu's KRZ writer prints, correctly and completely,
+    that a program had more split layers than a K2000 can play on a normal
+    channel -- the difference between a patch that sounds and one that does
+    not -- and no user of this program has ever seen that line. It cost three
+    sessions of their time to rediscover a fact their own build log had been
+    stating all along, and a GUI user would have had less to go on: a bank
+    that loads, shows no error, and makes no sound.
+
+    Their fix (2026-09-05) is a thread-local sink that does not travel through
+    stdout, so redirecting stdout no longer swallows it. `emit()` still prints
+    exactly what it printed before, so nothing about the existing behaviour
+    changes.
+
+    Degrades to an empty list on an older checkout rather than refusing to
+    convert: without diagnostics a conversion still produces the same file, it
+    just cannot say what it changed on the way.
+    """
+    try:
+        manager = diagnostics.collect()
+    except Exception:
+        yield []
+        return
+    with manager as records:
+        yield records
+
+
+@contextlib.contextmanager
+def collect_diagnostics_into(risks_out: Optional[list]):
+    """Collect mpc2emu's diagnostics for the block into an existing risks list.
+
+    Public because the PARSE steps live in the import modules, outside
+    _apply_and_write, and some codes are emitted there rather than by a
+    writer -- KRZ_ROM_ONLY comes from their KRZ parser, the two SF2 codes
+    from their SoundFont one. A parse and a write are sequential rather than
+    nested, so two of these blocks over one operation collect each record
+    once; it is only NESTING that would see a record twice, and nothing here
+    nests them.
+    """
+    with _collect_diagnostics() as records:
+        yield records
+    if risks_out is not None:
+        risks_out.extend(_diagnostic_risks(records))
+
+
+def _diagnostic_risks(records) -> list[dict]:
+    """mpc2emu Diagnostic records as risk dicts for the existing warning box.
+
+    They ride the `risks_out` channel rather than a second mechanism, for the
+    reason polyphony_risk_lines already gives: these reach the user by the
+    same route, and a separate path would just be a second thing to forget to
+    display.
+
+    Branching is on `code`, which mpc2emu treats as a published contract, and
+    never on the wording of `message`, which they are free to reword.
+    """
+    out: list[dict] = []
+    for d in records:
+        if getattr(d, "severity", "") not in _DIAG_SEVERITIES:
+            continue
+        detail = dict(getattr(d, "detail", None) or {})
+        parts = [str(getattr(d, "message", "")).strip()]
+        # A drum program keeps every layer, so it is honestly NOT content
+        # loss, and mpc2emu correctly reports content_lost False for it. It is
+        # still the worst outcome either project can produce, so it carries
+        # its own flag and gets its own sentence -- "this will not sound"
+        # is a different thing to tell someone than "this lost a layer".
+        if detail.get("silent_on_normal_channel"):
+            parts.append("A K2000 plays a drum program only on a drum "
+                         "channel, so this preset will be SILENT on a normal "
+                         "one.")
+        remedy = str(getattr(d, "remedy", "") or "").strip()
+        if remedy:
+            parts.append(remedy)
+        # Each part is a separate sentence from a separate field, and none of
+        # them is guaranteed to be punctuated -- mpc2emu's messages are
+        # written to be read at the end of a printed line, where the newline
+        # does the work. Joined raw, a message and a remedy run together into
+        # one unreadable run-on ("...ordinal has shifted address presets by
+        # name..."), which is what this looked like on the first real import.
+        said = []
+        for i, part in enumerate([p for p in parts if p]):
+            if i:
+                part = part[0].upper() + part[1:]
+            said.append(part if part[-1] in ".!?:" else part + ".")
+        text = " ".join(said)
+        subject = str(getattr(d, "subject", "") or "").strip()
+        out.append({
+            "message": f'"{subject}": {text}' if subject else text,
+            "code": getattr(d, "code", ""),
+            # A required field on their side since 2026-09-05, so it is read
+            # as an attribute and not with a .get() that would quietly read
+            # False on a checkout that does not have it.
+            "content_lost": bool(getattr(d, "content_lost", False)),
+            "detail": detail,
+        })
+    return out
+
+
+def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
+    """The layer-handling arguments this mpc2emu's write_krz actually takes.
+
+    Asked of the function rather than assumed, the same way
+    manual_akai_partition_breaks asks before using `partitions`: these
+    arrived on 2026-08-24 and a checkout from before that raises TypeError on
+    a keyword it has never heard of. An older checkout keeps its own
+    behaviour, which was faithful output.
+    """
+    try:
+        names = krz_writer.write_krz.__code__.co_varnames
+    except Exception:
+        return {}
+    kw = {}
+    if "faithful_layers" in names:
+        kw["faithful_layers"] = opts.krz_faithful_layers
+    if "drum_program" in names:
+        kw["drum_program"] = opts.krz_drum_program
+    return kw
+
+
 def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
                      risks_out: Optional[list] = None) -> str:
+    """Run the pipeline, and collect what mpc2emu says about it on the way.
+
+    The split exists only so the collection wraps the WHOLE pipeline in one
+    place: `collect()` nests, so one context manager here sees what any of the
+    eight processors and the writer emitted, where a per-call return value
+    would be eight plumbing sites to keep in step.
+    """
+    with collect_diagnostics_into(risks_out):
+        return _apply_and_write_pipeline(bank, opts, out_stem, risks_out)
+
+
+def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
+                              risks_out: Optional[list] = None) -> str:
     """Shared tail end of apply_conversion() and build/xpm_import.py's
     import_xpm(): both start from a different parse step (an already-
     native E4B vs. a foreign XPM) but from an already-parsed mpc2emu Bank
@@ -441,7 +609,8 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
     tmp_dir = tempdirs.session_temp_dir(_CONVERT_TEMP_PREFIX)
     if opts.target_format == "KRZ":
         out_path = tmp_dir / f"{out_stem}.krz"
-        _run_captured(krz_writer.write_krz, bank, str(out_path))
+        _run_captured(krz_writer.write_krz, bank, str(out_path),
+                      **_krz_writer_kwargs(opts))
     elif opts.target_format == "EIII":
         out_path = tmp_dir / f"{out_stem}.e3x"
         _run_captured(eiii_writer.write_eiii, bank, str(out_path))
@@ -655,7 +824,12 @@ def apply_conversion(bank_path: str, opts: ConversionOptions,
     fmt = _sniff_format(bank_path)
     if opts.is_noop(fmt):
         return bank_path
-    bank = _parse_by_format(bank_path, fmt)
+    # Around the parse as well as the write: KRZ_ROM_ONLY is emitted by
+    # mpc2emu's PARSER, and the ROM-only refusal below is this project's own
+    # re-derivation of the same fact from the parsed bank -- written because
+    # their [INFO] saying so was discarded by _run_captured.
+    with collect_diagnostics_into(risks_out):
+        bank = _parse_by_format(bank_path, fmt)
     # Same ROM-only case as convert_preset(), reached instead when a whole
     # already-assembled bank is converted rather than one program. Checked
     # against mpc2emu's parse here because that is what this path already

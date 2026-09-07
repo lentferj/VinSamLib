@@ -115,6 +115,7 @@ class ConvertOptionsDialog(QDialog):
         # only then the resample/reduce passes that were here first.
         groups.addWidget(self._build_trim_group())
         groups.addWidget(self._build_pan_law_group())
+        groups.addWidget(self._build_krz_layers_group())
         groups.addWidget(self._build_stereo_group())
         groups.addWidget(self._build_resample_group())
         groups.addWidget(self._build_max_rate_group())
@@ -132,6 +133,7 @@ class ConvertOptionsDialog(QDialog):
         layout.addWidget(self._scroll, 1)
 
         self._refresh_pan_law_availability()
+        self._refresh_krz_layers_availability()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -165,6 +167,10 @@ class ConvertOptionsDialog(QDialog):
             self._velocity_slider.setValue(int(opts.reduce_velocity_layers_pct))
         if opts.pan_law == "constant-power":
             self._pan_law_group.setChecked(True)
+        krz_idx = next((i for i, (_l, f, d) in enumerate(self._KRZ_LAYER_CHOICES)
+                        if f == opts.krz_faithful_layers
+                        and d == opts.krz_drum_program), 0)
+        self._krz_layers_box.setCurrentIndex(krz_idx)
         if opts.trim_start_db is not None:
             self._trim_start_group.setChecked(True)
             self._trim_start_db_spin.setValue(abs(opts.trim_start_db))
@@ -343,6 +349,60 @@ class ConvertOptionsDialog(QDialog):
 
         outer.addWidget(body)
         return group
+
+    # -- Group: K2000 Layer Handling (KRZ only) ---------------------------------
+
+    #: (label, faithful_layers, drum_program). mpc2emu takes two independent
+    #: flags; only three of the four combinations mean anything, because
+    #: drum_program is only consulted once faithful_layers has stopped the fit.
+    _KRZ_LAYER_CHOICES = (
+        ("Fit to three layers (plays on any channel)", False, False),
+        ("Keep every layer", True, False),
+        ("Keep every layer, as a drum program", True, True),
+    )
+
+    def _build_krz_layers_group(self) -> QGroupBox:
+        group = QGroupBox("K2000 Layer Handling")
+        self._krz_layers_group = group
+        outer = QVBoxLayout(group)
+
+        self._krz_layers_box = QComboBox()
+        for label, _f, _d in self._KRZ_LAYER_CHOICES:
+            self._krz_layers_box.addItem(label)
+        outer.addWidget(self._krz_layers_box)
+
+        label = QLabel(
+            "A K2000 program with more than three SPLIT layers is a DRUM "
+            "PROGRAM, and a drum program sounds only on a drum channel — a "
+            "converted four-layer electric piano was silent on a K2000R for "
+            "exactly this reason, with every check reading clean and nothing "
+            "on screen but the program name in parentheses.\n\n"
+            "The default fuses disjoint layers until three remain, averaging "
+            "the continuous settings weighted by how much of the keyboard "
+            "each layer covers, so the preset plays anywhere. It is the one "
+            "place a conversion knowingly changes what the source says, and "
+            "it reports each change afterwards. Layers that OVERLAP on a key "
+            "are never fused — that would delete a voice rather than "
+            "approximate it — so a preset can stay a drum program even on "
+            "the default.\n\n"
+            "Keep every layer when you are writing for a drum channel "
+            "deliberately, or when you would rather hear the source exactly "
+            "and decide for yourself.")
+        label.setWordWrap(True)
+        label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        outer.addWidget(label)
+        return group
+
+    def _refresh_krz_layers_availability(self) -> None:
+        """KRZ-only, and disabled rather than hidden for the same reason the
+        pan-law group is: a control that vanishes reads as a bug, where one
+        greyed out with a reason reads as an answer."""
+        is_krz = self._current_target_format() == "KRZ"
+        self._krz_layers_group.setEnabled(is_krz)
+        self._krz_layers_group.setToolTip(
+            "" if is_krz else
+            "K2000 (KRZ) only — the three-layer limit and the drum-program "
+            "rule are the K2000's, and no other target here has an equivalent.")
 
     def _current_target_format(self) -> str:
         """Which format this conversion will actually write. The base dialog
@@ -723,6 +783,8 @@ class ConvertOptionsDialog(QDialog):
         trim_tail_db = (self._trim_tail_db_spin.value()
                          if self._trim_tail_group.isChecked() else None)
 
+        _label, krz_faithful, krz_drum = self._KRZ_LAYER_CHOICES[
+            self._krz_layers_box.currentIndex()]
         return ConversionOptions(
             resample_profile=resample_profile,
             no_bandpass=no_bandpass,
@@ -738,6 +800,8 @@ class ConvertOptionsDialog(QDialog):
             trim_tail_db=trim_tail_db,
             trim_tail_fade_ms=self._trim_tail_fade_spin.value(),
             trim_tail_keep_loops=self._trim_tail_keep_loops.isChecked(),
+            krz_faithful_layers=krz_faithful,
+            krz_drum_program=krz_drum,
         )
 
     @staticmethod

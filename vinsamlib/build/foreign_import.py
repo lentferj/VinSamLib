@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
+from . import convert as convert_mod
 from .convert import ConversionOptions, _apply_and_write, _run_captured
 from .sample_names import apply_sample_names, names_from_base
 from .xpm_import import XpmSummary, _preset_samples, summarize_program
@@ -494,7 +495,12 @@ def import_foreign(path, opts: ConversionOptions,
     accident.
     """
     p = Path(path)
-    bank = parse_foreign(p, wav_dir, max_presets=_listed_count(p))
+    # Collected around the PARSE, not just the write: mpc2emu's SoundFont
+    # parser is where SF2_ENTRIES_DROPPED and SF2_PRESETS_TRUNCATED are
+    # emitted, and a dropped entry SHIFTS every later ordinal -- the fault
+    # resolve_ordinal() exists to reconcile.
+    with convert_mod.collect_diagnostics_into(risks_out):
+        bank = parse_foreign(p, wav_dir, max_presets=_listed_count(p))
     if not bank.presets:
         raise ValueError(
             f"{p.name} holds no sampled content: nothing in it references a "

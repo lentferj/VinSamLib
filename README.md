@@ -766,7 +766,7 @@ times as you like (handy while iterating on conversion options).
 
 ### Convert Options dialog
 
-![Convert Options dialog with the "Import as:" target-format picker at the top, and Trim Start, Constant-Power Pan Compensation, Vintage Resample and Reduce Sample Count all expanded](docs/screenshots/05_convert_options.png)
+![Convert Options dialog with the "Import as:" target-format picker set to KRZ, Trim Start expanded, Constant-Power Pan Compensation greyed out because it is E4B-only, and the KRZ-only K2000 Layer Handling group below it](docs/screenshots/05_convert_options.png)
 
 Shared by "Import via mpc2emu", Pending's per-bank conversion, and XPM
 import.
@@ -854,6 +854,61 @@ This is useful for MPC Auto Sampler output in particular: the MPC's own
 "Auto Trim Start" only moves a playback *marker* inside the MPC project,
 which is gone once the sample is exported as a bare WAV — so the audible
 lead-in silence is back in anything VinSamLib imports.
+
+#### K2000 Layer Handling
+
+**KRZ only** — greyed out for E4B and EIII targets, which have no
+equivalent rule.
+
+A K2000 program with more than three **split** layers is not a regular
+program at all: it is a **drum program**, and a drum program sounds *only*
+on a drum channel. Nothing about that is visible from the file. mpc2emu
+converted a four-layer electric piano faithfully, every internal check
+read clean, and it was silent on a K2000R — the only tell on the whole
+machine being the program name shown in parentheses on the display. Three
+of their sessions went into rediscovering that.
+
+| Choice | What it writes |
+|---|---|
+| **Fit to three layers** *(default)* | Fuses **disjoint** layers until three remain, averaging the continuous settings weighted by how much of the keyboard each layer covers. The preset plays on any channel |
+| **Keep every layer** | Faithful output. A preset with more than three split layers becomes a drum program, silent on a normal channel |
+| **Keep every layer, as a drum program** | The same, written as a drum program deliberately — for material you *are* putting on a drum channel |
+
+Two things the default will **not** do. Layers that **overlap** on a key
+are never fused, because folding them into one deletes a voice rather
+than approximating it; and a pair differing in a *categorical* field —
+filter type, either envelope, the LFO — is left alone, since an averaged
+envelope is not a compromise between two envelopes but a third envelope
+neither layer asked for. So a preset can stay a drum program even on the
+default, and it says so when that happens.
+
+This is the one place a conversion knowingly changes what the source
+says. Every change is reported afterwards in the warning box described
+under [Conversion warnings](#conversion-warnings).
+
+#### Conversion warnings
+
+After any conversion or import, anything mpc2emu changed or could not
+carry is collected and shown in one box — which preset it was about, what
+happened, and what you can do differently.
+
+This is newer than it sounds. mpc2emu's converter has always *printed*
+these, but VinSamLib captured its stdout and read it back **only when
+something raised**, so every warning from a *successful* conversion was
+discarded before it could reach the window. The drum-program silence
+above is exactly that: the answer was in the build log the whole time and
+no user of this program could ever see it. Since mpc2emu published
+structured diagnostics (2026-09-05) they arrive as records instead of
+text, and the box reports them.
+
+Warnings that mean **content was lost** are counted separately from ones
+that merely restructured something, and the drum-program case gets its own
+sentence, because "this will not sound on a normal channel" is a different
+thing to be told than "this lost a velocity band".
+
+An older mpc2emu checkout without `models/diagnostics.py` simply keeps the
+previous behaviour: the conversion runs and produces the same file, it
+just cannot say what it changed on the way.
 
 #### Constant-Power Pan Compensation
 
