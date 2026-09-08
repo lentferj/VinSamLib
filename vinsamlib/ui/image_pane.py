@@ -58,7 +58,31 @@ _FORMAT_FROM_EXT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ",
 _EMU3_FAMILY = {"E4B", "EIII"}
 
 
+#: A folder holding at least one of these is an AKAI VOLUME. Same set as
+#: ui/models._AKAI_PROGRAM_EXTS and index/scanner's, and it has to be here
+#: too: an AKAI "bank" is a directory, not a file.
+_AKAI_PROGRAM_EXTS = {".p3", ".p1", ".a3p", ".s3p"}
+
+
 def _sniff_format(path: str) -> Optional[str]:
+    # A DIRECTORY first, before anything tries to read it as a file. An AKAI
+    # volume is a folder of loose .P3/.S3 files, so open() raises
+    # IsADirectoryError -- an OSError, swallowed by the handler below, which
+    # returned None and had every AKAI volume refused as "an unrecognised
+    # file". That made appending AKAI volumes to an open image impossible and
+    # left images.append_banks()'s own AKAI branch unreachable, along with
+    # akai_image.AKAI_APPENDABLE. Drag-and-drop went the same way, since
+    # _acceptable() sniffs through here too.
+    d = Path(path)
+    if d.is_dir():
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            return None
+        if any(e.is_file() and e.suffix.lower() in _AKAI_PROGRAM_EXTS
+               for e in entries):
+            return "AKAI"
+        return None
     try:
         with open(path, "rb") as f:
             head = f.read(16)

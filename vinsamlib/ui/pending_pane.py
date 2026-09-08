@@ -119,6 +119,11 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
     return paths
 
 
+#: Item role holding the row's position in self._pending at the moment the
+#: list was built. Qt.UserRole itself already carries the pending entry.
+_ROW_INDEX_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
 class PendingBanksPane(QWidget):
     statusMessage = Signal(str)
     moveToNewBankRequested = Signal(str, str, list, dict, dict, dict)   # (+ voice_velocity)
@@ -289,6 +294,12 @@ class PendingBanksPane(QWidget):
         self._list.clear()
         for row, entry in enumerate(self._pending):
             item = self._make_item(entry)
+            # The row's index AS BUILT. After an internal drag the widget's
+            # order is the new one and self._pending is still the old one, so
+            # this is the only exact way back to which volume moved where --
+            # the UserRole dict comes back from the widget as a COPY, so
+            # object identity cannot answer it (see _on_rows_moved).
+            item.setData(_ROW_INDEX_ROLE, row)
             # AKAI only: the partition each volume will land in, shown on the
             # row itself. A disk is carved into partitions and the writer
             # fills one before opening the next, so this follows the ORDER --
@@ -404,10 +415,40 @@ class PendingBanksPane(QWidget):
         return widget_item
 
     def _on_rows_moved(self, *_args) -> None:
+        """Take the widget's new order, and carry the partition breaks with it.
+
+        A break is a row INDEX, and _partition_breaks' own note says every
+        path that removes or reorders a row has to fix them up. Deletion did;
+        this one did not, so dragging a volume past a boundary left the
+        boundary on a different pair of volumes -- and, because nothing
+        refreshed, the A/B letters on the rows went on showing the old
+        grouping while the writer received the new one. The preview, the row
+        labels and the built disc disagreed, and only the disc was checkable.
+
+        A break belongs to the VOLUME that starts a partition, not to the
+        position, so it moves with that volume. Inverted through the row
+        stamps rather than through object identity: the widget hands back a
+        COPY of the UserRole dict, so `is` and `id()` are both useless here,
+        and names are not unique enough to match on (two queued volumes may
+        legitimately share one).
+        """
+        old_of_new = [self._list.item(i).data(_ROW_INDEX_ROLE)
+                      for i in range(self._list.count())]
         self._pending = [
             self._list.item(i).data(Qt.ItemDataRole.UserRole)
             for i in range(self._list.count())
         ]
+        if self._partition_breaks:
+            # Row 0 can never carry a break -- it is the start of partition A
+            # by definition -- so a volume dragged to the top loses its break
+            # rather than turning the row above it into a partition of one.
+            self._partition_breaks = {
+                new for new, old in enumerate(old_of_new)
+                if old in self._partition_breaks and new > 0}
+        # Rebuild: the letters, the tooltips and the row stamps are all now
+        # stale, and the stamps in particular must be right before the NEXT
+        # drag inverts them.
+        self._refresh()
 
     def _on_current_changed(self, _current, _previous) -> None:
         self._update_contents_preview()
@@ -596,12 +637,20 @@ class PendingBanksPane(QWidget):
             return
         fmt = self._format
         pending_snapshot = list(self._pending)
+        # Snapshotted WITH the queue, not read again when the worker returns.
+        # Assembly writes every volume to disk and only the Build button is
+        # disabled while it runs, so a row deleted mid-assembly would leave
+        # these indices addressing a list they no longer describe -- an
+        # IndexError in describe_partition_groups() if we were lucky, and a
+        # grouping that silently does not cover the volumes if we were not.
+        groups_snapshot = self.partition_groups()
         self._build_btn.setEnabled(False)
         self.statusMessage.emit(f"Assembling {len(pending_snapshot)} pending bank(s)…")
         risks: list = []
         w = workers.Worker(_assemble_all, pending_snapshot, risks)
         w.signals.finished.connect(
-            lambda paths, f=fmt, r=risks: self._on_build_assembled(paths, f, r))
+            lambda paths, f=fmt, r=risks, g=groups_snapshot:
+            self._on_build_assembled(paths, f, r, g))
         w.signals.error.connect(self._on_build_error)
         w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
         w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
@@ -609,14 +658,16 @@ class PendingBanksPane(QWidget):
         workers.run(w)
 
     def _on_build_assembled(self, paths: list[str], fmt: str,
-                             risks: Optional[list] = None) -> None:
+                             risks: Optional[list] = None,
+                             groups: Optional[list] = None) -> None:
         # Building no longer empties the queue automatically -- the temp
         # files handed to buildRequested are independent copies, so the
         # pending recipes stay available to rebuild, tweak, or send to a
         # second image; Clear (or Delete per-row) is how the user empties
         # it, same as New Bank's own explicit Clear button.
         self._build_btn.setEnabled(bool(self._pending))
-        self.buildRequested.emit(paths, fmt, self.partition_groups())
+        self.buildRequested.emit(
+            paths, fmt, self.partition_groups() if groups is None else groups)
         # Voice-budget findings from the per-bank conversions above, if any
         # bank had convert options set (see build/convert.py's
         # polyphony_risk()) -- reported after the handoff, since the banks

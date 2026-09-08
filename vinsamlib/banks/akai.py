@@ -822,6 +822,13 @@ class AkaiBank:
     #: loaded SLNGTH, the disk file was exactly 150 bytes longer, with no
     #: exceptions and no other value (2026-08-12, relayed via mpc2emu).
     SAMPLE_HEADER_BYTES = 150
+    #
+    # NOT the same 150 as S1000_BLOCK_LEN, which also happens to be 0x96.
+    # That one is a record LENGTH in the file layout; this is a measured
+    # difference between a file's size and the SLNGTH the machine reports for
+    # it, and it holds for S3000 samples too, whose records are 0xC0 long. The
+    # coincidence has already been read once as a contradiction between this
+    # and S3000_BLOCK_LEN -- two different quantities that share a number.
 
     #: A sampler reports memory in 16-BIT WORDS. A 32 MB S3000XL reports
     #: 16 777 216 of them, and x2 is 32 MB exactly — which is itself the
