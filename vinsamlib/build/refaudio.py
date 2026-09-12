@@ -19,6 +19,7 @@ several zones and the sampler loads it once.
 from __future__ import annotations
 
 import re
+import wave
 from pathlib import Path
 from typing import Optional
 
@@ -34,14 +35,39 @@ _TAL_URL = re.compile(rb'url="([^"]+)"')
 _AUDIO_EXTS = (".wav", ".WAV", ".aif", ".aiff", ".AIF", ".AIFF")
 
 
-def _stat_total(paths) -> int:
-    total = 0
-    for p in paths:
+#: What every sampler here stores. The figure this module reports is what
+#: the audio becomes on the instrument, not what it weighs on disk -- a 24-bit
+#: WAV loses a third on the way in, and reporting the file size claimed 9.3 MB
+#: where the converter's own summary said 6.2 MB for the same five samples.
+_TARGET_BYTES_PER_SAMPLE = 2
+
+
+def _audio_bytes(path: Path) -> int:
+    """What this audio file becomes once loaded, in bytes.
+
+    frames x channels x 2. The header is enough to know that, so this opens
+    each file but reads no audio -- `wave` parses the chunk table and stops.
+    Falls back to the file's own size for anything it cannot parse, which is
+    the old behaviour and never worse than silence.
+
+    Bit depth is the only conversion folded in here. Channel count is not:
+    a stereo sample stays two channels' worth of bytes whether the target
+    keeps it as one stereo sample (E4B) or splits it into an -L/-R pair
+    (AKAI). Sample RATE is not either -- nothing is resampled unless the
+    user asks, and that is a Convert Options choice this cannot see.
+    """
+    try:
+        with wave.open(str(path)) as w:
+            return w.getnframes() * w.getnchannels() * _TARGET_BYTES_PER_SAMPLE
+    except Exception:
         try:
-            total += p.stat().st_size
+            return path.stat().st_size
         except OSError:
-            pass                      # a reference that does not resolve costs nothing
-    return total
+            return 0
+
+
+def _stat_total(paths) -> int:
+    return sum(_audio_bytes(p) for p in paths)
 
 
 def _xpm_audio(path: Path, blob: bytes) -> int:
