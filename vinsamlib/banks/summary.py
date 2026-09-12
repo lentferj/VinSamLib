@@ -189,6 +189,53 @@ def summarize_krz_bank(bank: krz.KrzFile) -> BankSummary:
     )
 
 
+def krz_audio_bytes(bank: krz.KrzFile, sample_ids) -> int:
+    """Bytes of AUDIO the given KRZ samples need, deduped.
+
+    NOT `len(obj.block)`, which is what this used to be and is the object's
+    HEADER -- 88 to 92 bytes. A 1.4 MB bank of 61 samples summed to 21 KB
+    that way, and the Detail pane reported it as "total sample size" for as
+    long as the pane has existed. It only became obvious once the same figure
+    went onto every row: a preset that cannot be converted at all, because it
+    references only ROM, was announcing "236 B audio".
+
+    KRZ keeps its audio in one region addressed by word offsets, so the size
+    is the union of the referenced extents -- a UNION and not a sum, because
+    several sample objects can address overlapping words and adding them
+    counts shared audio twice.
+
+    Clamped to the region actually present. A bank split across several discs
+    declares extents for audio that is on the NEXT disc, which is real (the
+    program does need it) but describes something this file does not contain
+    -- and a row reporting 2.67 MB of audio in a 1.39 MB file reads as a
+    defect, not as a split bank.
+    """
+    spans = []
+    for sid in sample_ids:
+        samp = bank.samples.get(sid)
+        if samp is None:
+            continue
+        try:
+            start, words = bank.sample_word_extent(samp)
+        except Exception:
+            continue
+        if words and words > 0:
+            spans.append((start, start + words))
+    if not spans:
+        return 0
+    spans.sort()
+    total = 0
+    cur_start, cur_end = spans[0]
+    for start, end in spans[1:]:
+        if start > cur_end:
+            total += cur_end - cur_start
+            cur_start, cur_end = start, end
+        else:
+            cur_end = max(cur_end, end)
+    total += cur_end - cur_start
+    return min(total * 2, len(bank.pcm))
+
+
 def summarize_krz_program(bank: krz.KrzFile, prog: krz.KrzObject) -> PresetSummary:
     keymap_ids = list(dict.fromkeys(bank.program_keymap_refs(prog)))  # dedupe, keep order
     zones: list[ZoneSummary] = []
@@ -199,7 +246,7 @@ def summarize_krz_program(bank: krz.KrzFile, prog: krz.KrzObject) -> PresetSumma
             km_zones, km_sample_ids = _keymap_zone_runs(bank, km)
             zones.extend(km_zones)
             sample_ids.update(km_sample_ids)
-    total_sample_bytes = sum(len(bank.samples[sid].block) for sid in sample_ids)
+    total_sample_bytes = krz_audio_bytes(bank, sample_ids)
     return PresetSummary(name=prog.name.strip(), format="KRZ",
                           voice_count=len(keymap_ids), zones=zones,
                           total_sample_bytes=total_sample_bytes)

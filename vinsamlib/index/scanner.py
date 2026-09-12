@@ -401,6 +401,12 @@ def _bank_audio_bytes(bank) -> Optional[int]:
     separately for that reason.
     """
     try:
+        # KRZ keeps its audio in one region and its sample OBJECTS are ~90-byte
+        # headers, so the region's own length is both exact and free. Summing
+        # the objects gave 21 KB for a 1.4 MB bank.
+        pcm = getattr(bank, "pcm", None)
+        if pcm is not None:
+            return len(pcm)
         samples = getattr(bank, "samples", None)
         if samples is None:
             return None
