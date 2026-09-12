@@ -111,6 +111,10 @@ class BankPane(QWidget):
     #: dicts (see ui/dnd.build_import_mime_data). MainWindow converts them
     #: and calls back into add_presets() with what they became.
     importRequested = Signal(list)
+    #: "Change import settings…" on the over-limit dialog. The pane knows the
+    #: bank is too big; only MainWindow knows what the last import WAS and how
+    #: to run it again, so the pane asks and gets out of the way.
+    redoLastImportRequested = Signal()
 
     def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
@@ -133,6 +137,9 @@ class BankPane(QWidget):
         self._gen = 0
         #: _preset_key(...) -> its own audio bytes. See _preset_audio.
         self._audio_memo: dict[tuple, Optional[int]] = {}
+        #: Set by MainWindow while an import it can repeat is the most
+        #: recent thing that landed here.
+        self._can_redo_import = False
         self._info_gen = 0
         self._pre_add_snapshot: Optional[list] = None
         self._was_over_limit = False
@@ -1370,7 +1377,27 @@ class BankPane(QWidget):
         undo_btn = None
         if self._pre_add_snapshot is not None:
             undo_btn = box.addButton("Undo Last Add", QMessageBox.ButtonRole.DestructiveRole)
+        # Offered only when there IS a last import to reopen, and only when
+        # the complaint is about SIZE: reconverting cannot help a bank whose
+        # audio is on another disc of a set, and offering it there would send
+        # the user round a loop that cannot end.
+        redo_btn = None
+        if about_size and self._pre_add_snapshot is not None and self._can_redo_import:
+            redo_btn = box.addButton("Change Import Settings…",
+                                      QMessageBox.ButtonRole.ActionRole)
         box.exec()
+        if redo_btn is not None and box.clickedButton() is redo_btn:
+            # Undo FIRST, then ask for the import again: the options dialog
+            # reopens with what was used last time, and whatever comes back
+            # replaces the add that went over rather than piling on top of it.
+            self._items = self._pre_add_snapshot
+            self._pre_add_snapshot = None
+            self._was_over_limit = False
+            if not self._items:
+                self._reset_format_lock()
+            self._refresh()
+            self.redoLastImportRequested.emit()
+            return
         if undo_btn is not None and box.clickedButton() is undo_btn:
             self._items = self._pre_add_snapshot
             self._pre_add_snapshot = None

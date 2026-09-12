@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
         self._bank_pane = BankPane(self._config)
         self._bank_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
         self._explorer.addToBankRequested.connect(self._add_node_to_bank)
+        self._bank_pane.redoLastImportRequested.connect(self._redo_last_import)
         # Asked live, not stored: New Bank's format lock changes as it is
         # filled and cleared, and the Explorer's menu has to reflect the
         # lock at the moment of the right-click.
@@ -414,6 +415,8 @@ class MainWindow(QMainWindow):
             if not path:
                 return
             self._remember_dir("last_program_dir", path)
+        self._remember_import(
+            lambda p=path, i=preset_index: self._import_xpm(p, i))
         opts = FormatConvertDialog.get_import_options(
             self, locked_format=self._bank_pane.format,
             bank_loader=lambda: xpm_import.load_samples_for_test(
@@ -766,6 +769,8 @@ class MainWindow(QMainWindow):
         samples in memory, and doing several at once is how a 1 GB SoundFont
         becomes an out-of-memory kill rather than a slow import.
         """
+        self._remember_import(
+            lambda r=list(requests): self._import_requests(r))
         if self._import_worker is not None or self._xpm_import_worker is not None:
             self.statusBar().showMessage("An import is already running")
             return
@@ -887,6 +892,8 @@ class MainWindow(QMainWindow):
         chosen options are applied to every preset in the list, converted
         one at a time (see _run_next_preset_conversion()), not a separate
         dialog per preset."""
+        self._remember_import(
+            lambda n=list(nodes): self._convert_preset_via_mpc2emu(n))
         if self._preset_convert_worker is not None:
             self.statusBar().showMessage("A conversion is already running")
             return
@@ -992,6 +999,35 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Duplicates will prompt before being skipped" if checked
             else "Duplicates will be skipped silently")
+
+    def _remember_import(self, again) -> None:
+        """Keep how to run the most recent import again, with its options.
+
+        Stored as a no-argument callable rather than as arguments: the four
+        import routes take different ones, and the pane offering the button
+        must not have to know which route it was.
+        """
+        self._last_import = again
+        self._bank_pane._can_redo_import = again is not None
+
+    def _redo_last_import(self) -> None:
+        """"Change Import Settings…" from the over-limit dialog.
+
+        The add has already been undone by the pane, so this reopens the
+        import exactly as it was asked for the first time -- same source,
+        same dialog, pre-filled with the options that produced a bank too
+        big. Changing "Reduce Sample Count" or the stereo method and pressing
+        OK is then one gesture away, which is the whole point: the previous
+        behaviour offered only "undo" or "keep", and both leave the user to
+        find their way back to the dialog themselves.
+        """
+        again = getattr(self, "_last_import", None)
+        if again is None:
+            self.statusBar().showMessage(
+                "Nothing to re-import — this bank was not filled by an import",
+                6000)
+            return
+        again()
 
     def _add_node_to_bank(self, nodes: list) -> None:
         # The Explorer's right-click "Add to New Bank" (now multi-select
