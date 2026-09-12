@@ -36,6 +36,7 @@ from .favourites_dialog import FavouritesDialog
 from .settings_dialog import SettingsDialog
 from ..banks import e4b, eiii, krz
 from ..build import convert, foreign_import, sampledir_import, xpm_import
+from ..build import project
 from ..config import Config, user_data_dir
 from ..index.db import IndexDB
 from ..index.scanner import scan
@@ -229,6 +230,16 @@ class MainWindow(QMainWindow):
         rescan_action = QAction("Rescan Library", self)
         rescan_action.triggered.connect(lambda: self._start_scan(list(self._config.library_roots)))
         file_menu.addAction(rescan_action)
+
+        file_menu.addSeparator()
+
+        save_project_action = QAction("Save Project…", self)
+        save_project_action.triggered.connect(self._save_project)
+        file_menu.addAction(save_project_action)
+
+        load_project_action = QAction("Load Project…", self)
+        load_project_action.triggered.connect(self._load_project)
+        file_menu.addAction(load_project_action)
 
         file_menu.addSeparator()
 
@@ -999,6 +1010,86 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Duplicates will prompt before being skipped" if checked
             else "Duplicates will be skipped silently")
+
+    # -- project save / load ------------------------------------------------
+
+    def _save_project(self) -> None:
+        """Write everything staged to one file, so the work survives a quit."""
+        bp, pp = self._bank_pane, self._pending_pane
+        if not bp._items and not pp._pending:
+            self.statusBar().showMessage("Nothing staged to save", 6000)
+            return
+        start = str(self._config.last_image_dir or Path.home())
+        path, _f = QFileDialog.getSaveFileName(
+            self, "Save Project", str(Path(start) / f"Untitled{project.SUFFIX}"),
+            f"VinSamLib projects (*{project.SUFFIX})",
+            options=QFileDialog.Option.DontUseNativeDialog)
+        if not path:
+            return
+        try:
+            summary = project.save(
+                path,
+                bank_items=list(bp._items), bank_format=bp.format,
+                bank_name=bp._name_edit.text(),
+                sample_renames=dict(bp._sample_renames),
+                zone_placement=dict(bp._zone_placement),
+                voice_velocity=dict(bp._voice_velocity),
+                pending=list(pp._pending),
+                partition_breaks=set(pp._partition_breaks))
+        except Exception as ex:
+            QMessageBox.warning(self, "Save Project", f"Could not save:\n\n{ex}")
+            return
+        self.statusBar().showMessage(summary, 10000)
+
+    def _load_project(self) -> None:
+        """Read one back, replacing what is staged now.
+
+        Asks first when there is work to lose: loading is not an import, it
+        REPLACES both columns, and doing that silently to a queue somebody
+        spent an evening on is not recoverable.
+        """
+        bp, pp = self._bank_pane, self._pending_pane
+        if (bp._items or pp._pending) and QMessageBox.question(
+                self, "Load Project",
+                "Loading replaces what is in New Bank and Pending for Image. "
+                "Continue?") != QMessageBox.StandardButton.Yes:
+            return
+        start = str(self._config.last_image_dir or Path.home())
+        path, _f = QFileDialog.getOpenFileName(
+            self, "Load Project", start,
+            f"VinSamLib projects (*{project.SUFFIX})",
+            options=QFileDialog.Option.DontUseNativeDialog)
+        if not path:
+            return
+        try:
+            rep = project.load(path)
+        except Exception as ex:
+            QMessageBox.warning(self, "Load Project", f"Could not load:\n\n{ex}")
+            return
+        bp._clear()
+        if rep.banks:
+            bp.add_presets([(b, p, rep.bank_format or "", n) for b, p, n in rep.banks])
+        # AFTER the presets, not before: add_presets() rewrites the name field
+        # for a freshly-locked bank, so setting it first was silently undone.
+        bp._name_edit.setText(rep.bank_name)
+        bp._sample_renames = dict(rep.sample_renames)
+        bp._zone_placement = dict(rep.zone_placement)
+        bp._voice_velocity = dict(rep.voice_velocity)
+        bp._refresh()
+        pp._pending = list(rep.pending)
+        pp._format = rep.pending[0]["format"] if rep.pending else None
+        pp._partition_breaks = set(rep.partition_breaks)
+        pp._refresh()
+        loaded = f"Loaded {Path(path).name}: {len(rep.banks)} preset(s) in New Bank, {len(rep.pending)} bank(s) pending"
+        self.statusBar().showMessage(loaded, 10000)
+        if rep.problems:
+            # Never a silent partial load: what did not come back is the half
+            # the user has to act on, and it scrolls away in a status bar.
+            QMessageBox.warning(
+                self, "Loaded With Problems",
+                loaded + "\n\n" + "\n\n".join(rep.problems[:12])
+                + ("" if len(rep.problems) <= 12
+                   else f"\n\n… and {len(rep.problems) - 12} more."))
 
     def _remember_import(self, again) -> None:
         """Keep how to run the most recent import again, with its options.

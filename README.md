@@ -1077,6 +1077,43 @@ Deduped per SOURCE bank, not across the queue: a queued bank can hold
 presets drawn from several different files, and a sample identity only
 means anything inside the file it came from.
 
+### Save Project / Load Project
+
+**File ▸ Save Project…** writes everything staged — New Bank's presets and
+their edits, the Pending queue with its per-bank conversion options and
+partition breaks — to a single `.vslproj` file, so an evening's work
+survives quitting. **Load Project…** puts it back.
+
+**What it carries, and what it only points at.**
+
+| Where a preset came from | In the project file |
+|---|---|
+| A library file you have not altered | A **reference**: the path plus the preset's identity inside it |
+| A conversion or an import | **Carried**, bytes and all |
+
+A reference keeps the file tiny — a project over a 16 MB bank is under a
+kilobyte — and copying that bank in to record "and this preset from it"
+would make saving cost more than the work being saved.
+
+A conversion result has no such home. Its bytes live in a session temp
+directory that is deleted when VinSamLib exits, so a reference to one
+would be dead by morning. Re-running the conversion is *not* the same
+thing either: mpc2emu's parameter laws are still being corrected week to
+week, so a rebuild months later can produce audibly different audio from
+the same source. What you staged is what gets saved.
+
+**A stale reference is reported, never guessed at.** Each one records the
+source's size and modification time. If the file has moved, changed or
+gone, those presets are named and skipped and the rest of the project
+still loads — restoring presets by position out of a file that has since
+changed is how you would get the wrong sound with nothing anywhere
+saying so. A project that refused to open because one folder moved would
+be worse than no project file at all.
+
+The file is an ordinary zip: `project.json` plus a `blobs/` folder holding
+carried banks under content-addressed names, so two presets out of one
+converted bank store its bytes once. You can look inside it with anything.
+
 #### Converting to AKAI
 
 Pick **AKAI** in "Import as:" and an E4B, KRZ or EIII preset — or a
