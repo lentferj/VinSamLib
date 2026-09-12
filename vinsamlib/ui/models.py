@@ -79,6 +79,12 @@ _FOREIGN_KINDS = ("foreign_bank", "foreign_preset")
 # both cases.
 _IMPORT_DRAG_KINDS = _FOREIGN_KINDS + ("xpm", "mpc_project", "mpc_program")
 
+#: Rows that hold other rows rather than being content themselves. A `bank`
+#: is deliberately NOT one: it has presets under it, but the bank row is
+#: itself actionable (favourites) and gets its own empty_reason when it holds
+#: no preset.
+_CONTAINER_KINDS = ("directory", "volume_root", "folder")
+
 
 def _import_request(node: TreeNode) -> dict:
     """The drag payload / context-menu argument for one import-source row.
@@ -164,6 +170,37 @@ class TreeNode:
         elif self.empty_reason:
             text += "   (nothing to import)"
         return text
+
+
+def _container_empty_reason(node: TreeNode) -> str:
+    """Why this folder holds nothing to import, or "" if it does (or we do
+    not know yet).
+
+    THE "DO NOT KNOW YET" CASE IS THE WHOLE DIFFICULTY. This tree is lazy --
+    a folder's children are read when it is expanded -- so a collapsed
+    subfolder could hold anything. Greying a folder on the strength of the
+    part we happen to have read would put "nothing here" on rows that have
+    real content one level down, which is worse than leaving them plain:
+    the grey is a claim, and an unread folder supports no claim.
+
+    So an unread container child makes the answer "" no matter what its
+    siblings look like. The consequence is that a folder greys when its
+    subtree has been opened, not before, which is the honest version of
+    "recursive up to the top".
+    """
+    kids = node.children
+    if kids is None:
+        return ""                      # not read yet
+    if not kids:
+        return f"{node.label} is empty."
+    for k in kids:
+        if k.kind in _CONTAINER_KINDS and k.children is None:
+            return ""                  # unread subfolder -- unknown
+        if k.error:
+            return ""                  # a row that FAILED is not a row that is empty
+        if not k.empty_reason and k.kind != "unsupported":
+            return ""                  # something in here can be acted on
+    return f"nothing under {node.label} can be imported."
 
 
 # ── background fetch functions (run on a worker thread — no Qt here) ───────
@@ -762,10 +799,37 @@ class LibraryTreeModel(QAbstractItemModel):
             idx = self.node_index(node)
             if idx.isValid():
                 self.dataChanged.emit(idx, idx)
+            self._roll_up_emptiness(node)
             return
         self.beginInsertRows(parent_index, 0, len(children) - 1)
         node.children = children
         self.endInsertRows()
+        self._roll_up_emptiness(node)
+
+    def _roll_up_emptiness(self, node: TreeNode) -> None:
+        """Grey a folder whose whole READ subtree holds nothing to import,
+        and carry that upward.
+
+        Jan's ask: a folder of rows that all say "(nothing to import)" should
+        say so itself, recursively. The rows already grey individually, which
+        made the folder above them look like the one place worth opening.
+
+        Stops at the first ancestor whose answer does not change: emptiness
+        only propagates while it is newly true, so a parent that already knew
+        cannot make its own parent change either. That keeps an expand from
+        walking to the library root every time.
+        """
+        cur: Optional[TreeNode] = node
+        while cur is not None and cur.kind in _CONTAINER_KINDS:
+            before = cur.empty_reason
+            after = _container_empty_reason(cur)
+            if after == before:
+                return
+            cur.empty_reason = after
+            idx = self.node_index(cur)
+            if idx.isValid():
+                self.dataChanged.emit(idx, idx)
+            cur = cur.parent
 
     def _on_fetch_error(self, node: TreeNode, message: str) -> None:
         node.fetching = False
