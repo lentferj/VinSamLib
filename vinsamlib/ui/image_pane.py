@@ -802,8 +802,14 @@ class _NewImageDialog(QDialog):
 
     def _browse_output(self) -> None:
         kind = self._current_kind()
+        # .get(), not [kind]. The AKAI kinds were added to this dialog and not
+        # to this dict, so Browse… raised KeyError inside the slot -- and Qt
+        # swallows an exception out of a slot, so the button did nothing at
+        # all, silently, for every AKAI image. A kind nobody listed now gets
+        # a sensible extension instead of a dead button.
         ext = {"emu3_cd": "iso", "emu3_hd_emu": "hda", "emu3_hd_fat": "hda",
-               "k2000_fat16": "hda", "k2000_iso9660": "iso", "fat12_floppy": "img"}[kind]
+               "k2000_fat16": "hda", "k2000_iso9660": "iso", "fat12_floppy": "img",
+               "akai_hd": "hda", "akai_cd3000": "iso", "akai_floppy": "img"}.get(kind, "img")
         start_dir = self._start_dir()
         default = str(Path(start_dir) / f"NewImage.{ext}") if start_dir else f"NewImage.{ext}"
         path, _filter = QFileDialog.getSaveFileName(
