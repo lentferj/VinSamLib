@@ -96,9 +96,14 @@ _CONTAINER_KINDS = ("directory", "volume_root", "folder")
 #: "Total sample size" (which parses the program, so the figure is free
 #: there) is the number that answers the question.
 #:
+#: `.talsmpl` is the worst of them and was missed on the first pass: TAL
+#: stores sample paths the way Windows wrote them (`url="..\\Folder\\x.wav"`)
+#: and a measured 21.8 KB preset referenced 80.6 MB of audio -- a factor of
+#: 3 800, against the MPC program's 20.
+#:
 #: SF2 and GIG are NOT here: they embed their samples, so their file size is
 #: exactly what it appears to be.
-_AUDIO_LIVES_ELSEWHERE = {".xpm", ".xty", ".xpj", ".sfz", ".exs"}
+_AUDIO_LIVES_ELSEWHERE = {".xpm", ".xty", ".xpj", ".sfz", ".exs", ".talsmpl"}
 
 
 def _import_request(node: TreeNode) -> dict:

@@ -41,6 +41,27 @@ from ..index.db import IndexDB
 from ..index.scanner import scan
 
 
+#: Appended to a New Bank row that mpc2emu produced, as opposed to one taken
+#: verbatim off a disc. It marks PROVENANCE, and it is display only -- the
+#: written program name comes from the preset object itself (bank_pane's
+#: assemble drops the label), so this cannot reach the media or be truncated
+#: into it.
+#:
+#: It used to be added by ONE of the four import paths. A New Bank holding a
+#: converted E4B preset next to an imported .gig showed the first marked and
+#: the second not, which reads as a difference in what they are rather than
+#: an oversight -- both came through the same converter.
+_VIA_MPC2EMU = " (mpc2emu)"
+
+
+def _via_mpc2emu(name: str) -> str:
+    """`name` marked as mpc2emu's output, without doubling the mark."""
+    name = (name or "").strip()
+    if not name:
+        return _VIA_MPC2EMU.strip()          # not " (mpc2emu)" with a leading gap
+    return name if name.endswith(_VIA_MPC2EMU.strip()) else f"{name}{_VIA_MPC2EMU}"
+
+
 class MainWindow(QMainWindow):
     def __init__(self, config: Config):
         super().__init__()
@@ -459,14 +480,16 @@ class MainWindow(QMainWindow):
         # a second distinct item.
         stem = Path(xpm_path).stem
         if preset_index is None and len(pairs) == 1:
-            names = [stem or pairs[0][1].name.strip() or "Imported XPM"]
+            names = [_via_mpc2emu(stem or pairs[0][1].name.strip()
+                                   or "Imported XPM")]
         else:
             # Anything out of a project: the filename is shared by every
             # program in it and so can't tell them apart, while the program
             # names genuinely do (they come from the tracks, not the file).
             # This is the one case where the preset's own name is the better
             # label -- the file's is only the fallback.
-            names = [p.name.strip() or f"{stem} {_program_number(preset_index, i)}"
+            names = [_via_mpc2emu(p.name.strip()
+                                   or f"{stem} {_program_number(preset_index, i)}")
                      for i, (_bank, p) in enumerate(pairs)]
         self._bank_pane.add_presets(
             [(bank, preset, opts.target_format, name)
@@ -834,12 +857,13 @@ class MainWindow(QMainWindow):
             # is already cut to the 16 characters a hardware name field
             # holds, while the row shows what the instrument is really
             # called.
-            names = [request.get("name") or stem or "Imported instrument"]
+            names = [_via_mpc2emu(request.get("name") or stem
+                                   or "Imported instrument")]
         else:
             # A whole multi-preset file, or an SFZ that split into one preset
             # per keyswitch articulation -- the file name is shared by all of
             # them, so their own names are what tell them apart.
-            names = [preset.name.strip() or f"{stem} {i + 1}"
+            names = [_via_mpc2emu(preset.name.strip() or f"{stem} {i + 1}")
                      for i, (_bank, preset) in enumerate(pairs)]
         self._bank_pane.add_presets(
             [(bank, preset, opts.target_format, name)
@@ -945,7 +969,7 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         bank, preset = result
-        name = self._bank_pane.unique_name(f"{node.label} (mpc2emu)")
+        name = self._bank_pane.unique_name(_via_mpc2emu(node.label))
         self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
 
     def _on_preset_convert_error(self, message: str) -> None:
