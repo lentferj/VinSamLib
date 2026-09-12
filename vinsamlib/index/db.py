@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS container (
     size INTEGER NOT NULL,
     mtime REAL NOT NULL,
     scanned_at REAL,
-    error TEXT
+    error TEXT,
+    audio_bytes INTEGER            -- loadable audio inside it, NULL = not measured
 );
 
 CREATE TABLE IF NOT EXISTS item (
@@ -51,7 +52,17 @@ CREATE TABLE IF NOT EXISTS item (
     name TEXT NOT NULL,
     native_id TEXT,               -- entry name (folder/bank) or preset/program id (preset)
     format TEXT,                  -- 'E4B' | 'KRZ', for bank/preset rows
-    size INTEGER,
+    size INTEGER,                 -- bytes on the MEDIA (what a file manager shows)
+    -- Loadable audio, which is the figure a sampler cares about and the one
+    -- the browser shows. NULL means "not measured", which is a third state
+    -- and not zero: a preset that genuinely references no audio stores 0.
+    --
+    -- It does NOT sum from presets to their bank, deliberately. Presets share
+    -- samples -- one SoundFont here has 219 presets over 5 737 shared samples
+    -- -- so a bank's figure is its DEDUPED total (what loading it costs) while
+    -- a preset's is what that one alone needs (what taking it costs). Same
+    -- quantity, different question; they are supposed to differ.
+    audio_bytes INTEGER,
     ordinal INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS item_container_idx ON item(container_id);
@@ -112,7 +123,40 @@ class IndexDB:
         # scratch. Nothing here is a source of truth.
         self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    #: Bumped whenever a scan would now record something it did not before.
+    #: The index is a DERIVED CACHE -- its own docstring says File > Rescan
+    #: Library rebuilds it from scratch and nothing here is a source of truth
+    #: -- so an old one is emptied rather than migrated in place. Migrating
+    #: would leave rows that are structurally current and factually blank,
+    #: which is the state hardest to tell from a real zero.
+    SCHEMA_VERSION = 2
+
+    def _migrate(self) -> None:
+        """Add columns an older file lacks, and empty it if it predates them.
+
+        `CREATE TABLE IF NOT EXISTS` does nothing to a table that already
+        exists, so a new column has to be added by hand -- silently, since a
+        file created by this version already has it.
+        """
+        for table, column, decl in (("container", "audio_bytes", "INTEGER"),
+                                     ("item", "audio_bytes", "INTEGER")):
+            cols = {r[1] for r in self._conn.execute(
+                f"PRAGMA table_info({table})")}
+            if column not in cols:
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        have = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if have < self.SCHEMA_VERSION:
+            # Everything scanned before this version has NULL audio_bytes and
+            # would show no size for the rest of its life, because
+            # needs_rescan() only looks at size and mtime and nothing about
+            # the file changed. Clearing container cascades to item and makes
+            # the next scan repopulate.
+            self._conn.execute("DELETE FROM container")
+            self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
 
     def close(self) -> None:
         self._conn.close()
@@ -142,12 +186,25 @@ class IndexDB:
 
     def add_item(self, container_id: int, parent_id: Optional[int], kind: str,
                  name: str, native_id: Optional[str] = None, format: str = "",
-                 size: int = 0, ordinal: int = 0) -> int:
+                 size: int = 0, ordinal: int = 0,
+                 audio_bytes: Optional[int] = None) -> int:
         cur = self._conn.execute(
-            "INSERT INTO item(container_id, parent_id, kind, name, native_id, format, size, ordinal) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (container_id, parent_id, kind, name, native_id, format, size, ordinal))
+            "INSERT INTO item(container_id, parent_id, kind, name, native_id, format, "
+            "size, ordinal, audio_bytes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (container_id, parent_id, kind, name, native_id, format, size, ordinal,
+             audio_bytes))
         return cur.lastrowid
+
+    def set_item_audio_bytes(self, item_id: int, audio_bytes: int) -> None:
+        """Fill in a row's audio total once its children have been walked.
+
+        A bank's own figure is only known after its presets have been read,
+        and the row has to exist first to be their parent -- so it is written
+        in two steps rather than held back until the end.
+        """
+        self._conn.execute("UPDATE item SET audio_bytes = ? WHERE id = ?",
+                            (audio_bytes, item_id))
 
     def finish_container(self, container_id: int, error: Optional[str] = None) -> None:
         self._conn.execute("UPDATE container SET scanned_at = ?, error = ? WHERE id = ?",

@@ -19,7 +19,7 @@ from typing import Callable, Optional
 
 from .db import IndexDB
 from ..banks import akai as vs_akai
-from ..banks import e4b, eiii, krz
+from ..banks import e4b, eiii, krz, summary
 from ..build import foreign_import, xpm_import
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
@@ -33,6 +33,11 @@ _MPC_EXT_FORMAT = xpm_import.MPC_EXT_FORMAT
 #: Loose AKAI program extensions -- the same set ui/models.py lists a
 #: folder-as-bank row by, kept in step with it.
 _AKAI_PROGRAM_EXTS = {".p3", ".p1", ".a3p", ".s3p"}
+
+#: Header bytes on an AKAI sample file that never reach sample RAM.
+#: The same measured 150 build/akai_image.py uses -- see its
+#: _SAMPLE_HEADER_BYTES for the provenance (60 of 60 samples, s3ked).
+_AKAI_SAMPLE_HEADER_BYTES = 150
 
 
 def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
@@ -281,11 +286,33 @@ def _scan_vfs_listing(vol, folder_entry, db: IndexDB, container_id: int,
                 programs = vol.volume_programs(e)
             except Exception:
                 continue
+            # Sample sizes come from the DIRECTORY, never from reading the
+            # samples. volume_programs() exists precisely to avoid that --
+            # ten real library discs are 5.5 GB of audio against a few MB of
+            # programs -- and the entry already carries the length, so the
+            # audio figure costs nothing beyond the listing we just did.
+            sample_bytes: dict[str, int] = {}
+            try:
+                for se in vol.list(e):
+                    if se.meta.get("role") == "sample":
+                        sample_bytes[Path(se.name).stem.strip().upper()] = max(
+                            0, int(se.size or 0) - _AKAI_SAMPLE_HEADER_BYTES)
+            except Exception:
+                sample_bytes = {}
             for i, prog in enumerate(programs):
+                wanted = {n.strip().upper()
+                          for n in getattr(prog, "sample_names", []) or []}
                 db.add_item(container_id, item_id, "preset",
                             prog.name.strip() or "(untitled)",
                             native_id=prog.filename or prog.name,
-                            format="AKAI", ordinal=i)
+                            format="AKAI", ordinal=i,
+                            # Deduped by name already, since `wanted` is a set
+                            # -- two keygroups pointing at one sample cost it
+                            # once, which is what loading the program costs.
+                            audio_bytes=sum(sample_bytes.get(n, 0) for n in wanted)
+                            if sample_bytes else None)
+            if sample_bytes:
+                db.set_item_audio_bytes(item_id, sum(sample_bytes.values()))
             continue
         if e.kind == EntryKind.FOLDER:
             item_id = db.add_item(container_id, parent_item_id, "folder", e.name,
@@ -323,17 +350,67 @@ def _parse_bank_bytes(data: bytes, label: str):
     return "", None
 
 
+def _preset_audio_bytes(bank, obj) -> Optional[int]:
+    """Loadable audio this ONE preset needs, or None if it cannot be told.
+
+    Free here: the bank is already fully parsed (that is what this scan does)
+    and summarize_preset walks zone references without touching PCM. It also
+    already dedupes samples shared between a preset's own keymaps, which is
+    the number wanted -- what taking this preset alone would cost.
+
+    None rather than 0 on failure. Zero is a real answer (a ROM-only program
+    references no audio at all) and must stay distinguishable from "we could
+    not work it out".
+    """
+    try:
+        return summary.summarize_preset(bank, obj).total_sample_bytes
+    except Exception:
+        return None
+
+
+def _bank_audio_bytes(bank) -> Optional[int]:
+    """Loadable audio in the whole bank, DEDUPED -- what loading it costs.
+
+    Not the sum of its presets: they share samples, so that sum overstates,
+    sometimes wildly (one SoundFont here has 219 presets over 5 737 shared
+    samples). The two figures answer different questions and are stored
+    separately for that reason.
+    """
+    try:
+        samples = getattr(bank, "samples", None)
+        if samples is None:
+            return None
+        values = samples.values() if hasattr(samples, "values") else samples
+        total = 0
+        for smp in values:
+            block = getattr(smp, "block", None)
+            if block is not None:
+                total += len(block)
+            else:
+                total += int(getattr(smp, "size", 0) or 0)
+        return total
+    except Exception:
+        return None
+
+
 def _index_bank_presets(db: IndexDB, container_id: int, parent_item_id: Optional[int],
                          bank, fmt: str) -> None:
     if fmt == "E4B":
         for ordinal, p in enumerate(bank.presets):
             db.add_item(container_id, parent_item_id, "preset", p.name.strip() or "(untitled)",
-                        native_id=str(p.index), format="E4B", ordinal=ordinal)
+                        native_id=str(p.index), format="E4B", ordinal=ordinal,
+                        audio_bytes=_preset_audio_bytes(bank, p))
     elif fmt == "KRZ":
         for ordinal, prog in enumerate(bank.programs.values()):
             db.add_item(container_id, parent_item_id, "preset", prog.name.strip() or "(untitled)",
-                        native_id=str(prog.id), format="KRZ", ordinal=ordinal)
+                        native_id=str(prog.id), format="KRZ", ordinal=ordinal,
+                        audio_bytes=_preset_audio_bytes(bank, prog))
     elif fmt == "EIII":
         for ordinal, p in enumerate(bank.presets):
             db.add_item(container_id, parent_item_id, "preset", p.name.strip() or "(untitled)",
-                        native_id=str(p.index), format="EIII", ordinal=ordinal)
+                        native_id=str(p.index), format="EIII", ordinal=ordinal,
+                        audio_bytes=_preset_audio_bytes(bank, p))
+    if parent_item_id is not None:
+        total = _bank_audio_bytes(bank)
+        if total is not None:
+            db.set_item_audio_bytes(parent_item_id, total)

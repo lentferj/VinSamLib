@@ -167,6 +167,16 @@ class TreeNode:
     children: Optional[list["TreeNode"]] = None  # None == not yet fetched
     handle: Any = None                          # opened Volume (volume_root/folder) or parsed BankFile (bank)
     size: int = 0
+    #: Loadable audio this row costs, in bytes -- what a sampler has to find
+    #: room for, which is the question the browser is actually asked. None
+    #: means "not worked out", which is NOT zero: a ROM-only program really
+    #: does reference no audio and stores 0.
+    #:
+    #: Shown INSTEAD of `size` where it is known. A bank's figure is deduped
+    #: (what loading it costs); a preset's is what that one alone needs, so
+    #: the children do not sum to the parent and are not meant to -- presets
+    #: share samples.
+    audio_bytes: Optional[int] = None
     format_label: str = ""
     fetching: bool = False
     error: Optional[str] = None
@@ -183,7 +193,9 @@ class TreeNode:
         text = " ".join(bits)
         if self.format_label:
             text += f"  [{self.format_label}]"
-        if self.size:
+        if self.audio_bytes is not None:
+            text += f"   {human_size(self.audio_bytes)} audio"
+        elif self.size:
             text += f"   {human_size(self.size)}"
         if self.error:
             text += "   (failed to open)"
@@ -201,6 +213,22 @@ def _size_would_mislead(node: TreeNode) -> bool:
         path = path[0]
     return (isinstance(path, Path)
             and path.suffix.lower() in _AUDIO_LIVES_ELSEWHERE)
+
+
+def _preset_audio_bytes(bank, obj) -> Optional[int]:
+    """Loadable audio for one preset, or None if it cannot be worked out.
+
+    Free at this point and only at this point: the bank has just been parsed
+    to list its presets at all, and summarize_preset walks zone references
+    without touching PCM. It already dedupes samples a preset reaches through
+    more than one keymap, which is the figure wanted -- what taking this
+    preset ALONE would cost, not its share of the bank.
+    """
+    try:
+        from ..banks import summary
+        return summary.summarize_preset(bank, obj).total_sample_bytes
+    except Exception:
+        return None
 
 
 def _container_empty_reason(node: TreeNode) -> str:
@@ -670,7 +698,8 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
             return []
 
     bank = node.handle
-    return [TreeNode("preset", (p.name.strip() or "(untitled)"), node, (bank, p))
+    return [TreeNode("preset", (p.name.strip() or "(untitled)"), node, (bank, p),
+                     audio_bytes=_preset_audio_bytes(bank, p))
             for p in bank_presets(bank)]
     # preset order preserved — it reflects the bank's own numbering
 
