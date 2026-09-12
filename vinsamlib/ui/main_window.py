@@ -648,6 +648,16 @@ class MainWindow(QMainWindow):
         own order -- more than one only for a whole-project import; [] after
         showing a warning on failure."""
         try:
+            if opts.target_format == "AKAI":
+                # A DIRECTORY of loose .P3/.S3 files, not a bank file. Parsed
+                # with this project's own reader like every other target, so
+                # what lands in New Bank is an ordinary AkaiBank/AkaiProgram
+                # pair and the whole downstream -- the object budget, the
+                # partition breaks, Build Image -- works on it unchanged.
+                from ..banks import akai as vs_akai
+                bank = vs_akai.parse_dir(tmp_path)
+                bank.path = label_path
+                return [(bank, program) for program in bank.programs]
             data = Path(tmp_path).read_bytes()
             if opts.target_format == "KRZ":
                 bank = krz.parse_bytes(data, label_path)

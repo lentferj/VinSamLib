@@ -40,10 +40,10 @@ from typing import Any, Callable, Optional
 
 from .. import tempdirs
 from ..filenames import safe_filename
-from ..mpc2emu_bridge import (akai_parser, bank_splitter, e4b_parser, e4b_writer,
-                                eiii_parser, eiii_writer, krz_parser, krz_writer,
-                                models_common, resampler, start_trim, tail_trim,
-                                zone_reducer)
+from ..mpc2emu_bridge import (akai_parser, akai_writer, bank_splitter, e4b_parser,
+                                e4b_writer, eiii_parser, eiii_writer, krz_parser,
+                                krz_writer, models_common, resampler, start_trim,
+                                tail_trim, zone_reducer)
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
@@ -67,7 +67,7 @@ class ConvertOpError(RuntimeError):
 
 @dataclass(frozen=True)
 class ConversionOptions:
-    target_format: str = "E4B"                    # "E4B" | "KRZ" | "EIII" -- the OUTPUT format
+    target_format: str = "E4B"                    # "E4B" | "KRZ" | "EIII" | "AKAI" -- the OUTPUT format
     resample_profile: Optional[str] = None        # "emulator2" | "emax1" | None (off)
     no_bandpass: bool = False
     resample_keep_gain: bool = False
@@ -440,7 +440,22 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
     # here can know when the last reader is done, so it is registered and
     # removed at shutdown instead.
     tmp_dir = tempdirs.session_temp_dir(_CONVERT_TEMP_PREFIX)
-    if opts.target_format == "KRZ":
+    if opts.target_format == "AKAI":
+        # The one target that is a DIRECTORY, not a file: an AKAI volume is
+        # loose .P3/.S3 files with no container around them, which is why
+        # ui/image_pane._sniff_format() has to answer for folders too.
+        #
+        # Gated here and not only at the dialog, because this function is
+        # what every import path funnels through, and a checkout without
+        # mpc2emu's AKAI writer must not surface as a bare AttributeError
+        # out of the lazy bridge.
+        from ..config import Config
+        ok, reason = Config.load().check_akai_write_support()
+        if not ok:
+            raise ConvertOpError(f"Can't convert to AKAI -- {reason}")
+        out_path = tmp_dir / out_stem
+        _run_captured(akai_writer.write_akai_bank, bank, str(out_path), out_stem)
+    elif opts.target_format == "KRZ":
         out_path = tmp_dir / f"{out_stem}.krz"
         _run_captured(krz_writer.write_krz, bank, str(out_path))
     elif opts.target_format == "EIII":
@@ -497,6 +512,21 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
     if not expected:
         return
     try:
+        if opts.target_format == "AKAI":
+            # A folder, so there are no bytes to read -- and the count that
+            # matters is the same one. Left to the read_bytes() below it
+            # would raise IsADirectoryError and be swallowed by the handler,
+            # which is accidentally safe and silently skips the one check
+            # that catches a writer losing audio -- on the one target no
+            # machine has ever heard.
+            from ..banks import akai as vs_akai
+            got = len(vs_akai.parse_dir(str(out_path)).samples)
+            if got >= expected:
+                return
+            raise ConvertOpError(
+                f"The AKAI volume came back with {got} of {expected} "
+                f"sample(s) -- the writer lost audio, so it has not been "
+                f"kept.")
         data = out_path.read_bytes()
         if opts.target_format == "KRZ":
             got = len(vs_krz.parse_bytes(data, out_path.name).samples)
@@ -586,6 +616,11 @@ def _zone_loss_risk(bank: Any, out_path: Path, opts: ConversionOptions) -> Optio
     wanted = sum(1 for p in bank.presets for v in p.voices for z in v.zones
                  if getattr(z, "sample_name", None) in have)
     if not wanted:
+        return None
+    if opts.target_format == "AKAI":
+        # zone_refs is an E4B/EIII index-into-the-sample-table idea; an AKAI
+        # keygroup names its sample as a string instead. Nothing to compare,
+        # and the sample count is already checked by _verify_written.
         return None
     try:
         data = out_path.read_bytes()

@@ -1046,6 +1046,38 @@ This is useful for MPC Auto Sampler output in particular: the MPC's own
 which is gone once the sample is exported as a bare WAV — so the audible
 lead-in silence is back in anything VinSamLib imports.
 
+#### Converting to AKAI
+
+Pick **AKAI** in "Import as:" and an E4B, KRZ or EIII preset — or a
+SoundFont, an MPC program, a folder of WAVs — becomes an **AKAI volume**:
+loose `.P3` and `.S3` files, which land in New Bank like any other import
+and flow on to Pending and the image builder.
+
+The entry appears only when this checkout can actually write AKAI, so it
+is absent rather than failing after a slow conversion has already run.
+
+**What it costs.** This is a conversion between two machines that do not
+agree about anything, and it goes through mpc2emu's `Bank` model, which
+is narrower than an AKAI program file. Until recently that was a reason
+not to offer it at all: the losses were real and *silent*. Both halves
+have changed. mpc2emu measured and wired the filter envelopes, the
+amplitude envelope, LFO routing and the modulation depths over August and
+September — much of it against a real S3000XL with an IB-304F board — and
+what it still cannot carry it now emits as a named diagnostic instead of
+dropping on the floor.
+
+So it is a lossy conversion that tells you what it lost. Expect to hear a
+difference; do not expect to be surprised by one.
+
+**On this branch the telling does not reach you yet.** The diagnostics
+wiring is on `master`, so until that is merged here the conversion runs
+and the records go nowhere — the same discarded-buffer fault the wiring
+exists to fix, in the one place it has not been applied.
+
+**Nothing here has been heard by a sampler.** The volume is written by
+mpc2emu's `write_akai_bank`; the media that carries it is hardware-
+confirmed, the programs inside it are not.
+
 #### Constant-Power Pan Compensation
 
 **E4B only** — greyed out for KRZ and EIII targets. For the EIII that is
@@ -1333,10 +1365,11 @@ their samples instead of silently producing an empty bank.
 
 Generalizes MPC import's exact same pipeline to a preset or program you
 already have natively in your library — E4B, KRZ, EIII or **AKAI**.
-Any of the first three can be the source and any can be the target;
-AKAI is source-only for now (see
-[Known Limitations](#akai-s1000--s3000) for why nothing writes AKAI
-media yet). Right-click it,
+Any of the four can be the source and any can be the target, **AKAI
+included as of 2026-09-12** — an E4B or KRZ preset converts to an AKAI
+volume the same way it converts to anything else, and lands in New Bank
+ready for the image builder. What that costs is described under
+[Converting to AKAI](#converting-to-akai). Right-click it,
 choose options, and get a converted copy in New Bank — without exporting
 anything or leaving the app. This covers exactly the cases a plain "Add"
 can't: converting to a *different* format (source format ≠ New Bank's
@@ -2138,7 +2171,7 @@ libraries before a fifth publisher's disc surfaced it.
 | Search | ✅ AKAI volumes index as banks and their programs as presets, the same shape the tree uses, so a hit resolves onto a row that exists. Only the programs are read at scan time, never sample audio — **1 835 volumes and 7 991 programs across 12.3 GB of media index in 3.6 s** |
 | Building a new AKAI volume | ✅ drag programs into New Bank and Save as… — writes a **folder** of `.P3`/`.S3` files, because an AKAI volume is a set of files and not one file. Sample files are copied verbatim; only a name that had to change is rewritten |
 | Writing AKAI **disk images** | ⚠️ **built, and unreleased**, but the claim here is narrower than it was. Hard disk, CD3000 disc and 1.6 MB floppy, plus append. Our own reader gets back byte-for-byte what our writer put in (44 files across two volumes, per medium) and `akaiutil` agrees. **Corrected 2026-09-12:** the HARD DISK layout is not unconfirmed — it is mpc2emu's `build_akai_hd_image` / `append_akai_volumes`, which we delegate to, and an S3000XL has mounted their images many times (18 volumes and 364 samples swept off one live card; programs read on the machine's own panel, which is how they found a PRGNUM collision). What is still unheard is what **we** put inside that container: the program and sample bodies `banks/akai.py` assembles, our positional program renumbering, our cross-volume name claiming, the partition breaks and the object budget. The CD3000 `--iso` and floppy paths are unconfirmed on both sides. It stays on an unmerged branch for that reason, and behind `check_akai_write_support()` — a gate that stopped being a second lock on 2026-09-07, when mpc2emu merged its AKAI work into `main`: an ordinary checkout now has the writer and the check passes, so the branch is the only thing holding it back |
-| Converting E4B / KRZ / EIII → AKAI | ⚠️ **not offered.** Unlike media writing, this one is not merely unreleased: mpc2emu's `Bank` model holds a fraction of what an AKAI program file does, so the conversion would silently flatten filter and amplitude envelopes, LFO routing and modulation depths. Reading AKAI *into* the other formats is fine and supported |
+| Converting E4B / KRZ / EIII → AKAI | ⚠️ **offered since 2026-09-12, unreleased with the rest of the AKAI write path.** This row used to say "not offered", because the conversion would *silently* flatten filter and amplitude envelopes, LFO routing and modulation depths. Both halves of that have changed: mpc2emu measured and wired those parameters through August and September, and what it still cannot carry it now **reports** — `AKAI_FILTER_SHAPE_LOST`, `AKAI_KEYGROUPS_DROPPED` and a dozen more. It is still a lossy conversion between two machines that do not agree; it is no longer a silent one. **The reporting reaches the GUI only once `master` is merged into this branch** — the diagnostics wiring lives there |
 | AKAI → AKAI | ⚠️ refused on purpose. The pipeline runs through mpc2emu's `Bank` model, which carries a fraction of what an AKAI program file holds (per-keygroup filter and amplitude envelopes, LFO routing, modulation depths), so the round trip would quietly flatten them. New Bank collects AKAI programs **verbatim** instead, which is what a librarian should do |
 | An incomplete disc image | ℹ️ detected and reported on the image's own row in the Detail pane. A partition table and its volume directories sit at the front of a disc, so a half-downloaded image still lists its whole contents and can only deliver the beginning of them. Files whose data is not in the image are skipped rather than served short — a truncated sample is not a smaller sample, it is the wrong audio at a plausible length — and the image says what fraction of itself it holds and how many files went missing |
 | A program whose samples are on another volume | ℹ️ normal, not broken — AKAI libraries were routinely shipped that way. The Detail pane shows the zones regardless, and a conversion is refused with the missing names rather than silently producing a bank of nothing. The refusal also says **where** they are: the sibling volume on the same disc that holds them, or that they are not on this disc at all. On one real disc, 14 of its 66 unresolved zones name samples sitting on another of its own volumes |

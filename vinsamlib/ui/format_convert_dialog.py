@@ -124,7 +124,19 @@ class FormatConvertDialog(ConvertOptionsDialog):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.addWidget(QLabel("Import as:"))
         self._format_box = QComboBox()
-        self._format_box.addItems(["E4B", "KRZ", "EIII"])
+        # AKAI last, and only where this checkout can actually write it. An
+        # entry that always failed would be worse than its absence: the
+        # refusal would arrive after a real, possibly slow, conversion had
+        # already run -- the same reasoning as the locked_format branch
+        # below.
+        targets = ["E4B", "KRZ", "EIII"]
+        from ..config import Config
+        try:
+            if Config.load().check_akai_write_support()[0]:
+                targets.append("AKAI")
+        except Exception:
+            pass
+        self._format_box.addItems(targets)
         default_fmt = locked_format or (initial.target_format if initial else "E4B")
         self._format_box.setCurrentText(default_fmt)
         self._format_box.currentTextChanged.connect(self._on_target_format_changed)
