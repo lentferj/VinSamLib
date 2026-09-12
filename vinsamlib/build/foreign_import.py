@@ -165,9 +165,24 @@ def inspect(path) -> Optional[FileVerdict]:
     an ``empty_reason``, never as None: a broken instrument the user can see
     and ask about beats one that silently is not there.
     """
+    # EXTENSION FIRST, AND ON THE STRING. A directory listing runs this over
+    # every file it holds, and the folders that matter here hold a handful of
+    # programs beside hundreds of WAVs -- one measured folder is 30 programs
+    # and ~920 samples. Building a Path (twice, counting format_for) to ask
+    # about a suffix cost more than every other part of the listing put
+    # together: 14 253 Path constructions for 31 visible rows.
+    #
+    # Basename only, or a dot in a DIRECTORY name answers for a file that has
+    # none of its own.
+    name = str(path).rpartition("/")[2]
+    dot = name.rfind(".")
+    if dot <= 0 or name[dot:].lower() not in FOREIGN_EXT_FORMAT:
+        return None
+    if not available():
+        return None
     p = Path(path)
     fmt = format_for(p)
-    if fmt is None or not available():
+    if fmt is None:
         return None
     if p.name.startswith(_APPLEDOUBLE_PREFIX):
         return None

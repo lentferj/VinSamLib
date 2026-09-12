@@ -105,7 +105,29 @@ _JSON_NAME = re.compile(rb'"name"\s*:\s*("(?:[^"\\]|\\.)*")')
 _JSON_TYPE = re.compile(rb'"type"\s*:\s*(-?\d+)')
 
 
-def program_kind(path: str) -> Optional[str]:
+#: The MPC writes `<name>.<Kind>.xpm`, and the kinds it uses there are
+#: exactly the ones the type tag carries. Checked against a 571-file backup:
+#: the tag and this suffix agreed in all 571 cases, which is what makes
+#: reading the name first defensible.
+_KIND_FROM_NAME = {k.lower(): k for k in
+                   ("Keygroup", "Drum", "MIDI", "Plugin", "Audio", "CV", "Clip")}
+
+
+def _kind_from_filename(path: str) -> Optional[str]:
+    """The kind the MPC's own filename convention declares, or None.
+
+    `Foo.Keygroup.xpm` -> "Keygroup". A file renamed out of that convention
+    simply answers None and is read instead, so the fallback keeps the
+    property the old comment cared about: a renamed file is still perfectly
+    readable. What it costs if a file is renamed to a DIFFERENT kind token is
+    a wrong label on a row, not wrong data anywhere.
+    """
+    stem = Path(path).stem              # "Foo.Keygroup" out of "Foo.Keygroup.xpm"
+    _, _, tail = stem.rpartition(".")
+    return _KIND_FROM_NAME.get(tail.lower()) if tail else None
+
+
+def program_kind(path: str, trust_name: bool = False) -> Optional[str]:
     """What kind of program an MPC file holds ("Keygroup", "Drum", "MIDI",
     "Plugin", "Audio", "CV", "Clip"), or None when it cannot be told from a
     header peek -- which is never a parse, since a real parse loads every
@@ -120,6 +142,16 @@ def program_kind(path: str) -> Optional[str]:
     the first few KB, and it agrees with the MPC's own `<name>.<Kind>.xpm`
     filename convention in all 571 cases. The tag is read rather than the
     name because a renamed file is still perfectly readable."""
+    if trust_name:
+        # LISTINGS ONLY. Opening every row's file is one network round trip
+        # per row, which is what makes a folder of MPC programs slow to
+        # expand off an NFS share -- the read itself is a few KB and nearly
+        # free once the file is open. The name answers the same question
+        # without the open in every case the MPC itself wrote, and anything
+        # else falls through to the read below.
+        named = _kind_from_filename(path)
+        if named is not None:
+            return named
     try:
         with open(path, "rb") as fh:
             head = fh.read(_SNIFF_BYTES)

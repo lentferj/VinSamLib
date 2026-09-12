@@ -396,7 +396,8 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
             # folder holds one .xpm per track, and only a keygroup program
             # converts; see that module for what the other kinds are and why
             # each is treated the way it is here.
-            kind = xpm_import.program_kind(e.ref)
+            # trust_name: a listing must not open every file it shows.
+            kind = xpm_import.program_kind(e.ref, trust_name=True)
             if kind is None or kind in xpm_import.CONVERTIBLE_KINDS:
                 label = xpm_import.MPC_EXT_FORMAT[Path(e.name).suffix.lower()]
                 # A drum program reaching here is always MPC 2.x XML -- an
