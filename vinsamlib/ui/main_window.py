@@ -98,6 +98,10 @@ class MainWindow(QMainWindow):
         self._bank_pane = BankPane(self._config)
         self._bank_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
         self._explorer.addToBankRequested.connect(self._add_node_to_bank)
+        # Asked live, not stored: New Bank's format lock changes as it is
+        # filled and cleared, and the Explorer's menu has to reflect the
+        # lock at the moment of the right-click.
+        self._explorer.locked_format = lambda: self._bank_pane.format
         self._explorer.addFavouritesRequested.connect(self._add_favourites)
         self._explorer.importXpmRequested.connect(self._import_xpm)
         self._explorer.convertPresetRequested.connect(self._convert_preset_via_mpc2emu)

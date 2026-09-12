@@ -9,7 +9,7 @@ one path so the rest of the app doesn't need to know which one is active.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QLabel,
@@ -103,6 +103,12 @@ class ExplorerPane(QWidget):
         super().__init__(parent)
         self._index_db = index_db
         self._current_node: Optional[TreeNode] = None
+        #: What format New Bank is locked to right now, or None while it is
+        #: empty. Set by MainWindow. A CALLABLE rather than a stored value
+        #: because the lock changes as the user fills and clears New Bank,
+        #: and a menu built from a stale copy would offer exactly the action
+        #: that is about to be refused.
+        self.locked_format: Callable[[], Optional[str]] = lambda: None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -342,14 +348,35 @@ class ExplorerPane(QWidget):
         convert_action = None
         import_action = None
         remove_action = None
-        if presets:
-            label = f'Add "{presets[0].label}" to New Bank' if len(presets) == 1 \
-                else f"Add {len(presets)} presets to New Bank"
+        # Only the presets New Bank would actually ACCEPT. It locks to the
+        # first format put in it and refuses any other, so offering "Add" for
+        # an E4B preset while New Bank is holding AKAI produced an action
+        # that could only ever fail -- the user clicked it and got "This bank
+        # is already AKAI". Converting is the real answer at that point, and
+        # "Import via mpc2emu..." below is exactly that, so dropping the dead
+        # action leaves the right one in place rather than an empty menu.
+        locked = self.locked_format()
+        addable = [n for n in presets
+                   if not locked or _node_format(n) == locked]
+        if addable:
+            label = f'Add "{addable[0].label}" to New Bank' if len(addable) == 1 \
+                else f"Add {len(addable)} presets to New Bank"
             add_action = menu.addAction(label)
         # Excludes any preset node with no resolvable parent bank -- same
         # guard as before, just applied per-node instead of only to a lone
         # selection, since a multi-select can now use this action too.
         convertible = [p for p in presets if p.parent is not None]
+        # A KRZ program that references ONLY the sampler's own ROM carries no
+        # audio in the file, so there is nothing to convert INTO another
+        # machine -- convert_preset() refuses it with exactly that sentence,
+        # after the conversion dialog has been filled in and a real assemble
+        # has run. Onto a KRZ target it is perfectly fine (a K2000 resolves
+        # its own ROM), so this only removes the action where the target is
+        # already fixed to something else.
+        rom_only = []
+        if locked and locked != "KRZ":
+            rom_only = [n for n in convertible if _krz_rom_only(n)]
+            convertible = [n for n in convertible if n not in rom_only]
         if convertible:
             # One shared Convert Options dialog covers the whole
             # selection -- same options applied to every preset, not one
@@ -361,6 +388,15 @@ class ExplorerPane(QWidget):
             label = "Import via mpc2emu…" if len(convertible) == 1 \
                 else f"Import {len(convertible)} presets via mpc2emu…"
             convert_action = menu.addAction(label)
+        if rom_only:
+            # Named rather than simply absent: "why can I not convert this
+            # one" is the question the row otherwise leaves behind, and the
+            # answer is a property of the material, not of the program.
+            what = (f'"{rom_only[0].label}" uses' if len(rom_only) == 1
+                    else f"{len(rom_only)} of these use")
+            menu.addAction(
+                f"{what} only the K2000's own ROM — nothing to convert to "
+                f"{locked}").setEnabled(False)
         if len(xpms) == 1:
             # Multi-XPM import isn't supported yet -- only offered for a
             # single selected .xpm row.
@@ -401,11 +437,20 @@ class ExplorerPane(QWidget):
             # Multi-root removal isn't offered either -- same reasoning,
             # keep the one-item-at-a-time pattern consistent.
             remove_action = menu.addAction(f'Remove "{roots[0].label}" from Library…')
+        if not menu.actions():
+            # An empty QMenu still pops up -- as a sliver with nothing in it,
+            # which reads as the menu having failed to open. Every action
+            # above that is single-item-only (favourites, MPC import, removing
+            # a library root) silently produced exactly that on a
+            # multi-selection. Say which one it was instead.
+            menu.addAction(_no_action_reason(
+                banks, xpms, programs, projects, roots, presets, locked)
+            ).setEnabled(False)
         chosen = menu.exec(global_pos)
         if fav_action is not None and chosen == fav_action:
             self.addFavouritesRequested.emit(banks[0])
         elif add_action is not None and chosen == add_action:
-            self.addToBankRequested.emit(presets)
+            self.addToBankRequested.emit(addable)
         elif convert_action is not None and chosen == convert_action:
             self.convertPresetRequested.emit(convertible)
         elif import_action is not None and chosen == import_action:
@@ -433,3 +478,60 @@ def _format_hit(hit: SearchResult) -> str:
     ancestry = " ▸ ".join(c.name for c in hit.chain[:-1])
     where = f"{container_name}" + (f" ▸ {ancestry}" if ancestry else "")
     return f"{label}   —   {where}"
+
+
+def _node_format(node: TreeNode) -> str:
+    """The format a preset row would be added as.
+
+    Read off the PARENT bank row, which is the only node that carries it --
+    a preset's own format_label is empty. Same rule MainWindow's
+    _add_node_to_bank() uses to build the items, so the menu cannot offer
+    something the add would then classify differently.
+    """
+    return (node.parent.format_label or "") if node.parent is not None else ""
+
+
+def _krz_rom_only(node: TreeNode) -> bool:
+    """True when this KRZ preset has no audio of its own in the file.
+
+    A KRZ program references KEYMAPS, and those reference samples; a sample
+    that lives in the machine's ROM has no object in the bank at all. So a
+    program none of whose references resolve to a sample object carries no
+    audio -- 433 banks in this author's library are entirely like that.
+
+    Deliberately conservative: it answers True only when NOTHING resolves, so
+    a program the walk cannot read keeps its convert action and meets
+    convert_preset()'s own refusal as before. Cheap enough for a menu -- it
+    reads already-parsed objects and touches no PCM.
+    """
+    payload = getattr(node, "payload", None)
+    if not isinstance(payload, tuple) or len(payload) != 2:
+        return False
+    bank, preset = payload
+    if not hasattr(bank, "program_keymap_refs"):
+        return False                     # not KRZ; this question is KRZ-only
+    try:
+        for km_id in bank.program_keymap_refs(preset):
+            km = bank.keymaps.get(km_id)
+            if km is None:
+                continue
+            for sid in bank.keymap_sample_refs(km):
+                if bank.samples.get(sid) is not None:
+                    return False
+    except Exception:
+        return False
+    return True
+
+
+def _no_action_reason(banks, xpms, programs, projects, roots, presets,
+                      locked) -> str:
+    """Why a right-click produced nothing, in the user's terms."""
+    if len(banks) > 1:
+        return "Adding favourites works on one bank at a time"
+    if len(xpms) > 1 or len(programs) > 1 or len(projects) > 1:
+        return "MPC programs are imported one at a time"
+    if len(roots) > 1:
+        return "Library folders are removed one at a time"
+    if presets and locked:
+        return f"New Bank is holding {locked} — these are a different format"
+    return "Nothing to do with this selection"
