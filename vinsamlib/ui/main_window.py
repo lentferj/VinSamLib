@@ -15,9 +15,10 @@ the Explorer's search box queries it directly whenever the user types.
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Optional
 
-from PySide6.QtCore import QThreadPool, Qt
+from PySide6.QtCore import QThreadPool, QTimer, Qt
 from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QInputDialog, QMainWindow,
                                 QMessageBox, QSplitter)
@@ -178,6 +179,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Ready")
             self._start_scan(list(config.library_roots))
 
+    def start_background_work(self) -> None:
+        """Called by app.py once the window is up.
+
+        Recovery is OFFERED before the timer is armed, so a user who says yes
+        does not race the first autosave overwriting what they are being
+        offered.
+        """
+        self._offer_recovery()
+        self._start_autosave()
+
     def closeEvent(self, event) -> None:
         # Give in-flight background workers (tree fetches, a scan) a bounded
         # window to finish before the widget tree they'd signal back into
@@ -189,6 +200,11 @@ class MainWindow(QMainWindow):
         QThreadPool.globalInstance().waitForDone(3000)
         self._remember_window_size()
         self._index_db.close()
+        # A CLEAN EXIT REMOVES THE RECOVERY FILE, and that is the whole
+        # mechanism: nothing records a crash, because a crash is precisely
+        # the case where nothing gets the chance to record anything. The
+        # file still being there at startup is the signal.
+        project.clear_autosave()
         super().closeEvent(event)
 
     def _remember_window_size(self) -> None:
@@ -397,7 +413,8 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self._config, self)
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
             self._bank_pane.refresh_size_limits()
-            if dialog.path_changed:
+            self._start_autosave()
+        if dialog.path_changed:
                 self.statusBar().showMessage(
                     "mpc2emu path updated — restart VinSamLib to apply", 8000)
 
@@ -1011,6 +1028,93 @@ class MainWindow(QMainWindow):
             "Duplicates will prompt before being skipped" if checked
             else "Duplicates will be skipped silently")
 
+    # -- crash safety ---------------------------------------------------------
+
+    def _start_autosave(self) -> None:
+        """Arm the recovery timer, or leave it off when the interval is 0."""
+        seconds = int(getattr(self._config, "autosave_seconds", 60) or 0)
+        if not hasattr(self, "_autosave_timer"):
+            self._autosave_timer = QTimer(self)
+            self._autosave_timer.timeout.connect(self._autosave_tick)
+        self._autosave_timer.stop()
+        if seconds > 0:
+            self._autosave_timer.start(seconds * 1000)
+
+    def _autosave_tick(self) -> None:
+        """Write the recovery file, off the GUI thread.
+
+        SNAPSHOTTED HERE, WRITTEN THERE. The lists are copied on this thread
+        -- shallow copies of tuples and dicts, microseconds -- and the worker
+        then reads only the bank objects, which nothing mutates in place. A
+        save that walked self._items directly would be reading a list the
+        user can reorder from under it.
+
+        Skipped entirely when nothing is staged, and when one is already in
+        flight: a project carrying converted banks writes real megabytes, and
+        stacking those up behind a slow disk would turn a safety net into the
+        thing making the program slow.
+        """
+        if getattr(self, "_autosave_busy", False):
+            return
+        bp, pp = self._bank_pane, self._pending_pane
+        if not bp._items and not pp._pending:
+            # Nothing staged: drop any stale recovery file rather than leave
+            # one that would offer an empty project back after the next crash.
+            project.clear_autosave()
+            return
+        args = dict(
+            bank_items=list(bp._items), bank_format=bp.format,
+            bank_name=bp._name_edit.text(),
+            sample_renames=dict(bp._sample_renames),
+            zone_placement=dict(bp._zone_placement),
+            voice_velocity=dict(bp._voice_velocity),
+            pending=[dict(e) for e in pp._pending],
+            partition_breaks=set(pp._partition_breaks),
+            image=self._image_state(), explorer=self._explorer.view_state())
+        self._autosave_busy = True
+
+        def _write():
+            target = project.autosave_path()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            return project.save(str(target), **args)
+
+        w = workers.Worker(_write)
+        w.signals.finished.connect(lambda *_: setattr(self, "_autosave_busy", False))
+        w.signals.error.connect(lambda msg: (setattr(self, "_autosave_busy", False),
+                                              self.statusBar().showMessage(
+                                                  f"Autosave failed: "
+                                                  f"{workers.last_error_line(msg)}", 8000)))
+        workers.run(w)
+
+    def _offer_recovery(self) -> None:
+        """A recovery file at startup means the last run did not finish."""
+        path = project.autosave_path()
+        if not path.exists():
+            return
+        when = time.strftime("%Y-%m-%d %H:%M",
+                              time.localtime(path.stat().st_mtime))
+        answer = QMessageBox.question(
+            self, "Recover Unsaved Work",
+            f"VinSamLib did not shut down cleanly last time.\n\n"
+            f"There is staged work from {when}. Load it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            # Kept, not deleted. Saying "no" once -- perhaps by reflex on a
+            # dialog that appeared during startup -- must not be what destroys
+            # the only copy of an evening's work. It is replaced by the next
+            # autosave and removed by the next clean exit.
+            self.statusBar().showMessage(
+                f"Recovery file kept at {path} — it will be replaced by the "
+                f"next autosave", 12000)
+            return
+        try:
+            rep = project.load(str(path))
+        except Exception as ex:
+            QMessageBox.warning(self, "Recover Unsaved Work",
+                                 f"The recovery file could not be read:\n\n{ex}")
+            return
+        self._apply_loaded_project(rep, str(path))
+
     # -- project save / load ------------------------------------------------
 
     def _save_project(self) -> None:
@@ -1035,7 +1139,9 @@ class MainWindow(QMainWindow):
                 zone_placement=dict(bp._zone_placement),
                 voice_velocity=dict(bp._voice_velocity),
                 pending=list(pp._pending),
-                partition_breaks=set(pp._partition_breaks))
+                partition_breaks=set(pp._partition_breaks),
+                image=self._image_state(),
+                explorer=self._explorer.view_state())
         except Exception as ex:
             QMessageBox.warning(self, "Save Project", f"Could not save:\n\n{ex}")
             return
@@ -1066,6 +1172,19 @@ class MainWindow(QMainWindow):
         except Exception as ex:
             QMessageBox.warning(self, "Load Project", f"Could not load:\n\n{ex}")
             return
+        self._apply_loaded_project(rep, path)
+
+    def _image_state(self) -> Optional[dict]:
+        """Which image the Image column has open, if any."""
+        path = getattr(self._image_pane, "_path", None)
+        if not path:
+            return None
+        return {"path": str(path), "kind": getattr(self._image_pane, "_kind", None)}
+
+    def _apply_loaded_project(self, rep, path: str) -> None:
+        """Put a loaded project into the panes. Shared with crash recovery,
+        which has to land in exactly the same state a manual load does."""
+        bp, pp = self._bank_pane, self._pending_pane
         bp._clear()
         if rep.banks:
             bp.add_presets([(b, p, rep.bank_format or "", n) for b, p, n in rep.banks])
@@ -1080,7 +1199,21 @@ class MainWindow(QMainWindow):
         pp._format = rep.pending[0]["format"] if rep.pending else None
         pp._partition_breaks = set(rep.partition_breaks)
         pp._refresh()
-        loaded = f"Loaded {Path(path).name}: {len(rep.banks)} preset(s) in New Bank, {len(rep.pending)} bank(s) pending"
+        # The desk, after the work: the disc that was open and the folders
+        # that were unfolded. Both are best-effort and neither is allowed to
+        # stop a load -- an image that has since been deleted is a note in
+        # the problems list, not a refusal to restore the queue that was
+        # going to be written to it.
+        if rep.image and rep.image.get("path"):
+            img = Path(rep.image["path"])
+            if img.exists():
+                self._image_pane._open_image(str(img), known_kind=rep.image.get("kind"))
+            else:
+                rep.problems.append(f"The image that was open, {img}, is gone.")
+        if rep.explorer:
+            self._explorer.restore_view_state(rep.explorer)
+        loaded = (f"Loaded {Path(path).name}: {len(rep.banks)} preset(s) in "
+                  f"New Bank, {len(rep.pending)} bank(s) pending")
         self.statusBar().showMessage(loaded, 10000)
         if rep.problems:
             # Never a silent partial load: what did not come back is the half

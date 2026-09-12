@@ -1110,9 +1110,36 @@ changed is how you would get the wrong sound with nothing anywhere
 saying so. A project that refused to open because one folder moved would
 be worse than no project file at all.
 
+It also records **which image was open** and **which folders were
+unfolded** in the library tree, so reopening a project is coming back to a
+desk rather than to a fresh install. Neither can stop a load: an image
+that has since been deleted becomes a line in the problems list, not a
+refusal to restore the queue that was going to be written to it. The tree
+unfolds itself level by level as its rows arrive, because a lazy tree
+cannot be restored in one pass.
+
 The file is an ordinary zip: `project.json` plus a `blobs/` folder holding
 carried banks under content-addressed names, so two presets out of one
 converted bank store its bytes once. You can look inside it with anything.
+
+#### Crash recovery
+
+The same thing is written automatically to a recovery file every **60
+seconds** by default, off the GUI thread, so a crash or a power cut costs
+at most a minute of staging. **Settings ▸ Autosave staged work every**
+changes the interval and **0 switches it off**; it is stored in
+`config.toml`.
+
+A clean exit **deletes** that file, and that is the whole mechanism —
+nothing records a crash, because a crash is exactly the case where
+nothing gets the chance to record anything. The file still being there
+when VinSamLib starts is the signal, and you are asked whether to load
+it.
+
+Saying **no** keeps the file rather than deleting it. Answering a dialog
+that appeared during startup by reflex must not be what destroys the only
+copy of an evening's work; it is replaced by the next autosave and
+removed by the next clean exit.
 
 #### Converting to AKAI
 

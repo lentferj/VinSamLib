@@ -57,6 +57,10 @@ class LoadReport:
     bank_name: str = ""
     bank_format: Optional[str] = None
     partition_breaks: set = field(default_factory=set)
+    #: {"path": ..., "kind": ...} for the image column, or None.
+    image: Optional[dict] = None
+    #: {"expanded": [path, ...], "current": path} for the library tree.
+    explorer: Optional[dict] = None
     sample_renames: dict = field(default_factory=dict)
     zone_placement: dict = field(default_factory=dict)
     voice_velocity: dict = field(default_factory=dict)
@@ -165,7 +169,8 @@ def _find_preset(bank: Any, fmt: str, ref: dict) -> Optional[Any]:
 
 def save(path: str, *, bank_items: list, bank_format: Optional[str],
          bank_name: str, sample_renames: dict, zone_placement: dict,
-         voice_velocity: dict, pending: list, partition_breaks: set) -> str:
+         voice_velocity: dict, pending: list, partition_breaks: set,
+         image: Optional[dict] = None, explorer: Optional[dict] = None) -> str:
     """Write the whole staged state to `path`. Returns a one-line summary."""
     out = Path(path)
     if out.suffix.lower() != SUFFIX:
@@ -223,6 +228,12 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
             for e in (pending or [])
         ],
         "partition_breaks": sorted(partition_breaks or ()),
+        # Not work, but where the work was happening. Restoring these is what
+        # makes a reopened project feel like coming back to a desk rather
+        # than to a fresh install: the disc you were filling is open again
+        # and the folder you were picking from is still unfolded.
+        "image": image or None,
+        "explorer": explorer or None,
     }
 
     tmp = out.with_suffix(out.suffix + ".part")
@@ -323,6 +334,8 @@ def load(path: str) -> LoadReport:
                 "voice_velocity": _int_keys(e.get("voice_velocity")),
             })
         rep.partition_breaks = set(manifest.get("partition_breaks") or ())
+        rep.image = manifest.get("image") or None
+        rep.explorer = manifest.get("explorer") or None
     return rep
 
 
@@ -393,3 +406,32 @@ def _int_keys(d: Optional[dict]) -> dict:
         except (TypeError, ValueError):
             out[k] = v
     return out
+
+
+# ── crash safety ─────────────────────────────────────────────────────────────
+
+AUTOSAVE_NAME = "autosave" + SUFFIX
+
+
+def autosave_path() -> Path:
+    """Where the crash-safety copy lives.
+
+    In the data directory beside the index, not next to any bank: it is not
+    the user's document, it is this program's safety net, and it must not
+    appear in a library folder and get indexed as content.
+    """
+    from ..config import user_data_dir
+    return user_data_dir() / AUTOSAVE_NAME
+
+
+def clear_autosave() -> None:
+    """Remove the crash file. Called on a CLEAN exit only.
+
+    That is the whole mechanism: the file's existence at startup means the
+    last run did not reach its own shutdown. Nothing records a crash, because
+    a crash is exactly the case where nothing gets to record anything.
+    """
+    try:
+        autosave_path().unlink()
+    except OSError:
+        pass

@@ -86,6 +86,10 @@ class Config:
     #: see build/akai_image.RESIDENT_OBJECTS_DEFAULT for why it is neither
     #: fixed nor a hard limit.
     akai_max_objects: int = 1006
+    #: Seconds between crash-safety autosaves of the staged work. 0 disables
+    #: it. Sixty is a compromise: an autosave that carries converted banks
+    #: writes real megabytes, and doing that every few seconds would be felt.
+    autosave_seconds: int = 60
     # Main-window size, remembered on close. None until the first quit, so a
     # fresh install still gets the built-in default rather than a 0x0 window.
     # Size only, deliberately not position: a window restored onto a monitor
@@ -118,12 +122,14 @@ class Config:
         krz_bank_limit_mb = data.get("krz_bank_limit_mb", defaults.krz_bank_limit_mb)
         krz_pram_kb = data.get("krz_pram_kb", defaults.krz_pram_kb)
         akai_max_objects = data.get("akai_max_objects", defaults.akai_max_objects)
+        autosave_seconds = data.get("autosave_seconds", defaults.autosave_seconds)
         return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
                     last_image_dir=last_image_dir, last_library_dir=last_library_dir,
                     last_sample_dir=last_sample_dir, last_program_dir=last_program_dir,
                     e4b_bank_limit_mb=e4b_bank_limit_mb, krz_bank_limit_mb=krz_bank_limit_mb,
                     krz_pram_kb=krz_pram_kb,
                     akai_max_objects=akai_max_objects,
+                    autosave_seconds=autosave_seconds,
                     window_width=data.get("window_width"),
                     window_height=data.get("window_height"))
 
@@ -166,6 +172,7 @@ class Config:
         lines.append(f"krz_bank_limit_mb = {self.krz_bank_limit_mb}")
         lines.append(f"krz_pram_kb = {self.krz_pram_kb}")
         lines.append(f"akai_max_objects = {self.akai_max_objects}")
+        lines.append(f"autosave_seconds = {self.autosave_seconds}")
         if self.window_width and self.window_height:
             lines.append(f"window_width = {int(self.window_width)}")
             lines.append(f"window_height = {int(self.window_height)}")

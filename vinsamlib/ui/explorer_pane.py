@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QModelIndex, QTimer, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QLabel,
                              QLineEdit, QListWidget, QListWidgetItem, QMenu,
                              QSplitter, QStackedWidget, QTreeView, QVBoxLayout,
@@ -22,6 +22,7 @@ from .detail_pane import DetailPane
 from .models import (MPC_FILTER, BankFormatFilterProxy, LibraryTreeModel, TreeNode,
                      _FOREIGN_KINDS, _IMPORT_DRAG_KINDS, _import_request,
                      format_matches_filter)
+from . import models
 from ..build import foreign_import
 from ..index.db import IndexDB, SearchResult
 
@@ -300,6 +301,78 @@ class ExplorerPane(QWidget):
         self.selectionChanged.emit(node)
 
     # -- context menus ------------------------------------------------------------
+
+    def view_state(self) -> dict:
+        """Which rows are unfolded, and which one is current.
+
+        Paths rather than model indices: an index means nothing once the tree
+        has been rebuilt, and a lazy tree rebuilds from nothing every start.
+        """
+        expanded = []
+        model = self._tree.model()
+
+        def walk(parent):
+            for row in range(model.rowCount(parent)):
+                idx = model.index(row, 0, parent)
+                if not self._tree.isExpanded(idx):
+                    continue
+                node = idx.data(Qt.ItemDataRole.UserRole)
+                path = models._container_path_of(node) if node is not None else ""
+                if path:
+                    expanded.append(path)
+                walk(idx)
+
+        walk(QModelIndex())
+        cur = self._tree.currentIndex()
+        node = cur.data(Qt.ItemDataRole.UserRole) if cur.isValid() else None
+        return {"expanded": expanded,
+                "current": (models._container_path_of(node)
+                            if node is not None else "")}
+
+    def restore_view_state(self, state: dict) -> None:
+        """Unfold what was unfolded, as the tree fills in.
+
+        A lazy tree cannot be restored in one pass: expanding a row starts a
+        FETCH, and its children do not exist until that returns. So the wanted
+        paths are held and applied again every time rows arrive -- the tree
+        unfolds itself level by level, and a path that never appears (its
+        folder is gone) is simply never reached, which needs no error of its
+        own because the row is not there to explain.
+        """
+        self._wanted_expanded = set(state.get("expanded") or ())
+        self._wanted_current = state.get("current") or ""
+        # Connected once and left connected. Disconnecting first "in case"
+        # emits a libpyside RuntimeWarning when there was nothing to
+        # disconnect, and a try/except does not suppress a warning -- so the
+        # state is tracked instead of being probed for.
+        if not getattr(self, "_expansion_hooked", False):
+            model = self._tree.model()
+            if hasattr(model, "rowsInserted"):
+                model.rowsInserted.connect(self._apply_wanted_expansion)
+                self._expansion_hooked = True
+        self._apply_wanted_expansion()
+
+    def _apply_wanted_expansion(self, *_args) -> None:
+        if not getattr(self, "_wanted_expanded", None) and not getattr(
+                self, "_wanted_current", ""):
+            return
+        model = self._tree.model()
+
+        def walk(parent):
+            for row in range(model.rowCount(parent)):
+                idx = model.index(row, 0, parent)
+                node = idx.data(Qt.ItemDataRole.UserRole)
+                path = models._container_path_of(node) if node is not None else ""
+                if path and path in getattr(self, "_wanted_expanded", ()):
+                    if not self._tree.isExpanded(idx):
+                        self._tree.expand(idx)
+                if path and path == getattr(self, "_wanted_current", ""):
+                    self._tree.setCurrentIndex(idx)
+                    self._wanted_current = ""
+                if self._tree.isExpanded(idx):
+                    walk(idx)
+
+        walk(QModelIndex())
 
     def _on_tree_context_menu(self, pos) -> None:
         index = self._tree.indexAt(pos)

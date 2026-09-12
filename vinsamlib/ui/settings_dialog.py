@@ -76,6 +76,15 @@ class SettingsDialog(QDialog):
         self._akai_obj_spin.setRange(64, 16384)
         self._akai_obj_spin.setValue(config.akai_max_objects)
         limits_form.addRow("S3000XL resident objects:", self._akai_obj_spin)
+        # Not a size limit, but it belongs beside them: this is the row people
+        # come to Settings to change, and a menu entry of its own for one
+        # integer would be a worse place to look for it.
+        self._autosave_spin = QSpinBox()
+        self._autosave_spin.setRange(0, 3600)
+        self._autosave_spin.setSuffix(" s")
+        self._autosave_spin.setSpecialValueText("off")
+        self._autosave_spin.setValue(config.autosave_seconds)
+        limits_form.addRow("Autosave staged work every:", self._autosave_spin)
         layout.addLayout(limits_form)
         pram_hint = QLabel(
             "A K2000 keeps programs, keymaps and sample headers in PRAM, "
@@ -102,6 +111,17 @@ class SettingsDialog(QDialog):
         akai_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         akai_hint.setWordWrap(True)
         layout.addWidget(akai_hint)
+        autosave_hint = QLabel(
+            "New Bank and the Pending queue are written to a recovery file on "
+            "this interval, so a crash or a power cut costs at most that much "
+            "work. It is offered back the next time VinSamLib starts, and "
+            "deleted on a clean exit \u2014 so its presence IS the signal that "
+            "the last run did not finish. Set 0 to switch it off; a project "
+            "holding converted banks carries their audio and can run to "
+            "megabytes, which is why this is not a few seconds.")
+        autosave_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        autosave_hint.setWordWrap(True)
+        layout.addWidget(autosave_hint)
         limits_hint = QLabel(
             "A soft warning in New Bank once a bank exceeds this size — the "
             "most common real RAM configuration, not the format's absolute "
@@ -155,7 +175,8 @@ class SettingsDialog(QDialog):
         limits_changed = (self._e4b_limit_spin.value() != self._config.e4b_bank_limit_mb
                            or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb
                            or self._krz_pram_spin.value() != self._config.krz_pram_kb
-                           or self._akai_obj_spin.value() != self._config.akai_max_objects)
+                           or self._akai_obj_spin.value() != self._config.akai_max_objects
+                           or self._autosave_spin.value() != self._config.autosave_seconds)
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
@@ -164,6 +185,7 @@ class SettingsDialog(QDialog):
             self._config.krz_bank_limit_mb = self._krz_limit_spin.value()
             self._config.krz_pram_kb = self._krz_pram_spin.value()
             self._config.akai_max_objects = self._akai_obj_spin.value()
+            self._config.autosave_seconds = self._autosave_spin.value()
         if path_changed or limits_changed:
             self._config.save()
         super().accept()

@@ -34,6 +34,10 @@ def main() -> int:
     app.aboutToQuit.connect(tempdirs.cleanup_session)
     window = MainWindow(config)
     window.show()
+    # AFTER show(): the recovery question is a modal dialog, and asking it
+    # before there is a window behind it gives the user a prompt floating
+    # over nothing, about work they cannot see the absence of.
+    window.start_background_work()
     return app.exec()
 
 
