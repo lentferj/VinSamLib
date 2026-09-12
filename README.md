@@ -1046,6 +1046,24 @@ This is useful for MPC Auto Sampler output in particular: the MPC's own
 which is gone once the sample is exported as a bare WAV — so the audible
 lead-in silence is back in anything VinSamLib imports.
 
+#### What each staged preset costs
+
+New Bank lists the audio each preset needs beside its name, the same
+figure the Explorer's preset rows show and from the same source, so the
+two panes cannot drift.
+
+**It will not add up to the meter above, and that is the point.** The
+meter reports the bank's **deduped** total — what loading it costs the
+sampler — while a row reports what that preset needs **on its own**. Two
+presets sharing a multisample each count it once, so their rows overstate
+the bank by however much they share; on one real bank measured here nine
+presets summed to three times the bank's own audio. The meter answers
+"will this fit?", the rows answer "what is this one bringing?".
+
+A preset whose programs reference only the sampler's own ROM shows **no
+audio**, which is the literal truth and the reason such a preset cannot
+be converted to another machine.
+
 #### Converting to AKAI
 
 Pick **AKAI** in "Import as:" and an E4B, KRZ or EIII preset — or a

@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QFrame, 
                              QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import dnd, workers
+from .models import human_size
 from .detail_pane import _escape, zone_stats_lines
 from .sample_placement_dialog import SamplePlacementDialog, vel_window
 from .sample_rename_dialog import SampleRenameDialog
@@ -130,6 +131,8 @@ class BankPane(QWidget):
         self._prompt_on_duplicate = True
         self._last_bytes: Optional[bytes] = None
         self._gen = 0
+        #: _preset_key(...) -> its own audio bytes. See _preset_audio.
+        self._audio_memo: dict[tuple, Optional[int]] = {}
         self._info_gen = 0
         self._pre_add_snapshot: Optional[list] = None
         self._was_over_limit = False
@@ -576,6 +579,35 @@ class BankPane(QWidget):
         self._format = None
         self._head.setText("New Bank")
 
+    def _preset_audio(self, bank, preset) -> Optional[int]:
+        """Audio this staged preset needs on its own, memoised.
+
+        Same figure and same source as the Explorer's preset rows
+        (banks/summary.summarize_preset), so the two panes cannot drift --
+        and deduped WITHIN the preset, since one sample reached through two
+        keymaps is loaded once.
+
+        Memoised because _refresh() runs on every add, delete and reorder,
+        and this pane's own note says a repaint is not the place for work
+        that can be avoided. The walk touches no PCM, but doing it for every
+        staged preset on every repaint is still work nobody asked for.
+        """
+        # Keyed by the same stable identity the duplicate check uses, NOT by
+        # id(). CPython reuses an address once an object is freed, so an
+        # id-keyed memo can hand a removed preset's size to whatever lands at
+        # that address next -- a wrong number, on a pane whose whole point
+        # this week has been numbers you can trust.
+        key = _preset_key(bank, preset, self._format)
+        if key in self._audio_memo:
+            return self._audio_memo[key]
+        try:
+            from ..banks import summary
+            value = summary.summarize_preset(bank, preset).total_sample_bytes
+        except Exception:
+            value = None
+        self._audio_memo[key] = value
+        return value
+
     def _refresh(self) -> None:
         # QListWidget.clear() doesn't reliably emit itemSelectionChanged in
         # every Qt version -- invalidate any in-flight info lookup and
@@ -584,9 +616,23 @@ class BankPane(QWidget):
         self._info_label.setText("")
         self._list.clear()
         for item in self._items:
-            _bank, _preset, name = item
-            widget_item = QListWidgetItem(name)
+            bank, preset, name = item
+            audio = self._preset_audio(bank, preset)
+            if audio is None:
+                label = name
+            elif audio == 0:
+                # A KRZ program referencing only the sampler's ROM. Zero is
+                # the true answer and human_size() renders it as "", so it
+                # needs words -- the same hole the Explorer's rows fell into.
+                label = f"{name}    no audio"
+            else:
+                label = f"{name}    {human_size(audio)}"
+            widget_item = QListWidgetItem(label)
             widget_item.setData(Qt.ItemDataRole.UserRole, item)
+            widget_item.setToolTip(
+                "Audio this preset needs on its own. The bank's figure above "
+                "is DEDUPED, so these will not add up to it whenever two "
+                "presets share a sample.")
             self._list.addItem(widget_item)
         self._stack.setCurrentIndex(1 if self._items else 0)
         # EIII banks are placed on the exact same EMU3 CD/HD images E4B
