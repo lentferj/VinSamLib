@@ -194,7 +194,14 @@ class TreeNode:
         if self.format_label:
             text += f"  [{self.format_label}]"
         if self.audio_bytes is not None:
-            text += f"   {human_size(self.audio_bytes)} audio"
+            # human_size(0) is "" -- it was written for `if self.size:`, where
+            # zero never reaches it. Here zero is a real and interesting
+            # answer, so it needs words of its own: a KRZ bank whose programs
+            # reference only the sampler's ROM holds no audio at all, and
+            # rendering that as a bare "audio" with nothing in front of it is
+            # how it first appeared.
+            text += ("   no audio" if self.audio_bytes == 0
+                     else f"   {human_size(self.audio_bytes)} audio")
         elif self.size:
             text += f"   {human_size(self.size)}"
         if self.error:
