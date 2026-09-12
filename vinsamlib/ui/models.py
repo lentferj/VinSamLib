@@ -85,6 +85,21 @@ _IMPORT_DRAG_KINDS = _FOREIGN_KINDS + ("xpm", "mpc_project", "mpc_program")
 #: no preset.
 _CONTAINER_KINDS = ("directory", "volume_root", "folder")
 
+#: Formats whose FILE SIZE says nothing about what importing them costs,
+#: because the audio lives beside the file rather than inside it.
+#:
+#: A 999 KB MPC keygroup program referenced 19 stereo WAVs of ~1 MB each and
+#: added 20 MB to a bank -- the row said "999.2 KB" the whole time, while
+#: every other row in the tree shows a size that does mean "this is what you
+#: are adding". Showing a number that reads as the cost and is not it is
+#: worse than showing none, so these rows show none, and the Detail pane's
+#: "Total sample size" (which parses the program, so the figure is free
+#: there) is the number that answers the question.
+#:
+#: SF2 and GIG are NOT here: they embed their samples, so their file size is
+#: exactly what it appears to be.
+_AUDIO_LIVES_ELSEWHERE = {".xpm", ".xty", ".xpj", ".sfz", ".exs"}
+
 
 def _import_request(node: TreeNode) -> dict:
     """The drag payload / context-menu argument for one import-source row.
@@ -170,6 +185,17 @@ class TreeNode:
         elif self.empty_reason:
             text += "   (nothing to import)"
         return text
+
+
+def _size_would_mislead(node: TreeNode) -> bool:
+    """True for a row whose size has been suppressed on purpose."""
+    if node.kind in ("xpm", "mpc_project", "mpc_program"):
+        return True
+    path = node.payload
+    if isinstance(path, tuple) and path:
+        path = path[0]
+    return (isinstance(path, Path)
+            and path.suffix.lower() in _AUDIO_LIVES_ELSEWHERE)
 
 
 def _container_empty_reason(node: TreeNode) -> str:
@@ -318,7 +344,7 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
                 # MPC 3 one is gzipped and reports kind None -- and 2.x is
                 # exactly the case whose pad->key map is missing.
                 out.append(TreeNode(
-                    "xpm", e.name, node, Path(e.ref), size=e.size,
+                    "xpm", e.name, node, Path(e.ref), size=0,
                     format_label=f"{label} drum kit" if kind == xpm_import.DRUM else label,
                     note=xpm_import.DRUM_2X_PAD_MAP_NOTE if kind == xpm_import.DRUM else ""))
         elif e.kind == EntryKind.OTHER_FILE:
@@ -346,6 +372,11 @@ def _foreign_node(path: Path, name: str, node: Optional[TreeNode],
     if verdict is None:
         return None
     kind = "foreign_bank" if verdict.container else "foreign_preset"
+    # An SFZ or EXS24 instrument is a text/plist file naming WAVs elsewhere,
+    # so its own size is a few KB whatever the instrument weighs. SF2 and GIG
+    # embed their audio and keep theirs.
+    if path.suffix.lower() in _AUDIO_LIVES_ELSEWHERE:
+        size = 0
     return TreeNode(kind, name, node,
                     (path, None) if kind == "foreign_preset" else path,
                     size=size, format_label=verdict.format,
@@ -855,6 +886,13 @@ class LibraryTreeModel(QAbstractItemModel):
             if node.kind == "unsupported":
                 return node.note or ("Real content, but VinSamLib has no reader "
                                       f"for this format ({node.format_label}) yet.")
+            if _size_would_mislead(node):
+                # Not silence about a missing column: the row deliberately has
+                # no size, and the reason is the useful half.
+                return ("This format keeps its audio in separate files, so the "
+                        "file's own size is not what importing it costs. "
+                        "Select it and see \"Total sample size\" in the Detail "
+                        "pane.")
         if role == Qt.ItemDataRole.ForegroundRole and (node.kind == "unsupported"
                                                         or node.empty_reason):
             # Same grey as unsupported content, and for the same reason: real,
