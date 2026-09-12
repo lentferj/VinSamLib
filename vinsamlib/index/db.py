@@ -206,6 +206,11 @@ class IndexDB:
         self._conn.execute("UPDATE item SET audio_bytes = ? WHERE id = ?",
                             (audio_bytes, item_id))
 
+    def set_container_audio_bytes(self, container_id: int, audio_bytes: int) -> None:
+        """The container's own deduped audio total, for the tree's row."""
+        self._conn.execute("UPDATE container SET audio_bytes = ? WHERE id = ?",
+                            (audio_bytes, container_id))
+
     def finish_container(self, container_id: int, error: Optional[str] = None) -> None:
         self._conn.execute("UPDATE container SET scanned_at = ?, error = ? WHERE id = ?",
                             (time.time(), error, container_id))
@@ -233,6 +238,34 @@ class IndexDB:
         return [r[0] for r in self._conn.execute("SELECT path FROM container")]
 
     # -- search -----------------------------------------------------------------
+
+    def audio_bytes_for_paths(self, paths: list[str]) -> dict[str, int]:
+        """Recorded audio totals for whole containers, keyed by path.
+
+        For the tree, which builds its listings from the FILESYSTEM and so
+        knows a bank's path but nothing the scan worked out about it. One
+        indexed query for a whole listing rather than one per row, and it is
+        called from the GUI thread on rows that already exist -- the worker
+        that produced them has finished, so this connection is not shared
+        across threads.
+
+        A container with no recorded figure is simply absent from the result:
+        NULL means "not measured" and must not arrive as a confident zero.
+        """
+        if not paths:
+            return {}
+        out: dict[str, int] = {}
+        # Chunked: SQLite's default parameter ceiling is 999, and a library
+        # folder holding more banks than that is an ordinary thing here.
+        for i in range(0, len(paths), 500):
+            chunk = paths[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            for path, total in self._conn.execute(
+                    f"SELECT path, audio_bytes FROM container "
+                    f"WHERE path IN ({marks}) AND audio_bytes IS NOT NULL",
+                    chunk):
+                out[path] = total
+        return out
 
     def search(self, query: str, limit: int = 200) -> list[SearchResult]:
         query = query.strip()

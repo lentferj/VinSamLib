@@ -215,6 +215,25 @@ def _size_would_mislead(node: TreeNode) -> bool:
             and path.suffix.lower() in _AUDIO_LIVES_ELSEWHERE)
 
 
+def _container_path_of(node: TreeNode) -> str:
+    """The path the INDEX knows this row by, or "".
+
+    Two shapes reach here and only one is a Path. A row read out of a real
+    volume carries `(volume, entry)` and the file's own path is the entry's
+    `ref`; an image row carries the Path directly. Assuming the Path form is
+    what made the first version of this look up nothing at all and report no
+    sizes, silently, which is exactly the failure the figure exists to end.
+    """
+    payload = node.payload
+    if isinstance(payload, Path):
+        return str(payload)
+    if isinstance(payload, tuple) and len(payload) == 2:
+        ref = getattr(payload[1], "ref", None)
+        if ref:
+            return str(ref)
+    return ""
+
+
 def _preset_audio_bytes(bank, obj) -> Optional[int]:
     """Loadable audio for one preset, or None if it cannot be worked out.
 
@@ -756,8 +775,11 @@ class LibraryTreeModel(QAbstractItemModel):
     #: presets and import sources in one drag) has to say so out loud.
     statusMessage = Signal(str)
 
-    def __init__(self, roots: list[Path], parent=None):
+    def __init__(self, roots: list[Path], parent=None, index_db=None):
         super().__init__(parent)
+        #: Read-only, and touched ONLY from the GUI thread -- see
+        #: _fill_in_audio_sizes for why that matters with sqlite.
+        self._index_db = index_db
         sorted_roots = sorted(roots, key=lambda p: str(p).lower())
         self._roots: list[TreeNode] = [TreeNode("directory", str(p), None, p) for p in sorted_roots]
         self._live_workers: list[workers.Worker] = []   # keep references alive until done
@@ -866,10 +888,53 @@ class LibraryTreeModel(QAbstractItemModel):
                 self.dataChanged.emit(idx, idx)
             self._roll_up_emptiness(node)
             return
+        self._fill_in_audio_sizes(children)
         self.beginInsertRows(parent_index, 0, len(children) - 1)
         node.children = children
         self.endInsertRows()
         self._roll_up_emptiness(node)
+
+    #: Row kinds that ARE an indexed container, so the scan's recorded audio
+    #: total is theirs. A preset row computes its own at expand time and a
+    #: folder has no total of its own, so neither is looked up.
+    _INDEXED_CONTAINER_KINDS = ("bank", "volume_root")
+
+    def _fill_in_audio_sizes(self, children: list[TreeNode]) -> None:
+        """Put the scan's recorded audio total onto rows that have one.
+
+        The tree lists directories from the FILESYSTEM, so a bank row knows
+        its path and nothing the scan worked out about it. Rather than parse
+        every bank to size it -- which is what the lazy tree exists to avoid
+        -- the figure is read back from the index in one query per listing.
+
+        ON THE GUI THREAD, DELIBERATELY, and that is the whole reason it sits
+        here rather than inside the worker that built these rows. The fetch
+        functions run on a QThreadPool and this sqlite connection belongs to
+        the GUI thread; the worker has already finished by the time
+        _on_fetched runs, so the rows are in hand and nothing is shared. One
+        indexed lookup over a whole listing is microseconds.
+
+        A row the scan has not reached, or could not measure, keeps None and
+        shows no figure -- an unmeasured row must not read as an empty one.
+        """
+        if self._index_db is None:
+            return
+        wanted = {}
+        for n in children:
+            if n.kind not in self._INDEXED_CONTAINER_KINDS:
+                continue
+            path = _container_path_of(n)
+            if path:
+                wanted.setdefault(path, []).append(n)
+        if not wanted:
+            return
+        try:
+            found = self._index_db.audio_bytes_for_paths(list(wanted))
+        except Exception:
+            return          # a stale or busy index must not break a listing
+        for path, total in found.items():
+            for n in wanted.get(path, ()):
+                n.audio_bytes = total
 
     def _roll_up_emptiness(self, node: TreeNode) -> None:
         """Grey a folder whose whole READ subtree holds nothing to import,

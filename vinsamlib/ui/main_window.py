@@ -107,7 +107,8 @@ class MainWindow(QMainWindow):
         # from worker threads that have no Config of their own.
         foreign_import.set_available(config.check_foreign_import_support()[0])
 
-        self._model = LibraryTreeModel(list(config.library_roots))
+        self._model = LibraryTreeModel(list(config.library_roots),
+                                        index_db=self._index_db)
         self._model.statusMessage.connect(
             lambda msg: self.statusBar().showMessage(msg, 6000))
 

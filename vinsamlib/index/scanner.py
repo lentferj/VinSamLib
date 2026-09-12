@@ -157,6 +157,12 @@ def _scan_bank_container(path: str, size: int, db: IndexDB, progress: ProgressCB
         db.finish_container(cid, error="not a recognised E4B, KRZ or EIII bank")
         return
     _index_bank_presets(db, cid, None, bank, fmt)
+    # The container IS this one bank, so its figure is the bank's own deduped
+    # total -- not the sum of the preset rows just written, which counts a
+    # shared sample once per preset that reaches it.
+    total = _bank_audio_bytes(bank)
+    if total is not None:
+        db.set_container_audio_bytes(cid, total)
     db.finish_container(cid)
 
 
@@ -270,7 +276,25 @@ def _scan_image_container(path: str, volume_cls, size: int, db: IndexDB,
     except Exception as ex:
         db.finish_container(cid, error=str(ex))
         return
+    total = _container_audio_total(db, cid)
+    if total is not None:
+        db.set_container_audio_bytes(cid, total)
     db.finish_container(cid)
+
+
+def _container_audio_total(db: IndexDB, container_id: int) -> Optional[int]:
+    """An image's audio: the sum over its BANK rows.
+
+    Summed at bank level, never at preset level -- a preset's figure counts a
+    shared sample once for each preset that reaches it, so adding those would
+    multiply the shared audio by however many presets use it. Two banks on one
+    disc do not share sample storage, so summing them is sound.
+    """
+    row = db._conn.execute(
+        "SELECT SUM(audio_bytes) FROM item "
+        "WHERE container_id = ? AND kind = 'bank' AND audio_bytes IS NOT NULL",
+        (container_id,)).fetchone()
+    return row[0] if row and row[0] is not None else None
 
 
 def _scan_vfs_listing(vol, folder_entry, db: IndexDB, container_id: int,
