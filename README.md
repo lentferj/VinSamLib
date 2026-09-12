@@ -1064,6 +1064,19 @@ A preset whose programs reference only the sampler's own ROM shows **no
 audio**, which is the literal truth and the reason such a preset cannot
 be converted to another machine.
 
+#### What the Pending queue costs
+
+Each queued bank reports the audio it needs to LOAD — deduped — and each
+row of the Contents list below reports what that preset needs on its own.
+Measured on one real bank: five presets whose rows add up to about 71 MB
+queue as **29.1 MB**, because they share a multisample and the sampler
+loads it once. The queue's figure is the one to check against a sampler's
+RAM; the rows tell you which preset to drop when it is over.
+
+Deduped per SOURCE bank, not across the queue: a queued bank can hold
+presets drawn from several different files, and a sample identity only
+means anything inside the file it came from.
+
 #### Converting to AKAI
 
 Pick **AKAI** in "Import as:" and an E4B, KRZ or EIII preset — or a

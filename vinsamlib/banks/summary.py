@@ -98,6 +98,18 @@ class PresetSummary:
     voice_count: int                 # voices (E4B/EIII) / keymaps referenced (KRZ)
     zones: list[ZoneSummary] = field(default_factory=list)
     total_sample_bytes: int = 0      # unique samples referenced by this preset's zones
+    #: What is behind that figure, so a caller can dedupe ACROSS presets --
+    #: the Pending queue totals a whole bank's worth, and two presets sharing
+    #: a multisample must not pay for it twice.
+    #:
+    #: Two fields because the two families answer differently. E4B, EIII and
+    #: AKAI resolve a zone to a sample and know its byte count there, so the
+    #: sizes travel with the names and merging dicts is the whole job. KRZ
+    #: keeps its audio in one region addressed by word offsets, so a set of
+    #: object ids is all that means anything and the size comes from the
+    #: union of their extents -- see krz_audio_bytes.
+    sample_sizes: dict = field(default_factory=dict)   # name -> bytes
+    sample_keys: frozenset = frozenset()               # KRZ object ids
 
 
 @dataclass
@@ -168,6 +180,7 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
                     bit_depth=sample.bit_depth if sample else None,
                 ))
     return PresetSummary(name=preset.name.strip(), format="E4B",
+                          sample_sizes=dict(sample_sizes),
                           voice_count=voice_count, zones=zones,
                           total_sample_bytes=sum(sample_sizes.values()))
 
@@ -248,6 +261,7 @@ def summarize_krz_program(bank: krz.KrzFile, prog: krz.KrzObject) -> PresetSumma
             sample_ids.update(km_sample_ids)
     total_sample_bytes = krz_audio_bytes(bank, sample_ids)
     return PresetSummary(name=prog.name.strip(), format="KRZ",
+                          sample_keys=frozenset(sample_ids),
                           voice_count=len(keymap_ids), zones=zones,
                           total_sample_bytes=total_sample_bytes)
 
@@ -425,6 +439,7 @@ def summarize_eiii_preset(bank: eiii.EIIIFile, preset: eiii.EIIIPreset) -> Prese
                     bit_depth=sample.bit_depth if sample else None,
                 ))
     return PresetSummary(name=preset.name.strip(), format="EIII",
+                          sample_sizes=dict(sample_sizes),
                           voice_count=voice_count, zones=zones,
                           total_sample_bytes=sum(sample_sizes.values()))
 
@@ -495,8 +510,26 @@ def summarize_akai_program(bank: akai.AkaiBank,
                 bit_depth=16 if samp else None,
             ))
     return PresetSummary(name=prog.name.strip(), format="AKAI",
+                          sample_sizes=dict(sample_sizes),
                           voice_count=len(prog.keygroups), zones=zones,
                           total_sample_bytes=sum(sample_sizes.values()))
+
+
+def audio_bytes_for_keys(bank, fmt: str, keys) -> int:
+    """Audio for a set of sample identities out of ONE bank, deduped.
+
+    The companion to PresetSummary.sample_keys: hand back the union of what
+    several presets referenced and get the figure ONCE, which is what a whole
+    staged bank costs rather than the sum of its presets. On one real bank
+    those differ by a factor of three.
+
+    KRZ goes through krz_audio_bytes because its identities are object ids
+    and its sizes are word extents in a shared region; the others carry
+    sample names and their own byte counts.
+    """
+    if not keys:
+        return 0
+    return krz_audio_bytes(bank, keys) if fmt == "KRZ" else 0
 
 
 # ── generic dispatch (what the UI actually calls) ───────────────────────────

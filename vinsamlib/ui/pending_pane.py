@@ -38,6 +38,7 @@ from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _sanitize_bank_name
 from .convert_options_dialog import ConvertOptionsDialog
 from ..build.convert import (apply_conversion, load_sources_samples_for_test,
                               polyphony_risk_lines)
+from .models import human_size
 
 _PENDING_TEMP_PREFIX = "vinsamlib_pending_"
 
@@ -136,6 +137,8 @@ class PendingBanksPane(QWidget):
         #: Queue rows that START a new AKAI partition. Row 0 always opens
         #: partition A and is never in here. Indices, so every path that
         #: removes or reorders a row must fix them up -- see _shift_breaks.
+        #: (bank identity, preset identity) -> its own audio bytes.
+        self._audio_memo: dict[tuple, Optional[int]] = {}
         self._partition_breaks: set[int] = set()
         self._format: Optional[str] = None
         self._live_workers: list[workers.Worker] = []
@@ -400,8 +403,53 @@ class PendingBanksPane(QWidget):
             (dupes if key in seen else seen).add(key)
         return dupes
 
+    def _preset_audio(self, bank, preset) -> Optional[int]:
+        """One staged preset's own audio, memoised per queue entry."""
+        key = (id(bank), getattr(preset, "id", None),
+               getattr(preset, "index", None), getattr(preset, "filename", None),
+               getattr(preset, "name", None))
+        if key in self._audio_memo:
+            return self._audio_memo[key]
+        try:
+            from ..banks import summary
+            value = summary.summarize_preset(bank, preset).total_sample_bytes
+        except Exception:
+            value = None
+        self._audio_memo[key] = value
+        return value
+
+    def _entry_audio(self, entry: dict) -> Optional[int]:
+        """What this queued bank costs to LOAD -- deduped across its presets.
+
+        Not the sum of the rows in the Contents list below it: two presets
+        sharing a multisample each count it once on their own row, and the
+        sampler loads it once. On one real bank the two differ threefold.
+
+        Deduped per SOURCE bank, because a queued entry can hold presets
+        drawn from several different files and a sample identity only means
+        anything inside the file it came from.
+        """
+        by_bank: dict[int, list] = {}
+        try:
+            from ..banks import summary
+            for bank, preset, _name in entry.get("items", []):
+                ps = summary.summarize_preset(bank, preset)
+                slot = by_bank.setdefault(id(bank), [bank, ps.format, {}, set()])
+                slot[2].update(ps.sample_sizes)      # name -> bytes, merged
+                slot[3].update(ps.sample_keys)       # KRZ object ids
+            total = 0
+            for bank, fmt, sizes, keys in by_bank.values():
+                total += (summary.audio_bytes_for_keys(bank, fmt, keys)
+                          if fmt == "KRZ" else sum(sizes.values()))
+            return total
+        except Exception:
+            return None
+
     def _make_item(self, entry: dict) -> QListWidgetItem:
         label = f"{entry['name']}  [{entry['format']}]  — {len(entry['items'])} preset(s)"
+        audio = self._entry_audio(entry)
+        if audio is not None:
+            label += f"  —  {human_size(audio) or 'no audio'}"
         if entry.get("convert_opts") is not None:
             label += "  · processing set"
         if (entry.get("name") or "").strip().upper() in self._duplicate_names():
@@ -460,8 +508,17 @@ class PendingBanksPane(QWidget):
         if entry is None:
             return
         for preset_tuple in entry["items"]:
-            _bank, _preset, name = preset_tuple
-            widget_item = QListWidgetItem(name)
+            bank, preset, name = preset_tuple
+            audio = self._preset_audio(bank, preset)
+            if audio is None:
+                label = name
+            else:
+                label = f"{name}    {human_size(audio) or 'no audio'}"
+            widget_item = QListWidgetItem(label)
+            widget_item.setToolTip(
+                "Audio this preset needs on its own. The bank's figure above "
+                "is deduped, so these will not add up to it wherever two "
+                "presets share a sample.")
             widget_item.setData(Qt.ItemDataRole.UserRole, preset_tuple)
             self._contents_list.addItem(widget_item)
 
