@@ -382,7 +382,28 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
         # refused for the partition PLANNER a day earlier, and refusing it
         # there while keeping it here would be inconsistent. An older mpc2emu
         # raises instead, which is loud -- see the re-raise below.
-        kwargs = {"partitions": [list(g) for g in partitions]} if partitions else {}
+        if partitions:
+            groups = [list(g) for g in partitions]
+        else:
+            # PLAN IT HERE EVEN WHEN THE USER SET NO BREAKS. mpc2emu sizes the
+            # disk for an explicit grouping (their d391280) and, without one,
+            # from the content alone -- which under-sizes the moment the
+            # content needs more than one partition. Three volumes of 20 MB
+            # auto-sized to a disk whose partition B was 16 MB and the build
+            # refused with "raise --hda-size", a CLI flag that means nothing
+            # here; from the GUI it looked like OK did nothing at all.
+            #
+            # Passing the plan also makes the disk match the preview exactly,
+            # since both now come from the same planner call.
+            try:
+                planned = plan_partitions(volumes, kind=kind)
+            except Exception:
+                planned = []
+            groups, seen = [], 0
+            for part in planned:
+                groups.append(list(range(seen, seen + len(part))))
+                seen += len(part)
+        kwargs = {"partitions": groups} if groups else {}
         try:
             info = akai_image.build_akai_hd_image(
                 volumes, output_path, size_mb=size_mb,

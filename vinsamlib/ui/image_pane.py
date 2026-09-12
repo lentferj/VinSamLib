@@ -633,6 +633,13 @@ class ImagePane(QWidget):
             self._set_buttons_enabled(True)
             last_line = workers.last_error_line(message)
             self.statusMessage.emit(f"Failed: {last_line}")
+            # A DIALOG, not only the status bar. Writing media is deliberate,
+            # slow and asked for explicitly, and a refusal that lands in a
+            # line at the bottom of the window -- which then times out -- is
+            # indistinguishable from the button having done nothing. That is
+            # exactly how a build that refused itself was reported: "I type a
+            # path, click OK, and nothing happens".
+            QMessageBox.warning(self, "Image Operation Failed", last_line)
 
         worker.signals.finished.connect(_finished)
         worker.signals.error.connect(_error)
