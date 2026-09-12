@@ -238,6 +238,14 @@ def _container_path_of(node: TreeNode) -> str:
         ref = getattr(payload[1], "ref", None)
         if ref:
             return str(ref)
+        # A foreign row carries (Path, ordinal). The path IS the container
+        # only for a row that stands on its own -- a .talsmpl or a lone .sfz.
+        # A preset INSIDE a SoundFont carries the same path, and answering
+        # with it would stamp the whole file's figure onto every preset row.
+        if isinstance(payload[0], Path):
+            parent = node.parent
+            if parent is None or parent.kind not in _FOREIGN_KINDS:
+                return str(payload[0])
     return ""
 
 
@@ -905,7 +913,8 @@ class LibraryTreeModel(QAbstractItemModel):
     #: Row kinds that ARE an indexed container, so the scan's recorded audio
     #: total is theirs. A preset row computes its own at expand time and a
     #: folder has no total of its own, so neither is looked up.
-    _INDEXED_CONTAINER_KINDS = ("bank", "volume_root")
+    _INDEXED_CONTAINER_KINDS = ("bank", "volume_root", "xpm", "mpc_project",
+                                 "foreign_bank", "foreign_preset")
 
     def _fill_in_audio_sizes(self, children: list[TreeNode]) -> None:
         """Put the scan's recorded audio total onto rows that have one.

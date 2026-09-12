@@ -20,7 +20,7 @@ from typing import Callable, Optional
 from .db import IndexDB
 from ..banks import akai as vs_akai
 from ..banks import e4b, eiii, krz, summary
-from ..build import foreign_import, xpm_import
+from ..build import foreign_import, refaudio, xpm_import
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
@@ -196,8 +196,13 @@ def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
     kind = "mpc_project" if fmt == "XPJ" else "xpm"
     cid = db.begin_container(path, "xpm", fmt, size, mtime)
     name = Path(path).name
+    # A reference-style format: the file is metadata and its audio lives
+    # beside it, so the size just recorded is not what loading it costs.
+    audio = refaudio.referenced_audio_bytes(path)
     item_id = db.add_item(cid, None, kind, name, native_id=name, format=fmt,
-                           size=size, ordinal=0)
+                           size=size, ordinal=0, audio_bytes=audio)
+    if audio is not None:
+        db.set_container_audio_bytes(cid, audio)
     if kind == "mpc_project":
         for i, program in enumerate(xpm_import.project_program_names(path)):
             # native_id is the name, not the position: a parse drops a program
@@ -240,8 +245,13 @@ def _scan_foreign_container(path: str, size: int, db: IndexDB, progress: Progres
     kind = "foreign_bank" if verdict.container else "foreign_preset"
     cid = db.begin_container(path, "foreign", fmt, size, mtime)
     name = Path(path).name
+    # None for SF2 and GIG, which embed their audio -- their file size is
+    # already the honest figure and must not be replaced.
+    audio = refaudio.referenced_audio_bytes(path)
     item_id = db.add_item(cid, None, kind, name, native_id=name, format=fmt,
-                          size=size, ordinal=0)
+                          size=size, ordinal=0, audio_bytes=audio)
+    if audio is not None:
+        db.set_container_audio_bytes(cid, audio)
     if verdict.container and verdict.importable:
         for i, entry in enumerate(foreign_import.list_presets(path) or []):
             # Same rule as an MPC project's programs: the name is the

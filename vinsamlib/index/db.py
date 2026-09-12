@@ -132,11 +132,13 @@ class IndexDB:
     #: -- so an old one is emptied rather than migrated in place. Migrating
     #: would leave rows that are structurally current and factually blank,
     #: which is the state hardest to tell from a real zero.
+    #: 4: MPC and TAL rows gained a referenced-audio figure, which earlier
+    #: scans never recorded.
     #: 3: the KRZ audio figures recorded under 2 were the sample OBJECTS'
     #: header bytes, ~90 each, so a 1.4 MB bank was indexed as 21 KB. Those
     #: rows are structurally current and numerically wrong, which
     #: needs_rescan() cannot see -- nothing about the files changed.
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def _migrate(self) -> None:
         """Add columns an older file lacks, and empty it if it predates them.
