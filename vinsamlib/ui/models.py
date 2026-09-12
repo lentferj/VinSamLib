@@ -1002,6 +1002,19 @@ class LibraryTreeModel(QAbstractItemModel):
             if node.kind == "unsupported":
                 return node.note or ("Real content, but VinSamLib has no reader "
                                       f"for this format ({node.format_label}) yet.")
+            if (node.kind in _FOREIGN_KINDS and node.audio_bytes is None
+                    and node.parent is not None
+                    and node.parent.kind in _FOREIGN_KINDS):
+                # A preset inside an SF2 or GIG. Its own audio total is
+                # knowable but not cheaply: those formats embed their samples,
+                # so the figure needs a real parse -- 2.7 s and about 3 GB of
+                # RSS for the largest SoundFont here -- which has no business
+                # running for every row of a listing. The Detail pane does
+                # exactly that parse for the row you select, and shows it.
+                return ("This format stores its samples inside the file, so "
+                        "working out one preset's share means reading it. "
+                        "Select the row and the Detail pane reports "
+                        "\"Total sample size\".")
             if _size_would_mislead(node):
                 # Not silence about a missing column: the row deliberately has
                 # no size, and the reason is the useful half.
