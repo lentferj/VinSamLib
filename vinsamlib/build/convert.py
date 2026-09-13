@@ -318,8 +318,8 @@ def polyphony_risk_lines(risks: list[dict]) -> list[str]:
     #: five presets that all overrun DECAY1 produced the identical paragraph
     #: five times -- a wall of text that reads as five problems and is one.
     #: The count is what the user needs; the repetition is what hides it.
-    seen: dict[str, int] = {}
-    order: list[str] = []
+    seen: dict[tuple, list] = {}
+    order: list[tuple] = []
     for r in risks:
         # A risk carrying its own sentence renders verbatim. Not every risk
         # this list now holds is a polyphony one -- _verify_written adds
@@ -328,9 +328,18 @@ def polyphony_risk_lines(risks: list[dict]) -> list[str]:
         # second thing to forget to display.
         msg = r.get("message")
         if msg:
-            if msg not in seen:
-                order.append(msg)
-            seen[msg] = seen.get(msg, 0) + 1
+            # Keyed on the FINDING -- its code and the sentence with the
+            # subject taken out -- so "sixteen samples are at an unplayable
+            # rate" is one row naming sixteen samples, not sixteen rows.
+            key = (r.get("code", ""), r.get("body") or msg)
+            if key not in seen:
+                order.append(key)
+                seen[key] = []
+            subj = (r.get("subject") or "").strip()
+            if subj:
+                seen[key].append(subj)
+            else:
+                seen[key].append("")
             continue
         why = (f" ({r['stereo']} of {r['samples']} samples are stereo, and a "
                f"stereo sample costs two voices)") if r["stereo"] else ""
@@ -340,7 +349,20 @@ def polyphony_risk_lines(risks: list[dict]) -> list[str]:
             f"limit{why} -- the extra layers will be stolen on playback.")
     # Grouped messages first: they are the converter's own findings, and a
     # per-preset polyphony line is more specific than any of them.
-    grouped = [(f"{seen[m]} ×  {m}" if seen[m] > 1 else m) for m in order]
+    grouped = []
+    for key in order:
+        _code, body = key
+        subjects = [x for x in seen[key] if x]
+        n = len(seen[key])
+        if n == 1:
+            grouped.append(f'"{subjects[0]}": {body}' if subjects else body)
+            continue
+        head = f"{n} ×  {body}"
+        if subjects:
+            shown = ", ".join(subjects[:4])
+            more = len(subjects) - 4
+            head += f"\n        {shown}" + (f", and {more} more" if more > 0 else "")
+        grouped.append(head)
     return grouped + lines
 
 
@@ -516,8 +538,23 @@ def _diagnostic_risks(records) -> list[dict]:
             said.append(part if part[-1] in ".!?:" else part + ".")
         text = " ".join(said)
         subject = str(getattr(d, "subject", "") or "").strip()
+        # The subject is kept SEPARATE as well as prefixed. Sixteen samples
+        # that are all at an unplayable rate produce sixteen sentences
+        # differing only in a name, and a renderer that can only compare
+        # whole strings shows all sixteen -- see polyphony_risk_lines.
+        body = text
+        if subject:
+            # mpc2emu often names the subject inside its own message too
+            # ("'NAME': stored at ..."), so prefixing ours as well printed it
+            # twice before the sentence even started.
+            for lead in (f"'{subject}': ", f'"{subject}": '):
+                if body.startswith(lead):
+                    body = body[len(lead):]
+                    break
         out.append({
             "message": f'"{subject}": {text}' if subject else text,
+            "body": body,
+            "subject": subject,
             "code": getattr(d, "code", ""),
             # A required field on their side since 2026-09-05, so it is read
             # as an attribute and not with a .get() that would quietly read
