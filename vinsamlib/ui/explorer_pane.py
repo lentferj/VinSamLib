@@ -353,26 +353,69 @@ class ExplorerPane(QWidget):
         self._apply_wanted_expansion()
 
     def _apply_wanted_expansion(self, *_args) -> None:
-        if not getattr(self, "_wanted_expanded", None) and not getattr(
-                self, "_wanted_current", ""):
+        """Unfold what a loaded project asked for, ONCE each.
+
+        This is connected to rowsInserted, so it runs on every expand for as
+        long as it is connected. The first version never consumed what it had
+        applied, which made a restored set permanent: after loading a project
+        -- or recovering one after a crash -- opening ANY row re-expanded the
+        rows that project had open, every time, for the rest of the session.
+
+        So a path is discarded the moment it is applied, and the hook is
+        dropped once nothing is wanted. A path that never turns up (its
+        folder is gone) would otherwise keep the hook alive for ever, so a
+        few passes with no progress end it too -- the tree has stopped
+        producing rows those paths could match.
+        """
+        wanted = getattr(self, "_wanted_expanded", None)
+        if not wanted and not getattr(self, "_wanted_current", ""):
+            self._unhook_expansion()
             return
         model = self._tree.model()
+        applied = [0]
 
         def walk(parent):
             for row in range(model.rowCount(parent)):
                 idx = model.index(row, 0, parent)
                 node = idx.data(Qt.ItemDataRole.UserRole)
                 path = models._container_path_of(node) if node is not None else ""
-                if path and path in getattr(self, "_wanted_expanded", ()):
+                if path and path in (self._wanted_expanded or ()):
+                    # Consumed whether or not it was already open: either way
+                    # this row has been dealt with and must not be re-applied
+                    # on the next insertion anywhere in the tree.
+                    self._wanted_expanded.discard(path)
+                    applied[0] += 1
                     if not self._tree.isExpanded(idx):
                         self._tree.expand(idx)
                 if path and path == getattr(self, "_wanted_current", ""):
                     self._tree.setCurrentIndex(idx)
                     self._wanted_current = ""
+                    applied[0] += 1
                 if self._tree.isExpanded(idx):
                     walk(idx)
 
         walk(QModelIndex())
+        if applied[0]:
+            self._idle_passes = 0
+        else:
+            self._idle_passes = getattr(self, "_idle_passes", 0) + 1
+        if (not self._wanted_expanded and not self._wanted_current) \
+                or self._idle_passes >= 3:
+            self._unhook_expansion()
+
+    def _unhook_expansion(self) -> None:
+        """Stop listening. Leaving this connected is what made a restored
+        expansion re-assert itself on every later click."""
+        if not getattr(self, "_expansion_hooked", False):
+            return
+        model = self._tree.model()
+        try:
+            model.rowsInserted.disconnect(self._apply_wanted_expansion)
+        except (TypeError, RuntimeError):
+            pass
+        self._expansion_hooked = False
+        self._wanted_expanded = set()
+        self._wanted_current = ""
 
     def _on_tree_context_menu(self, pos) -> None:
         index = self._tree.indexAt(pos)
