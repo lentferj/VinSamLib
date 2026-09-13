@@ -445,10 +445,25 @@ class BankPane(QWidget):
 
     # -- public entry point for the Explorer's right-click "Add to New Bank" ----
 
-    def add_presets(self, items: list[tuple[Any, Any, str, str]]) -> bool:
+    def add_presets(self, items: list[tuple[Any, Any, str, str]],
+                    restoring: bool = False) -> bool:
         """items: list of (bank, preset_obj, format, name) -- the in-process
         equivalent of a drag-drop, for callers that aren't dragging (the
-        Explorer tree's context menu). Same format-lock rules as a drop."""
+        Explorer tree's context menu). Same format-lock rules as a drop.
+
+        `restoring` is for putting a SAVED PROJECT back: those items are not
+        being added, they are being reinstated, and the duplicate question
+        has no meaning for them. It was asked anyway -- loading a project
+        popped "'909 Defined E2' is already in this bank" for a preset the
+        user had already answered that question about, by renaming it, in
+        the session that built the file.
+        
+        It is not merely redundant: the check keys on the SOURCE identity
+        (_preset_key), so two staged items converted from one file with
+        different options are a duplicate by that key however they are
+        named. Deliberate, distinct work therefore came back as a prompt
+        per item, and a Skip would have silently discarded it.
+        """
         if not items:
             return False
         formats = {fmt for _bank, _preset, fmt, _name in items}
@@ -461,7 +476,7 @@ class BankPane(QWidget):
         if self._format is not None and fmt != self._format:
             self.statusMessage.emit(f"This bank is already {self._format} — can't add a {fmt} preset")
             return False
-        added, dupes = self._add_items(items)
+        added, dupes = self._add_items(items, restoring=restoring)
         if added:
             names = ", ".join(f'"{name}"' for name in added)
             msg = f"Added {names} to New Bank"
@@ -473,7 +488,8 @@ class BankPane(QWidget):
                 f"Already in New Bank, skipped: {', '.join(dupes)}")
         return bool(added)
 
-    def _add_items(self, items: list[tuple[Any, Any, str, str]]) -> tuple[list[str], list[str]]:
+    def _add_items(self, items: list[tuple[Any, Any, str, str]],
+                    restoring: bool = False) -> tuple[list[str], list[str]]:
         """Appends items, optionally skipping ones already present -- keyed
         by bank path + preset index/id rather than Python object identity:
         presets reached through search results are re-parsed from scratch
@@ -495,7 +511,9 @@ class BankPane(QWidget):
         if self._format is None:
             self._format = fmt
             self._head.setText(f"New Bank  [{fmt}]")
-        if not self._dedupe_enabled:
+        # Restoring takes the same path as dedupe-off: keep every item, in
+        # order, under the name it was saved with.
+        if not self._dedupe_enabled or restoring:
             added_names = [name for _bank, _preset, _fmt, name in items]
             for bank, preset_obj, _fmt, name in items:
                 self._items.append((bank, preset_obj, name))

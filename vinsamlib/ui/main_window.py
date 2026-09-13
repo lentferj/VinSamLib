@@ -1297,7 +1297,8 @@ class MainWindow(QMainWindow):
         bp, pp = self._bank_pane, self._pending_pane
         bp._clear()
         if rep.banks:
-            bp.add_presets([(b, p, rep.bank_format or "", n) for b, p, n in rep.banks])
+            bp.add_presets([(b, p, rep.bank_format or "", n) for b, p, n in rep.banks],
+                           restoring=True)
         # AFTER the presets, not before: add_presets() rewrites the name field
         # for a freshly-locked bank, so setting it first was silently undone.
         bp._name_edit.setText(rep.bank_name)
