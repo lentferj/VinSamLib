@@ -737,6 +737,11 @@ class ConvertOptionsDialog(QDialog):
         self._shrink_to_spin = QDoubleSpinBox()
         self._shrink_to_spin.setRange(0.1, 512.0)
         self._shrink_to_spin.setDecimals(1)
+        # Half a megabyte a click. The default step of 1.0 is too coarse for
+        # the sizes this is aimed at -- an AKAI volume's whole budget is 32 MB
+        # and a preset's share of it is single digits, so whole-MB steps skip
+        # most of the useful range.
+        self._shrink_to_spin.setSingleStep(0.5)
         self._shrink_to_spin.setSuffix(" MB per preset")
         self._shrink_to_spin.setValue(8.0)
         row.addWidget(self._shrink_to_spin, 1)
