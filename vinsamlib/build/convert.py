@@ -42,7 +42,7 @@ from .. import tempdirs
 from ..filenames import safe_filename
 from ..mpc2emu_bridge import (akai_parser, akai_writer, bank_splitter, e4b_parser,
                                 e4b_writer, eiii_parser, eiii_writer, krz_parser,
-                                krz_writer, models_common, resampler, start_trim,
+                                krz_writer, models_common, resampler, shrink_planner, start_trim,
                                 tail_trim, zone_reducer)
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
@@ -86,6 +86,16 @@ class ConversionOptions:
     trim_tail_db: Optional[float] = None
     trim_tail_fade_ms: float = 5.0
     trim_tail_keep_loops: bool = False
+    # Fit each preset to a memory budget by thinning it -- mpc2emu's
+    # --shrink-to / --shrink-by. Exactly one of the two, or neither.
+    #
+    # NOT the same instrument as reduce_key_zones_pct above, which applies one
+    # percentage to everything. A bank's presets differ enormously in what
+    # they can give up -- a two-zone one-shot has nothing, a 12-zone pad has
+    # plenty -- so the target is per PRESET and the planner works out how to
+    # reach it for each.
+    shrink_to_bytes: Optional[int] = None
+    shrink_by_pct: Optional[float] = None
 
     def is_noop(self, source_format: str = "E4B") -> bool:
         """`source_format` matters now that KRZ can be a source too: a
@@ -103,6 +113,8 @@ class ConversionOptions:
                 and self.reduce_velocity_layers_pct <= 0
                 and self.mono is None
                 and self.pan_law == "hardware"
+                and self.shrink_to_bytes is None
+                and self.shrink_by_pct is None
                 and self.trim_start_db is None
                 and self.trim_tail_db is None)
 
@@ -428,6 +440,16 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
 
     if opts.max_sample_rate:
         _run_captured(_apply_max_sample_rate, bank, opts.max_sample_rate)
+
+    # LAST OF THE REDUCING STEPS, and that ordering is mpc2emu's own fix for
+    # it: mono, resampling and a rate cap all make a preset smaller, so
+    # running the fit after them counts the reductions already asked for
+    # rather than thinning zones to reach a target the other options were
+    # about to reach anyway.
+    if opts.shrink_to_bytes is not None or opts.shrink_by_pct is not None:
+        _run_captured(shrink_planner.shrink_bank, bank,
+                      target_bytes=opts.shrink_to_bytes,
+                      by_pct=opts.shrink_by_pct)
 
     # After every step, never before: --mono halves each stereo zone's voice
     # cost and the zone reducer removes layers outright, so the only voice

@@ -85,6 +85,11 @@ eiii_writer = _Lazy("writers.eiii_writer")
 akai_writer = _Lazy("writers.akai_s3000_writer")
 resampler = _Lazy("processors.resampler")
 zone_reducer = _Lazy("processors.zone_reducer")
+# Per-preset thinning aimed at a memory target (mpc2emu 5aa8cf7). It
+# SEARCHES the key/velocity combinations rather than walking a fixed
+# ordering, scoring both axes in one unit -- cents of spectral-centroid
+# error -- which is what makes them comparable at all.
+shrink_planner = _Lazy("processors.shrink_planner")
 start_trim = _Lazy("processors.start_trim")
 tail_trim = _Lazy("processors.tail_trim")
 xpm_parser = _Lazy("parsers.xpm_parser")

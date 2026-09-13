@@ -119,6 +119,7 @@ class ConvertOptionsDialog(QDialog):
         groups.addWidget(self._build_resample_group())
         groups.addWidget(self._build_max_rate_group())
         groups.addWidget(self._build_reduce_group())
+        groups.addWidget(self._build_shrink_group())
         groups.addStretch()
 
         self._scroll = QScrollArea()
@@ -165,6 +166,14 @@ class ConvertOptionsDialog(QDialog):
             self._velocity_slider.setValue(int(opts.reduce_velocity_layers_pct))
         if opts.pan_law == "constant-power":
             self._pan_law_group.setChecked(True)
+        if opts.shrink_to_bytes is not None:
+            self._shrink_group.setChecked(True)
+            self._shrink_mode.setCurrentIndex(0)
+            self._shrink_to_spin.setValue(opts.shrink_to_bytes / 1024 / 1024)
+        elif opts.shrink_by_pct is not None:
+            self._shrink_group.setChecked(True)
+            self._shrink_mode.setCurrentIndex(1)
+            self._shrink_by_spin.setValue(int(opts.shrink_by_pct))
         if opts.trim_start_db is not None:
             self._trim_start_group.setChecked(True)
             self._trim_start_db_spin.setValue(abs(opts.trim_start_db))
@@ -645,6 +654,74 @@ class ConvertOptionsDialog(QDialog):
 
     # -- Group B: Reduce Sample Count ------------------------------------------
 
+    # -- Group: Fit to a Memory Target -----------------------------------------
+
+    def _build_shrink_group(self) -> QGroupBox:
+        group = QGroupBox("Fit Each Preset to a Memory Target")
+        group.setCheckable(True)
+        group.setChecked(False)
+        self._shrink_group = group
+        outer = QVBoxLayout(group)
+
+        body = QWidget()
+        body.setVisible(False)
+        group.toggled.connect(body.setVisible)
+        self._wire_resize_on_toggle(group)
+        inner = QVBoxLayout(body)
+        inner.setContentsMargins(0, 0, 0, 0)
+
+        row = QHBoxLayout()
+        self._shrink_mode = QComboBox()
+        self._shrink_mode.addItems(["Shrink to at most", "Shrink by"])
+        row.addWidget(self._shrink_mode)
+        self._shrink_to_spin = QDoubleSpinBox()
+        self._shrink_to_spin.setRange(0.1, 512.0)
+        self._shrink_to_spin.setDecimals(1)
+        self._shrink_to_spin.setSuffix(" MB per preset")
+        self._shrink_to_spin.setValue(8.0)
+        row.addWidget(self._shrink_to_spin, 1)
+        self._shrink_by_spin = QSpinBox()
+        self._shrink_by_spin.setRange(1, 95)
+        self._shrink_by_spin.setSuffix(" %")
+        self._shrink_by_spin.setValue(50)
+        self._shrink_by_spin.setVisible(False)
+        row.addWidget(self._shrink_by_spin, 1)
+        self._shrink_mode.currentIndexChanged.connect(self._on_shrink_mode_changed)
+        inner.addLayout(row)
+
+        label = QLabel(
+            "Thins each preset until it fits, and works out HOW per preset "
+            "rather than applying one rule to all of them — a two-zone "
+            "one-shot has nothing to give while a twelve-zone pad has "
+            "plenty, which is exactly what \"Reduce Sample Count\" above "
+            "cannot tell apart.\n\n"
+            "It searches the combinations of key-zone and velocity-layer "
+            "thinning instead of walking a fixed order, scoring both in one "
+            "unit — cents of spectral error — so they can be compared at "
+            "all. Which axis costs less is a property of the material: a "
+            "piano's velocity layers carry most of its character, a pad's "
+            "may differ only in level; a pad sampled every twelve semitones "
+            "is already stretching, a piano sampled every semitone can lose "
+            "half its zones and never stretch more than a tone.\n\n"
+            "Runs LAST, after the stereo, resample and rate options above, "
+            "so reductions you have already asked for count toward the "
+            "target instead of being thinned for a second time.\n\n"
+            "The target is PER PRESET, so the bank will not shrink by the "
+            "same proportion: presets share samples, and one stays as long "
+            "as any preset still needs it. Measured on a real 29 MB bank, "
+            "\"shrink by 50%\" came out at 26.5 MB — the presets each gave "
+            "up half of what they alone required, and most of the audio was "
+            "required by something else too.")
+        label.setWordWrap(True)
+        label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        inner.addWidget(label)
+        outer.addWidget(body)
+        return group
+
+    def _on_shrink_mode_changed(self, index: int) -> None:
+        self._shrink_to_spin.setVisible(index == 0)
+        self._shrink_by_spin.setVisible(index == 1)
+
     def _build_reduce_group(self) -> QGroupBox:
         # Not checkable itself -- reduce is a distinct feature from
         # resample, not a sub-option of it, so this outer box is just a
@@ -723,6 +800,12 @@ class ConvertOptionsDialog(QDialog):
         trim_tail_db = (self._trim_tail_db_spin.value()
                          if self._trim_tail_group.isChecked() else None)
 
+        shrink_to = shrink_by = None
+        if self._shrink_group.isChecked():
+            if self._shrink_mode.currentIndex() == 0:
+                shrink_to = int(self._shrink_to_spin.value() * 1024 * 1024)
+            else:
+                shrink_by = float(self._shrink_by_spin.value())
         return ConversionOptions(
             resample_profile=resample_profile,
             no_bandpass=no_bandpass,
@@ -738,6 +821,8 @@ class ConvertOptionsDialog(QDialog):
             trim_tail_db=trim_tail_db,
             trim_tail_fade_ms=self._trim_tail_fade_spin.value(),
             trim_tail_keep_loops=self._trim_tail_keep_loops.isChecked(),
+            shrink_to_bytes=shrink_to,
+            shrink_by_pct=shrink_by,
         )
 
     @staticmethod

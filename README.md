@@ -1141,6 +1141,34 @@ that appeared during startup by reflex must not be what destroys the only
 copy of an evening's work; it is replaced by the next autosave and
 removed by the next clean exit.
 
+#### Fit Each Preset to a Memory Target
+
+Give a size and each preset is thinned until it fits — and **how** it is
+thinned is worked out per preset rather than applied as one rule to all
+of them. A two-zone one-shot has nothing to give; a twelve-zone pad has
+plenty. That difference is exactly what *Reduce Sample Count* cannot see.
+
+mpc2emu searches the combinations of key-zone and velocity-layer thinning
+instead of walking a fixed order, scoring both in one unit — cents of
+spectral error — which is what makes them comparable at all. Which axis
+costs less is a property of the material: a piano's velocity layers carry
+most of its character while a pad's may differ only in level; a pad
+sampled every twelve semitones is already stretching, while a piano
+sampled every semitone can lose half its zones and never stretch more
+than a tone.
+
+It runs **last**, after the stereo, resample and rate options, so
+reductions you already asked for count toward the target rather than
+being thinned for a second time.
+
+**The target is per preset, so the bank will not shrink by the same
+proportion.** Presets share samples, and a sample stays as long as any
+preset still needs it. Measured on a real 29 MB bank: "shrink by 50%"
+came out at 26.5 MB, because each preset gave up half of what it alone
+required and most of the audio was required by something else too. Use
+"shrink to N MB per preset" when a per-preset ceiling is what you
+actually want — that same bank went to 13.7 MB at a 2 MB target.
+
 #### Converting to AKAI
 
 Pick **AKAI** in "Import as:" and an E4B, KRZ or EIII preset — or a
