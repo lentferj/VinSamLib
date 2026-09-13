@@ -530,6 +530,13 @@ class BankPane(QWidget):
         the question was asked to avoid. Renaming is the answer most people
         want and it was the one not offered.
 
+        FOR ANYONE WRITING A TEST THAT ADDS THE SAME THING TWICE: call
+        set_prompt_on_duplicate(False) around it. This is a constructed box
+        with its own exec(), so stubbing QMessageBox.question -- which worked
+        while this was a two-button question -- reaches nothing and the test
+        hangs on a modal dialog for ever. Three suites found that out one at
+        a time.
+
         The name is this program's own label for the row, not the preset's
         name on the machine: bank_pane's assemble drops it (see _recompute's
         `for bank, preset, _name`) and the written program name comes from

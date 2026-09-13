@@ -77,6 +77,11 @@ class _Lazy:
 
 # ── mpc2emu modules used elsewhere in VinSamLib, imported lazily ────────────
 models_common = _Lazy("models.common")
+# Structured conversion warnings (mpc2emu 2026-09-05). Optional: an older
+# checkout has no models/diagnostics.py, and build/convert.py degrades to
+# the previous behaviour rather than refusing to convert -- see
+# Config.check_diagnostics_support().
+diagnostics = _Lazy("models.diagnostics")
 e4b_parser = _Lazy("parsers.e4b_parser")
 e4b_writer = _Lazy("writers.e4b_writer")
 krz_parser = _Lazy("parsers.krz_parser")

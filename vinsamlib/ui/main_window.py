@@ -544,11 +544,21 @@ class MainWindow(QMainWindow):
         # risk is actually present, or a bank that lost zones would be
         # answered with advice about stereo voice cost.
         polyphony = [r for r in risks if not r.get("message")]
-        others = len(risks) - len(polyphony)
+        # Three kinds share this channel now. A `code` marks one of mpc2emu's
+        # structured diagnostics (build/convert.py's _diagnostic_risks) --
+        # something the CONVERTER changed or could not carry, which is not the
+        # same news as a bank that came out of the writer short, and counting
+        # them together would report both under whichever label was written
+        # first.
+        diags = [r for r in risks if r.get("code")]
+        lost = sum(1 for r in diags if r.get("content_lost"))
+        others = len(risks) - len(polyphony) - len(diags)
         summary = ", ".join(
             part for part in (
                 f"{len(polyphony)} preset(s) over the per-note voice limit"
                 if polyphony else "",
+                (f"{len(diags)} conversion warning(s)"
+                 + (f", {lost} losing content" if lost else "")) if diags else "",
                 f"{others} written-bank warning(s)" if others else "")
             if part)
         self.statusBar().showMessage(summary, 8000)

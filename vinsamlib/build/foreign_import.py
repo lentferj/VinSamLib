@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
+from . import convert as convert_mod
 from .convert import ConversionOptions, _apply_and_write, _run_captured
 from .sample_names import apply_sample_names, names_from_base
 from .xpm_import import XpmSummary, _preset_samples, summarize_program
@@ -381,9 +382,27 @@ def resolve_ordinal(bank, listed: list, ordinal: int) -> int:
 
     These are not the same number, and assuming they are is how a user asks
     for one preset and gets its neighbour. ``sf2_parser`` and ``gig_parser``
-    both drop an entry that yielded no zones, so a file listing 21 presets
-    can parse to 19 -- measured at 27 dropped entries across a 25-file SF2
-    sample here.
+    both drop an entry that yielded no zones, so a file listing 8 presets can
+    parse to 5.
+
+    **RARE, and an earlier number here was wrong.** This docstring used to
+    claim "27 dropped entries across a 25-file SF2 sample". Re-measured
+    2026-09-05 over the whole local library -- 446 of 474 SoundFonts parsed
+    (the rest too large to parse in one pass, or unreadable) -- the real
+    figure is **2 files and 4 entries**, which mpc2emu's independent scan of
+    504 files agrees with exactly.
+
+    The old number conflated this with TRUNCATION, which is a different
+    mechanism and two orders of magnitude more common: mpc2emu's
+    ``max_presets`` defaults to 64 for SF2 and 32 for GIG, and with that
+    default in play the same 446 files lose **900 entries across 10 files**.
+    One of them loses exactly 27, which is very likely where the old figure
+    came from. Truncation is why ``parse_foreign`` passes the listed count at
+    every call site; it is not why this function exists.
+
+    Do not re-derive either number by sampling: drops are concentrated in a
+    couple of files, so a small random sample reports either zero or a wildly
+    inflated rate. Measure the whole set and print the denominator.
 
     Two cases, and nothing in between:
 
@@ -491,7 +510,12 @@ def import_foreign(path, opts: ConversionOptions,
     accident.
     """
     p = Path(path)
-    bank = parse_foreign(p, wav_dir, max_presets=_listed_count(p))
+    # Collected around the PARSE, not just the write: mpc2emu's SoundFont
+    # parser is where SF2_ENTRIES_DROPPED and SF2_PRESETS_TRUNCATED are
+    # emitted, and a dropped entry SHIFTS every later ordinal -- the fault
+    # resolve_ordinal() exists to reconcile.
+    with convert_mod.collect_diagnostics_into(risks_out):
+        bank = parse_foreign(p, wav_dir, max_presets=_listed_count(p))
     if not bank.presets:
         raise ValueError(
             f"{p.name} holds no sampled content: nothing in it references a "

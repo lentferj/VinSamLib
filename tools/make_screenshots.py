@@ -341,8 +341,41 @@ def shot_akai_partitions(app, win) -> None:
     dlg.close()
 
 
-ALL = {"02_new_bank": shot_new_bank, "06_settings": shot_settings,
-       "12_bank_placement": shot_placement, "13_favourites": shot_favourites,
+def shot_convert_options(app, win) -> None:
+    """05_convert_options -- the dialog the README describes group by group.
+
+    Had no recipe until 2026-09-07, which is exactly how it went stale: the
+    K2000 Layer Handling group was added and the picture went on showing a
+    dialog without it. This is the third shot to be added here for that
+    reason (see 02_new_bank and 06_settings).
+
+    Shot against a KRZ target, because two of its groups are format-gated in
+    opposite directions -- Constant-Power Pan Compensation is E4B-only and
+    K2000 Layer Handling is KRZ-only -- so KRZ is the one target where both
+    are visible at once, one live and one greyed out with its reason.
+    """
+    from vinsamlib.ui.format_convert_dialog import FormatConvertDialog
+
+    dlg = FormatConvertDialog(win)
+    dlg._format_box.setCurrentText("KRZ")
+    # Expanded, because a screenshot of collapsed group headers shows the
+    # feature list and none of the content the README text is explaining.
+    for name in ("_trim_start_group", "_pan_law_group", "_resample_group",
+                 "_key_zone_group"):
+        group = getattr(dlg, name, None)
+        if group is not None:
+            group.setChecked(True)
+    dlg.adjustSize()
+    _settle(app)
+    _grab(dlg, "05_convert_options")
+    dlg.deleteLater()
+
+
+ALL = {"02_new_bank": shot_new_bank,
+       "05_convert_options": shot_convert_options,
+       "06_settings": shot_settings,
+       "12_bank_placement": shot_placement,
+       "13_favourites": shot_favourites,
        "14_akai_partitions": shot_akai_partitions}
 
 

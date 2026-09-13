@@ -235,6 +235,25 @@ class Config:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Trim silence is available"
 
+    def check_diagnostics_support(self) -> tuple[bool, str]:
+        """Structured conversion warnings need mpc2emu's models/diagnostics.py.
+
+        Optional by design, and the ONE capability whose absence must not be
+        reported to the user as a missing feature: without it a conversion
+        still runs and still produces the same file, it just cannot say what
+        it changed on the way. Everything else here gates a feature the user
+        asked for; this gates whether the program can explain itself.
+        """
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        marker = self.mpc2emu_path / "models" / "diagnostics.py"
+        if not marker.exists():
+            return False, ("this mpc2emu checkout predates structured "
+                           "diagnostics, so conversion warnings stay on its "
+                           "stdout and cannot be shown here")
+        return True, "Conversion warnings are available"
+
     def check_xpm_import_support(self) -> tuple[bool, str]:
         """XPM import (build/xpm_import.py) needs mpc2emu's own Akai XPM
         program parser specifically -- a checkout could satisfy
