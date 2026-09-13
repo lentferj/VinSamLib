@@ -107,7 +107,16 @@ def _is_ephemeral(bank_path: str) -> bool:
 
 
 def _bank_bytes(bank: Any, fmt: str) -> Optional[bytes]:
-    """The whole bank, as it would be written, so it can be carried."""
+    """The whole bank as one blob, so it can be carried inside the project.
+
+    AN AKAI VOLUME IS NOT A FILE. Its assemble() returns `[(filename, data),
+    ...]` because a volume is a SET of files, and handing that straight to
+    zipfile.writestr raised "object supporting the buffer API required" --
+    Save Project failed outright for any AKAI bank, which is most of what
+    this branch exists for. Those files are packed into a zip of their own
+    and carried as that, so one blob is still one blob and unpacking knows
+    what it has.
+    """
     from ..ui.bank_pane import _ASSEMBLE_FNS      # local: avoids a UI import cycle
     fn = _ASSEMBLE_FNS.get(fmt)
     if fn is None:
@@ -122,9 +131,21 @@ def _bank_bytes(bank: Any, fmt: str) -> Optional[bytes]:
         # An ephemeral bank's file may already be gone; re-assemble it whole
         # from the objects still in memory, which is what the user staged.
         presets = _all_presets(bank, fmt)
-        return fn([(bank, p) for p in presets]) if presets else None
+        if not presets:
+            return None
+        built = fn([(bank, p) for p in presets])
     except Exception:
         return None
+    if isinstance(built, (bytes, bytearray)):
+        return bytes(built)
+    if isinstance(built, list):
+        import io
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, data in built:
+                z.writestr(str(name), bytes(data))
+        return buf.getvalue()
+    return None
 
 
 def _all_presets(bank: Any, fmt: str) -> list:
@@ -182,6 +203,19 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
     def _bank_entry(bank: Any, fmt: str) -> dict:
         nonlocal referenced, carried
         bank_path = getattr(bank, "path", "") or ""
+        # AN AKAI VOLUME ON A DISC IMAGE is "<image>:A/NAME" -- not a file, so
+        # the test below refuses it and it was CARRIED. Safe but wasteful: a
+        # volume read off an image nobody has altered is exactly the case
+        # references exist for, and carrying it copies megabytes of audio the
+        # user already has on disc.
+        if bank_path and ":" in bank_path and not _is_ephemeral(bank_path):
+            image_str, _, volume = bank_path.rpartition(":")
+            image = Path(image_str)
+            if volume and image.is_file():
+                referenced += 1
+                return {"kind": "ref", "path": str(image.resolve()),
+                        "volume": volume, "stamp": _source_stamp(image),
+                        "format": fmt}
         src = Path(bank_path)
         if bank_path and not _is_ephemeral(bank_path) and src.is_file():
             referenced += 1
@@ -354,6 +388,23 @@ def _restore_bank(z: zipfile.ZipFile, entry: dict, rep: LoadReport):
             rep.problems.append(f"{entry.get('label')}: its audio is missing "
                                 f"from the project file.")
             return None
+        if fmt == "AKAI":
+            # Carried as a zip of the volume's files -- see _bank_bytes.
+            import io
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as inner:
+                    files = [(n, inner.read(n)) for n in inner.namelist()]
+            except zipfile.BadZipFile:
+                rep.problems.append(f"{entry.get('label')}: its carried volume "
+                                    f"could not be unpacked.")
+                return None
+            from ..banks import akai
+            try:
+                return akai.parse_volume(files, name=entry.get("label") or "volume",
+                                          path=entry.get("label") or "volume")
+            except Exception as ex:
+                rep.problems.append(f"{entry.get('label')}: {ex}")
+                return None
         return _parse_bytes(data, entry.get("label") or "converted", fmt, rep)
     src = Path(entry.get("path") or "")
     if not src.exists():
@@ -365,6 +416,23 @@ def _restore_bank(z: zipfile.ZipFile, entry: dict, rep: LoadReport):
                             f"saved — its presets were skipped rather than "
                             f"restored from a file that may not match.")
         return None
+    volume = entry.get("volume")
+    if volume:
+        # Re-open the image and take that one volume back out of it.
+        try:
+            from ..vfs.detect import open_volume
+            vol = open_volume(str(src))
+            folder = next((e for e in vol.list(None)
+                           if e.name == volume or
+                           f"{e.meta.get('partition', '')}/{e.name}" == volume), None)
+            if folder is None:
+                rep.problems.append(f"{src.name} no longer holds the volume "
+                                    f"{volume!r}.")
+                return None
+            return vol.volume_bank(folder)
+        except Exception as ex:
+            rep.problems.append(f"{src.name}:{volume}: {ex}")
+            return None
     try:
         return _parse_bytes(src.read_bytes(), str(src), fmt, rep)
     except OSError as ex:
