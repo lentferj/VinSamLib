@@ -81,14 +81,16 @@ class ConversionOptions:
     # release) -- and negated at the call site, exactly as convert.py's own
     # `-abs(args.trim_start)` does. None means the step is off.
     #
-    # keep_loops DEFAULTS ON here while mpc2emu's own CLI defaults it off,
-    # and the difference is deliberate. Their flag saves bytes; ours has to
-    # not silently change what an instrument can play. Without it the trim
-    # cuts straight through a sustain loop and discards it, so a pad stops
-    # sustaining -- and mpc2emu announces that as a plain print, which never
-    # reaches a GUI user. It cost a real volume: all five samples of one
-    # sustained pad came back unlooped, one of them 77% shorter, and nothing
-    # said so.
+    # keep_loops DEFAULTS ON. Without it the trim cuts straight through a
+    # sustain loop and discards it, so a pad stops sustaining. It cost a
+    # real volume: all five samples of one sustained pad came back unlooped,
+    # one of them 77% shorter, and nothing on screen said so.
+    #
+    # mpc2emu flipped their CLI to match the same day (their opt-in is now
+    # --trim-{start,tail}-drop-loops), so the two projects agree. We are not
+    # relying on that: the bridge calls trim_start_bank/trim_tail_bank
+    # directly and always passes drop_full_loop explicitly, so their CLI
+    # default -- and the flag rename -- cannot reach us either way.
     #
     # It is close to free, which is why this is not a real trade. keep_loops
     # does not skip the sample; it moves the cut to the loop edge and trims
