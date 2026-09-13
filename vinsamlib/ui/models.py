@@ -1006,8 +1006,13 @@ class LibraryTreeModel(QAbstractItemModel):
         be read as complete -- the same refusal _container_empty_reason makes,
         for the same reason.
         """
+        # FOLDERS ONLY. A disc image has a row in the index and its figure
+        # comes from there; summing its children overwrote a correct 396.5 MB
+        # with 0, because the rows inside it had not been filled in yet. A
+        # folder is the only container the index knows nothing about, so it
+        # is the only one whose total has to be added up.
         cur: Optional[TreeNode] = node
-        while cur is not None and cur.kind in _CONTAINER_KINDS:
+        while cur is not None and cur.kind in ("directory", "folder"):
             kids = cur.children
             if kids is None:
                 return
