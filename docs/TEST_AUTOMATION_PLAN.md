@@ -104,6 +104,29 @@ directly. Two runs were reported as evidence before this was noticed.
 4. **The image set per device**, and the listening pass — the only stage
    that wants hardware, and deliberately outside the automation.
 
+## A finding that needs a decision of its own
+
+**48 modals are raised from 8 files, 24 of them in `main_window.py`.** A
+modal reachable from anywhere is a modal no test can intercept — which is
+exactly why the Delete-on-an-AKAI-volume bug could ask "this cannot be
+undone", be answered yes, and then raise AttributeError with no test able
+to get in front of it.
+
+eosed's `manual_dialog_seam.py` measures it. Routing all 48 through one
+`vinsamlib/ui/dialogs.py` is a refactor with real regression risk and no
+reported fault behind it, so it is not something to start unasked. Until
+then the test is a **ratchet**: a new modal outside the seam fails it, and
+so does removing one without lowering the baseline.
+
+| file | raise-sites |
+|---|---|
+| `ui/main_window.py` | 24 |
+| `ui/image_pane.py` | 11 |
+| `ui/bank_pane.py` | 6 |
+| `ui/pending_pane.py` | 2 |
+| `ui/convert_options_dialog.py` | 2 |
+| three others | 1 each |
+
 ## The decision that is Jan's
 
 Tracking `tests/` puts ~100 files in the repository. Everything above
