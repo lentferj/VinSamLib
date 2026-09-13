@@ -385,8 +385,21 @@ class ImagePane(QWidget):
 
         entries: list[Entry] = []
 
+        akai_volumes = False
+
         def _walk(folder: Optional[Entry] = None) -> None:
+            nonlocal akai_volumes
             for e in vol.list(folder):
+                if e.meta.get("akai_volume"):
+                    # THE UNIT ON AN AKAI DISC IS THE VOLUME. Recursing into
+                    # it listed every .P3 and .S3 inside as though each were a
+                    # bank, so a disc holding three volumes reported "33
+                    # banks" and showed the programs of one of them. A volume
+                    # is what gets appended, renamed, deleted and loaded; its
+                    # files are its contents.
+                    entries.append(e)
+                    akai_volumes = True
+                    continue
                 if e.kind == EntryKind.FOLDER:
                     _walk(e)
                 elif e.kind == EntryKind.BANK:
@@ -395,7 +408,11 @@ class ImagePane(QWidget):
         fmt: Optional[str] = None
         try:
             _walk()
-            if entries:
+            if akai_volumes:
+                # Read off the volumes themselves; there is no first bank to
+                # sniff, and the disc said what it was before this asked.
+                fmt = "AKAI"
+            elif entries:
                 data = vol.read(entries[0])
                 if data[:4] == b"FORM" and data[8:12] == b"E4B0":
                     fmt = "E4B"
@@ -408,7 +425,13 @@ class ImagePane(QWidget):
 
         self._path = path
         self._format = fmt
-        self._appendable = isinstance(vol, WritableVolume)
+        # An AKAI disc is not a WritableVolume -- appending to one goes
+        # through mpc2emu's own image writer (build/images.append_banks), not
+        # through the VFS -- so asking the VFS made every AKAI image read as
+        # "read-only" while the Append button existed and worked.
+        self._appendable = (isinstance(vol, WritableVolume)
+                            or (akai_volumes
+                                and (known_kind or self._kind) in akai_image.AKAI_APPENDABLE))
         self._entries = entries
         # known_kind is only passed by _new_image() (which knows exactly
         # what it just built) -- a refresh after append/rename/delete calls
@@ -418,7 +441,9 @@ class ImagePane(QWidget):
             self._kind = known_kind
         self._type_label_text = _kind_label(known_kind or self._kind, vol, path, fmt)
         self._refresh()
-        self.statusMessage.emit(f"Opened {Path(path).name} ({len(entries)} bank(s))")
+        noun = "volume" if akai_volumes else "bank"
+        self.statusMessage.emit(
+            f"Opened {Path(path).name} ({len(entries)} {noun}(s))")
 
     def _new_image(self, seed_paths: Optional[list[str]] = None,
                     seed_format: Optional[str] = None,
@@ -468,7 +493,11 @@ class ImagePane(QWidget):
         except OSError:
             self._info_size_label.setText("(unknown)")
         n = len(self._entries)
-        contents = f"{n} bank{'s' if n != 1 else ''}"
+        # An AKAI disc holds VOLUMES; every other kind here holds banks. The
+        # word matters because the number changed with it: this used to count
+        # the .P3 and .S3 files inside the volumes and call them banks.
+        noun = "volume" if self._format == "AKAI" else "bank"
+        contents = f"{n} {noun}{'s' if n != 1 else ''}"
         if not self._appendable:
             contents += "  —  read-only"
         self._info_contents_label.setText(contents)
