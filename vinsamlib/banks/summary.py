@@ -503,7 +503,18 @@ def summarize_akai_program(bank: akai.AkaiBank,
                 # little large and, summed over a queue of volumes, put the
                 # Pending column visibly out of step with New Bank's meter,
                 # which measures what the sampler loads.
-                sample_sizes[z.sample_name] = max(0, samp.size - samp.header_len)
+                # SAMPLE_HEADER_BYTES (150), not header_len. They are
+                # different quantities that happen to share a number on the
+                # S1000: header_len is where the PCM starts in the record
+                # (0xC0 = 192 on an S3000), while 150 is the measured
+                # difference between a file's size and the SLNGTH the machine
+                # reports for it. The RAM figure New Bank's meter shows uses
+                # the measured one, so this must too or the two drift by 42
+                # bytes per S3000 sample. There is a note about this exact
+                # confusion beside the constant; I still reached for the
+                # wrong one.
+                sample_sizes[z.sample_name] = max(
+                    0, samp.size - akai.AkaiBank.SAMPLE_HEADER_BYTES)
             zones.append(ZoneSummary(
                 sample_name=z.sample_name,
                 lo_key=lo_key, hi_key=hi_key,
