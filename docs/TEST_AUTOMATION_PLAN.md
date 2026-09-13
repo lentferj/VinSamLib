@@ -86,6 +86,15 @@ is `in` `"1.80 MB"`.
 **A check adjacent to the thing it guarantees will pass while that thing
 is false.** `ast.parse` accepted six files that `compile()` rejects.
 
+**Test hardest the part you are most confident in.** (eosed) They wrote 21
+evasion cases for the check they had reasoned about and four for the one
+they had not — and the second produced the false positive. Every failure
+in this night's work has that shape: the carefully-keyed memo was fine
+and the loose assertion beside it was not; the pinned literal was right
+and the substring match around it was not; the perturbation was designed
+and whether it perturbed anything was assumed. **Confidence is where the
+untested reasoning is.**
+
 **Verify that a control actually removes what it claims to remove.**
 Three attempts at "run without the corpus" did not remove the corpus:
 only 3 of 88 tests read `$VINSAMLIB_CORPUS`, while 62 call `Path.home()`
