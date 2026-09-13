@@ -277,7 +277,13 @@ class ImagePane(QWidget):
         new_btn = QPushButton("New…")
         new_btn.setToolTip("Build a new, empty image. The one open here is "
                            "left untouched on disk.")
-        new_btn.clicked.connect(lambda: self._new_image())
+        # Seeded from what is OPEN. Reached from an AKAI hard disk, the
+        # dialog used to come up offering an EMU3 CD holding E4B banks and
+        # then refuse it for having no banks -- three wrong answers in a row
+        # to a question the pane could already answer.
+        new_btn.clicked.connect(
+            lambda: self._new_image(seed_format=self._format,
+                                    seed_kind=self._kind))
         row2.addWidget(new_btn)
         self._rename_btn = QPushButton("Rename…")
         self._rename_btn.clicked.connect(self._rename_selected)
@@ -501,10 +507,12 @@ class ImagePane(QWidget):
 
     def _new_image(self, seed_paths: Optional[list[str]] = None,
                     seed_format: Optional[str] = None,
-                    seed_partitions: Optional[list] = None) -> None:
+                    seed_partitions: Optional[list] = None,
+                    seed_kind: Optional[str] = None) -> None:
         dlg = _NewImageDialog(self, self._config, seed_paths=seed_paths,
                               seed_format=seed_format,
-                              seed_partitions=seed_partitions)
+                              seed_partitions=seed_partitions,
+                              seed_kind=seed_kind)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         spec = dlg.result_spec()
@@ -756,7 +764,8 @@ class _NewImageDialog(QDialog):
     def __init__(self, parent=None, config: Optional[Config] = None,
                  seed_paths: Optional[list[str]] = None,
                  seed_format: Optional[str] = None,
-                 seed_partitions: Optional[list] = None):
+                 seed_partitions: Optional[list] = None,
+                 seed_kind: Optional[str] = None):
         super().__init__(parent)
         self.setWindowTitle("New Image")
         self._config = config
@@ -770,12 +779,20 @@ class _NewImageDialog(QDialog):
 
         self._kind_box = QComboBox()
         seed_row = None
+        exact_row = None
         for row, (key, (fmt, label, _default_label)) in enumerate(images.IMAGE_KINDS.items()):
             self._kind_box.addItem(f"{label}  [{fmt}]", key)
+            # An exact kind beats a format guess. Opened from an AKAI hard
+            # disk, "AKAI hard disk" is the answer -- not merely the first
+            # kind that happens to carry AKAI banks.
+            if seed_kind is not None and key == seed_kind:
+                exact_row = row
             seed_matches = fmt == seed_format or ({fmt, seed_format} <= _EMU3_FAMILY)
             if seed_format is not None and seed_matches and seed_row is None:
                 seed_row = row   # first matching kind, e.g. E4B/EIII -> emu3_cd
-        if seed_row is not None:
+        if exact_row is not None:
+            self._kind_box.setCurrentIndex(exact_row)
+        elif seed_row is not None:
             self._kind_box.setCurrentIndex(seed_row)
         self._kind_box.currentIndexChanged.connect(self._on_kind_changed)
         form.addRow("Kind:", self._kind_box)
