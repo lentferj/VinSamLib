@@ -49,20 +49,54 @@ ARCHIVE_NAME = "debug/mpc2emu-calls.jsonl"
 MAX_RECORDS = 20_000
 MAX_OUTPUT_CHARS = 8_000
 
+#: Where the log survives a restart. Beside the index and the crash file,
+#: for the same reason: it is this program's own state, not the user's
+#: document, and it must never land in a library folder and get indexed.
+SPOOL_NAME = "mpc2emu-calls.jsonl"
+
+#: Trim the spool to this many of its most recent lines when it outgrows
+#: MAX_RECORDS. Reading and rewriting it is only done at startup and when a
+#: project is saved, so a straightforward rewrite is affordable.
+_TRIM_TO = MAX_RECORDS // 2
+
 _lock = threading.Lock()
 _records: list[dict] = []
 _enabled = False
 _truncated = False
+_spool: Optional[Path] = None
+
+
+def spool_path() -> Optional[Path]:
+    """The on-disk log, or None if recording is off and none was opened."""
+    return _spool
 
 
 def set_enabled(on: bool) -> None:
     """Turn recording on or off. Turning it ON does not clear what is
     already held: someone switching it on mid-session wants the next
     conversion recorded, and someone switching it off and on again has no
-    reason to lose the first half."""
-    global _enabled
+    reason to lose the first half.
+
+    ENABLING ALSO OPENS THE ON-DISK SPOOL, and that is not a detail. Held
+    only in memory, the log covered one process -- so a user who switched it
+    on, converted a volume, restarted, and then saved a project got a file
+    with no conversions in it. Which is precisely the case the log exists
+    for: the question "what produced this?" is asked LATER, and later is
+    usually after a restart. Reported the same evening it shipped.
+    """
+    global _enabled, _spool
     with _lock:
         _enabled = bool(on)
+        if not _enabled:
+            return
+        if _spool is None:
+            try:
+                from ..config import user_data_dir
+                _spool = Path(user_data_dir()) / SPOOL_NAME
+                _spool.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                _spool = None
+    _trim_spool()
 
 
 def is_enabled() -> bool:
@@ -70,10 +104,43 @@ def is_enabled() -> bool:
 
 
 def clear() -> None:
+    """Forget everything, in memory AND on disk.
+
+    Both, deliberately: "clear the log" from a user who is about to
+    reproduce something means start from nothing, and leaving a spool
+    behind would put a previous run's calls in their next report.
+    """
     global _truncated
     with _lock:
         _records.clear()
         _truncated = False
+        spool = _spool
+    if spool is not None:
+        try:
+            spool.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _trim_spool() -> None:
+    """Keep the spool from growing without bound across sessions."""
+    with _lock:
+        spool = _spool
+    if spool is None:
+        return
+    try:
+        if not spool.exists():
+            return
+        lines = spool.read_text(encoding="utf-8", errors="replace").splitlines()
+        if len(lines) <= MAX_RECORDS:
+            return
+        keep = lines[-_TRIM_TO:]
+        note = json.dumps({"t": time.time(), "kind": "trimmed",
+                           "note": f"older lines dropped; kept the most "
+                                   f"recent {len(keep)}"})
+        spool.write_text("\n".join([note] + keep) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def count() -> int:
@@ -132,13 +199,25 @@ def _brief(value: Any, depth: int = 0) -> Any:
 def _append(record: dict) -> None:
     global _truncated
     with _lock:
-        if len(_records) >= MAX_RECORDS:
-            if not _truncated:
-                _truncated = True
-                _records.append({"t": time.time(), "kind": "truncated",
-                                 "note": f"log stopped at {MAX_RECORDS} records"})
-            return
-        _records.append(record)
+        spool = _spool
+        if len(_records) < MAX_RECORDS:
+            _records.append(record)
+        elif not _truncated:
+            _truncated = True
+            _records.append({"t": time.time(), "kind": "truncated",
+                             "note": f"in-memory log stopped at {MAX_RECORDS} "
+                                     f"records; the spool continues"})
+    # Written as it happens, outside the lock. A call takes seconds and this
+    # takes microseconds, and appending per record rather than at exit is
+    # what makes the log survive the case it is most needed for: a session
+    # that did not get to exit cleanly.
+    if spool is not None:
+        try:
+            with open(spool, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False,
+                                    default=str) + "\n")
+        except OSError:
+            pass
 
 
 def record_call(fn: Any, args: tuple, kwargs: dict, *,
@@ -227,9 +306,22 @@ def traced(fn: Any, *args: Any, **kwargs: Any) -> Any:
 
 def as_jsonl() -> bytes:
     """The log as it is stored in a project file. Empty when nothing was
-    recorded, so callers can skip writing the member entirely."""
+    recorded, so callers can skip writing the member entirely.
+
+    Prefers the SPOOL, so a saved project carries everything recorded since
+    the switch was turned on -- not merely since this process started.
+    """
     with _lock:
+        spool = _spool
         rows = list(_records)
+    if spool is not None:
+        try:
+            if spool.exists():
+                data = spool.read_bytes()
+                if data.strip():
+                    return data
+        except OSError:
+            pass
     if not rows:
         return b""
     lines = []
@@ -244,8 +336,14 @@ def as_jsonl() -> bytes:
 
 def summary() -> Optional[str]:
     """One line for a status bar or a load report, or None if empty."""
-    with _lock:
-        rows = list(_records)
+    rows = []
+    raw = as_jsonl()
+    for line in raw.decode("utf-8", "replace").splitlines():
+        if line.strip():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                pass
     if not rows:
         return None
     calls = sum(1 for r in rows if r.get("kind") == "call")
