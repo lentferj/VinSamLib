@@ -458,8 +458,20 @@ class ExplorerPane(QWidget):
         # A row that already declared itself unimportable offers no import
         # action -- it stays visible and searchable, and says why in the
         # Detail pane, which is the whole point of showing it.
+        # MPC containers ride with the soundfont formats when more than one
+        # is selected. _import_requests() has always handled ".xpm/.xty/.xpj
+        # alike" -- its own docstring says so -- and dragging several onto
+        # New Bank already worked. Only this menu refused, on a "not
+        # supported yet" note that outlived the limitation, so re-importing
+        # ten programs meant ten trips through the dialog.
+        multi_kinds = _FOREIGN_KINDS + ("xpm", "mpc_project")
         foreigns = [n for n in nodes if n is not None
-                    and n.kind in _FOREIGN_KINDS and not n.empty_reason]
+                    and n.kind in multi_kinds and not n.empty_reason]
+        if len(foreigns) < 2:
+            # One row keeps its own wording and its own action below: an
+            # .xpm alone says 'Import "NAME"…', which is what the single
+            # case has always said and what the tests expect.
+            foreigns = [n for n in foreigns if n.kind in _FOREIGN_KINDS]
         if not presets and not xpms and not programs and not projects \
                 and not roots and not foreigns and not banks:
             return
@@ -517,9 +529,7 @@ class ExplorerPane(QWidget):
             menu.addAction(
                 f"{what} only the K2000's own ROM — nothing to convert to "
                 f"{locked}").setEnabled(False)
-        if len(xpms) == 1:
-            # Multi-XPM import isn't supported yet -- only offered for a
-            # single selected .xpm row.
+        if len(xpms) == 1 and len(foreigns) < 2:
             import_action = menu.addAction(f'Import "{xpms[0].label}"…')
         elif len(programs) == 1:
             # One keygroup program out of a project: same dialog, same
@@ -544,6 +554,8 @@ class ExplorerPane(QWidget):
                          else f'Import "{node.label}"…')
             else:
                 label = f"Import {len(foreigns)} instruments…"
+                if all(n.kind in ("xpm", "mpc_project") for n in foreigns):
+                    label = f"Import {len(foreigns)} MPC programs…"
             foreign_action = menu.addAction(label)
         fav_action = None
         if len(banks) == 1:
