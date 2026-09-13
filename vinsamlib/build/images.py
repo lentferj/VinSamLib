@@ -329,6 +329,22 @@ def _rebuild_emu3_with_extra_banks(tmp_path: str, extra_paths: list[str],
 def delete_entry(image_path: str, entry: Entry) -> None:
     """Delete one entry from an image (bank or otherwise), safely."""
     def _do(tmp_path: str) -> None:
+        # An AKAI volume is not a VFS delete. AkaiVolume is a read-only
+        # Volume -- mpc2emu owns the FAT and the root directory, and their
+        # delete_akai_volume() frees the directory and file blocks and
+        # returns the slot to INACTIVE, which is what the sampler leaves
+        # behind. Going through the VFS here is what raised 'AkaiVolume'
+        # object has no attribute 'delete' after the user had already
+        # confirmed that it could not be undone.
+        #
+        # Still inside _mutate_in_place: it works on a copy and swaps it in
+        # only on success, which is the safety the confirmation promises.
+        if entry.meta.get("akai_volume"):
+            from . import akai_image as vs_akai_image
+            vs_akai_image.delete_volume(tmp_path,
+                                        entry.meta.get("volume_name") or entry.name,
+                                        partition=entry.meta.get("partition"))
+            return
         vol = open_volume(tmp_path)
         if vol is None:
             raise ImageOpError(f"{tmp_path}: not a recognised image")

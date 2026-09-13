@@ -42,6 +42,7 @@ from ..banks import eiii
 from ..build import akai_image, images
 from ..config import Config
 from ..filenames import safe_path_component
+from ..vfs.akai import AkaiVolume
 from ..vfs.base import Entry, EntryKind, Volume, WritableVolume
 from ..vfs.detect import open_volume
 from ..vfs.emu3 import Emu3Volume
@@ -107,6 +108,22 @@ _KIND_SHORT_LABEL = {
     "k2000_fat16": "K2000 FAT16 disk",
     "k2000_iso9660": "K2000 ISO 9660 CD",
     "fat12_floppy": "FAT12 floppy",
+    # The AKAI kinds were missing, so this row read a raw "akai_hd" at the
+    # user -- the one place in the info box that is meant to be prose.
+    "akai_hd": "AKAI hard disk",
+    "akai_cd3000": "AKAI CD3000 CD",
+    "akai_floppy": "AKAI floppy",
+}
+
+
+#: What AkaiVolume.media_kind() calls the media, mapped to the image kind
+#: this pane and build/akai_image.py use. A CD3000 disc is not appendable in
+#: practice for the same reason an EMU3 CD is not, but AKAI_APPENDABLE is
+#: what decides that, not this table.
+_AKAI_MEDIA_KIND = {
+    "harddisk": "akai_hd",
+    "cdrom": "akai_cd3000",
+    "floppy": "akai_floppy",
 }
 
 
@@ -130,6 +147,8 @@ def _kind_label(kind: Optional[str], vol: Volume, path: str, fmt: Optional[str])
         return "EMU3 HD image (FAT)" if fmt in ("E4B", "EIII") else "K2000 FAT16 disk"
     if isinstance(vol, Iso9660Volume):
         return "K2000 ISO 9660 CD"
+    if isinstance(vol, AkaiVolume):
+        return "AKAI disc"
     return "Unknown"
 
 
@@ -144,6 +163,8 @@ class ImagePane(QWidget):
         self._path: Optional[str] = None
         self._format: Optional[str] = None
         self._appendable = False
+        self._mutable = False
+        self._deletable = False
         self._entries: list[Entry] = []
         self._kind: Optional[str] = None   # an images.IMAGE_KINDS key, when known
         self._type_label_text = ""
@@ -249,6 +270,15 @@ class ImagePane(QWidget):
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
+        # Start a fresh image without closing this one first. It was already
+        # possible -- Close, then New… on the empty page -- but only if you
+        # knew the empty page had a New… at all, which you cannot see from
+        # here.
+        new_btn = QPushButton("New…")
+        new_btn.setToolTip("Build a new, empty image. The one open here is "
+                           "left untouched on disk.")
+        new_btn.clicked.connect(lambda: self._new_image())
+        row2.addWidget(new_btn)
         self._rename_btn = QPushButton("Rename…")
         self._rename_btn.clicked.connect(self._rename_selected)
         row2.addWidget(self._rename_btn)
@@ -425,21 +455,45 @@ class ImagePane(QWidget):
 
         self._path = path
         self._format = fmt
-        # An AKAI disc is not a WritableVolume -- appending to one goes
-        # through mpc2emu's own image writer (build/images.append_banks), not
-        # through the VFS -- so asking the VFS made every AKAI image read as
-        # "read-only" while the Append button existed and worked.
-        self._appendable = (isinstance(vol, WritableVolume)
-                            or (akai_volumes
-                                and (known_kind or self._kind) in akai_image.AKAI_APPENDABLE))
-        self._entries = entries
-        # known_kind is only passed by _new_image() (which knows exactly
-        # what it just built) -- a refresh after append/rename/delete calls
+        # known_kind is only passed by _new_image() (which knows exactly what
+        # it just built) -- a refresh after append/rename/delete calls
         # _open_image(self._path) with no known_kind and must not clobber
         # whatever kind was already established.
+        #
+        # ASK THE VOLUME when neither knows. Opening an AKAI image off disk
+        # left _kind at None, so it showed as "Unknown" and, worse, the
+        # appendable test below compared None against AKAI_APPENDABLE and
+        # disabled the Append button on a disc that appends perfectly well.
+        # Only images built in this session could append, which is a
+        # difference nothing about the disc justifies.
         if known_kind is not None:
             self._kind = known_kind
-        self._type_label_text = _kind_label(known_kind or self._kind, vol, path, fmt)
+        elif self._kind is None and isinstance(vol, AkaiVolume):
+            self._kind = _AKAI_MEDIA_KIND.get(vol.media_kind())
+
+        # TWO capabilities, not one. Appending to an AKAI disc goes through
+        # mpc2emu's image writer; renaming and deleting go through the VFS,
+        # and AkaiVolume is a plain read-only Volume. Conflating them enabled
+        # Delete on an AKAI image, which got as far as the confirmation --
+        # "This cannot be undone" -- before failing with 'AkaiVolume' object
+        # has no attribute 'delete'. A button that asks you to confirm
+        # something irreversible had better be able to do it.
+        self._mutable = isinstance(vol, WritableVolume)
+        self._appendable = (self._mutable
+                            or (akai_volumes
+                                and self._kind in akai_image.AKAI_APPENDABLE))
+        # THREE capabilities now, because the three really do differ on an
+        # AKAI disc: append goes through mpc2emu's image writer, delete
+        # through their delete_akai_volume(), and rename through neither --
+        # they have deliberately not written it, on the grounds that they do
+        # not yet know whether the sampler cares about anything else in that
+        # 16-byte slot, and a rename that half-works is worse than a button
+        # that is off.
+        self._deletable = (self._mutable
+                           or (akai_volumes
+                               and self._kind in akai_image.AKAI_DELETABLE))
+        self._entries = entries
+        self._type_label_text = _kind_label(self._kind, vol, path, fmt)
         self._refresh()
         noun = "volume" if akai_volumes else "bank"
         self.statusMessage.emit(
@@ -470,6 +524,8 @@ class ImagePane(QWidget):
         self._path = None
         self._format = None
         self._appendable = False
+        self._mutable = False
+        self._deletable = False
         self._entries = []
         self._kind = None
         self._type_label_text = ""
@@ -502,14 +558,16 @@ class ImagePane(QWidget):
             contents += "  —  read-only"
         self._info_contents_label.setText(contents)
 
-        # rename/delete need the same WritableVolume capability as append
-        # (a plain Volume like Iso9660Volume implements neither) — a CD
-        # that's merely out of free space to *append* to can still rename
-        # or delete what's already on it, but that's a finer distinction
-        # than this UI currently bothers to surface.
         self._append_btn.setEnabled(self._appendable)
-        self._rename_btn.setEnabled(self._appendable)
-        self._delete_btn.setEnabled(self._appendable)
+        self._rename_btn.setEnabled(self._mutable)
+        self._delete_btn.setEnabled(self._deletable)
+        self._rename_btn.setToolTip(
+            "" if self._mutable else
+            ("Renaming an AKAI volume in place is not supported yet. Rebuild "
+             "the image with New… under the name you want.")
+            if self._format == "AKAI" else "This image kind is read-only.")
+        self._delete_btn.setToolTip(
+            "" if self._deletable else "This image kind is read-only.")
 
         self._list.clear()
         for e in self._entries:
@@ -528,9 +586,9 @@ class ImagePane(QWidget):
         self._list.setCurrentRow(index.row())
         menu = QMenu(self)
         rename_action = menu.addAction("Rename…")
-        rename_action.setEnabled(self._appendable)
+        rename_action.setEnabled(self._mutable)
         delete_action = menu.addAction("Delete")
-        delete_action.setEnabled(self._appendable)
+        delete_action.setEnabled(self._deletable)
         menu.addSeparator()
         export_action = menu.addAction("Export…")
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
@@ -577,6 +635,8 @@ class ImagePane(QWidget):
     # -- rename / delete / export -----------------------------------------------
 
     def _rename_selected(self) -> None:
+        if not self._mutable:
+            return
         entry = self._selected_entry()
         if entry is None:
             return
@@ -593,7 +653,7 @@ class ImagePane(QWidget):
         )
 
     def _delete_selected(self) -> None:
-        if not self._appendable:
+        if not self._deletable:
             return
         entry = self._selected_entry()
         if entry is None:
@@ -684,8 +744,8 @@ class ImagePane(QWidget):
             btn.setEnabled(enabled)
         if enabled:
             self._append_btn.setEnabled(self._appendable)
-            self._rename_btn.setEnabled(self._appendable)
-            self._delete_btn.setEnabled(self._appendable)
+            self._rename_btn.setEnabled(self._mutable)
+            self._delete_btn.setEnabled(self._deletable)
 
 
 class _NewImageDialog(QDialog):

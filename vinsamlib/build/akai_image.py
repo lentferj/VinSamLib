@@ -49,6 +49,14 @@ AKAI_IMAGE_KINDS: dict[str, tuple[str, str]] = {
 #: the trouble, which matches how fat12_floppy is treated for K2000.
 AKAI_APPENDABLE = {"akai_hd", "akai_cd3000"}
 
+#: Which media a volume can be DELETED from. mpc2emu's delete_akai_volume()
+#: guards on the partition-header magic rather than on the media, so a CD3000
+#: image ought to work too -- but "ought to" is what put an AttributeError
+#: behind a confirmation that said "this cannot be undone", so a kind only
+#: goes in here once a volume has actually been deleted from one and the
+#: neighbours checked byte-identical (tests/manual_akai_delete_volume.py).
+AKAI_DELETABLE = {"akai_hd", "akai_cd3000"}
+
 
 class AkaiWriteUnavailable(RuntimeError):
     """Raised when AKAI media writing is not available; message is safe to show."""
@@ -433,6 +441,24 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
     lines = [_describe(kind, info)]
     lines += [describe_ram_cost(n, f) for n, f in volumes]
     return "\n".join(lines)
+
+
+def delete_volume(image_path: str, volume_name: str,
+                  partition: Optional[str] = None,
+                  config: Optional[Config] = None) -> str:
+    """Delete one volume from an AKAI image, in place.
+
+    `partition` is the letter shown beside the volume in the pane. It is
+    optional to mpc2emu and we always pass it: the same volume name in two
+    partitions raises there rather than guessing, which is right, but the
+    pane already knows which one the user picked and there is no reason to
+    make them disambiguate something they were never ambiguous about.
+    """
+    ensure_available(config)
+    info = calllog.traced(akai_image.delete_akai_volume, image_path,
+                          volume_name, partition=partition)
+    letter = info.get("partition") or partition or "?"
+    return f"Deleted {letter}/{info.get('deleted', volume_name)}"
 
 
 def append_volumes(image_path: str, folders: Sequence[str],
