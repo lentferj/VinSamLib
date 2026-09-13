@@ -640,12 +640,20 @@ class BankPane(QWidget):
         that can be avoided. The walk touches no PCM, but doing it for every
         staged preset on every repaint is still work nobody asked for.
         """
-        # Keyed by the same stable identity the duplicate check uses, NOT by
-        # id(). CPython reuses an address once an object is freed, so an
-        # id-keyed memo can hand a removed preset's size to whatever lands at
-        # that address next -- a wrong number, on a pane whose whole point
-        # this week has been numbers you can trust.
-        key = _preset_key(bank, preset, self._format)
+        # _preset_key IS NOT ENOUGH ON ITS OWN HERE, and the difference cost a
+        # wrong number on screen. That key answers "is this the same source
+        # preset", which is right for the duplicate check -- and a re-import
+        # of the same .xpm with DIFFERENT Convert Options is the same source
+        # preset with different bytes. The row showed 8.1 MB for a preset the
+        # Detail pane measured at 5.1, because the first import's size was
+        # still memoised under an identical key.
+        #
+        # The bank OBJECT is what differs between those two imports, so it
+        # joins the key. id() is safe only because self._items holds a strong
+        # reference to every staged bank, which pins the address for as long
+        # as the entry can be read -- and _refresh() drops entries whose bank
+        # is no longer staged, before an address can be reused.
+        key = (id(bank),) + _preset_key(bank, preset, self._format)
         if key in self._audio_memo:
             return self._audio_memo[key]
         try:
@@ -656,12 +664,24 @@ class BankPane(QWidget):
         self._audio_memo[key] = value
         return value
 
+    def _prune_audio_memo(self) -> None:
+        """Forget sizes for banks no longer staged.
+
+        Their addresses become reusable the moment nothing references them,
+        and a reused address with a stale size is the fault this memo's key
+        exists to avoid.
+        """
+        live = {id(bank) for bank, _p, _n in self._items}
+        self._audio_memo = {k: v for k, v in self._audio_memo.items()
+                            if k and k[0] in live}
+
     def _refresh(self) -> None:
         # QListWidget.clear() doesn't reliably emit itemSelectionChanged in
         # every Qt version -- invalidate any in-flight info lookup and
         # blank the label explicitly rather than relying on that signal.
         self._info_gen += 1
         self._info_label.setText("")
+        self._prune_audio_memo()
         self._list.clear()
         for item in self._items:
             bank, preset, name = item
