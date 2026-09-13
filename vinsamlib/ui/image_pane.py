@@ -42,6 +42,7 @@ from ..banks import eiii
 from ..build import akai_image, images
 from ..config import Config
 from ..filenames import safe_path_component
+from . import dnd
 from ..vfs.akai import AkaiVolume
 from ..vfs.base import Entry, EntryKind, Volume, WritableVolume
 from ..vfs.detect import open_volume
@@ -127,6 +128,19 @@ _AKAI_MEDIA_KIND = {
 }
 
 
+#: Phrases the writers use when an image has no space left. Matched on the
+#: MESSAGE because neither mpc2emu nor build/images.py raises a distinct
+#: exception type for it, and inventing one here would only be right until
+#: the next writer was added.
+_OUT_OF_ROOM = ("no room", "not enough free", "too large", "no space",
+                "free volume slot", "does not fit", "exceeds")
+
+
+def _looks_out_of_room(message: str) -> bool:
+    low = message.lower()
+    return any(phrase in low for phrase in _OUT_OF_ROOM)
+
+
 def _kind_label(kind: Optional[str], vol: Volume, path: str, fmt: Optional[str]) -> str:
     """A short human label for the info box's Type row. `kind` is exact
     when known (this pane just built the image itself, via the New…
@@ -165,6 +179,8 @@ class ImagePane(QWidget):
         self._appendable = False
         self._mutable = False
         self._deletable = False
+        self._retry_paths: list[str] = []
+        self._retry_format: Optional[str] = None
         self._entries: list[Entry] = []
         self._kind: Optional[str] = None   # an images.IMAGE_KINDS key, when known
         self._type_label_text = ""
@@ -303,12 +319,36 @@ class ImagePane(QWidget):
 
     def dragEnterEvent(self, event) -> None:
         if self._acceptable(event.mimeData()):
+            self._said_no_to_drag = False
+            event.acceptProposedAction()
+            return
+        # SAY WHY. This pane takes FILE drops -- bank files from a file
+        # manager -- and the only drag the application itself starts carries
+        # presets, not files (ui/dnd.py, Explorer -> New Bank). Dropping one
+        # here did exactly nothing: no cursor change worth noticing, no
+        # message, no error. "Drag and drop does not work at all" is the
+        # correct report of silence, and silence was the bug.
+        if event.mimeData().hasFormat(dnd.DRAG_MIME_TYPE):
+            if not getattr(self, "_said_no_to_drag", False):
+                self._said_no_to_drag = True
+                self.statusMessage.emit(
+                    "Presets can't be dropped straight onto an image — they "
+                    "are not bank files yet. Stage them in New Bank, then "
+                    "\"Send to Image Column\" and \"Build Image →\".")
+        event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        # NOT dragEnterEvent(): this fires on every mouse move, and routing it
+        # through the explain-once path above would either spam the status bar
+        # or need the flag reset here, which is the same bug twice.
+        if self._acceptable(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
-    def dragMoveEvent(self, event) -> None:
-        self.dragEnterEvent(event)
+    def dragLeaveEvent(self, event) -> None:
+        self._said_no_to_drag = False
+        super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
         mime = event.mimeData()
@@ -508,11 +548,12 @@ class ImagePane(QWidget):
     def _new_image(self, seed_paths: Optional[list[str]] = None,
                     seed_format: Optional[str] = None,
                     seed_partitions: Optional[list] = None,
-                    seed_kind: Optional[str] = None) -> None:
+                    seed_kind: Optional[str] = None,
+                    seed_size_mb: Optional[int] = None) -> None:
         dlg = _NewImageDialog(self, self._config, seed_paths=seed_paths,
                               seed_format=seed_format,
                               seed_partitions=seed_partitions,
-                              seed_kind=seed_kind)
+                              seed_kind=seed_kind, seed_size_mb=seed_size_mb)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         spec = dlg.result_spec()
@@ -534,6 +575,8 @@ class ImagePane(QWidget):
         self._appendable = False
         self._mutable = False
         self._deletable = False
+        self._retry_paths: list[str] = []
+        self._retry_format: Optional[str] = None
         self._entries = []
         self._kind = None
         self._type_label_text = ""
@@ -634,6 +677,8 @@ class ImagePane(QWidget):
             return
         if self._format is None:
             self._format = fmt
+        self._retry_paths = list(paths)
+        self._retry_format = fmt
         self._run_confirmed_op(
             f"Appending to {image_name}…",
             workers.Worker(images.append_banks, self._path, fmt, paths),
@@ -712,6 +757,42 @@ class ImagePane(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
 
+    def _offer_bigger_image(self, reason: str) -> bool:
+        """Offer to build a new image that actually fits. True if taken."""
+        need = sum(Path(p).stat().st_size for p in self._retry_paths
+                   if Path(p).exists())
+        here = Path(self._path).stat().st_size if self._path else 0
+        # Headroom, not a tight fit: an AKAI volume costs a directory and a
+        # partition costs a header, and a disc sized to the exact byte total
+        # fails again for a few blocks. A fifth is generous and cheap -- this
+        # is an image file, not a real disc.
+        suggest = max(16, int((need * 1.2) // 1048576) + 16)
+        existing = len(self._entries)
+        keep = ("" if not existing else
+                f"\n\nThe {existing} item(s) already on "
+                f"{Path(self._path).name} are NOT carried over — the new "
+                f"image starts with just these banks. The current image is "
+                f"left untouched.")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Image Too Small")
+        box.setText(
+            f"{reason}\n\n"
+            f"{Path(self._path).name} is {here / 1048576:.0f} MB and these "
+            f"bank(s) need about {need / 1048576:.0f} MB. Build a new image "
+            f"of about {suggest} MB instead?{keep}")
+        build = box.addButton("Build Bigger Image…", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is not build:
+            return False
+        # Straight into New Image with the banks and a size already filled
+        # in, on the kind that is open.
+        self._new_image(seed_paths=list(self._retry_paths),
+                        seed_format=self._retry_format,
+                        seed_kind=self._kind, seed_size_mb=suggest)
+        return True
+
     def _run_confirmed_op(self, busy_message: str, worker: workers.Worker, on_done) -> None:
         if self._busy:
             self.statusMessage.emit("Another image operation is still running")
@@ -730,6 +811,14 @@ class ImagePane(QWidget):
             self._set_buttons_enabled(True)
             last_line = workers.last_error_line(message)
             self.statusMessage.emit(f"Failed: {last_line}")
+            # "No room" is not a bug report, it is a question: this disc is
+            # too small, do you want one that fits? Answering it with the
+            # refusal alone leaves the user to work out the arithmetic, pick
+            # a size, rebuild by hand and re-queue everything -- for a
+            # condition the pane can size exactly.
+            if _looks_out_of_room(last_line) and self._retry_paths:
+                if self._offer_bigger_image(last_line):
+                    return
             # A DIALOG, not only the status bar. Writing media is deliberate,
             # slow and asked for explicitly, and a refusal that lands in a
             # line at the bottom of the window -- which then times out -- is
@@ -765,8 +854,10 @@ class _NewImageDialog(QDialog):
                  seed_paths: Optional[list[str]] = None,
                  seed_format: Optional[str] = None,
                  seed_partitions: Optional[list] = None,
-                 seed_kind: Optional[str] = None):
+                 seed_kind: Optional[str] = None,
+                 seed_size_mb: Optional[int] = None):
         super().__init__(parent)
+        self._seed_size_mb = seed_size_mb
         self.setWindowTitle("New Image")
         self._config = config
         self._bank_paths: list[str] = list(seed_paths or [])
@@ -810,6 +901,8 @@ class _NewImageDialog(QDialog):
         self._size_spin.setSuffix(" MB")
         self._size_spin.setSpecialValueText("auto")
         self._size_spin.setValue(16)   # == minimum -> shows "auto" (size_mb=None)
+        if seed_size_mb:
+            self._size_spin.setValue(max(16, int(seed_size_mb)))
         # Same orphaned-label problem the Volume label row had: hiding the
         # FIELD leaves QFormLayout's string caption behind, so the dialog
         # showed "Size:" and "Floppy size (KB):" with nothing beside them for

@@ -44,8 +44,41 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
     seen_paths: set[str] = set()
     for root in roots:
         _scan_directory(root, db, progress, seen_paths)
+
+    # A ROOT THAT WENT QUIET HAS NOT BEEN EMPTIED.
+    #
+    # The prune below forgets every container the walk did not see, which is
+    # right for a file someone deleted and catastrophic for a library folder
+    # that merely failed to answer. One of this author's roots is an NFS
+    # share: when it is unmounted, slow, or stalls, _scan_directory() returns
+    # silently on OSError, the walk sees nothing under it, and the prune
+    # deletes all four thousand of its containers. The next start then spends
+    # minutes rebuilding them, and until it finishes a search for anything on
+    # that share answers "No matches." -- which is how this was reported,
+    # three times, as "MPC is not searchable after a restart".
+    #
+    # The rule is deliberately about EMPTINESS rather than existence: a root
+    # can be present and still unreadable, and Path.exists() on a hung NFS
+    # mount is not a question that reliably returns. A root that held
+    # containers and now yields none has gone away; a root that legitimately
+    # became empty loses its rows on the next scan, once it answers at all.
+    quiet: list[str] = []
+    for root in roots:
+        prefix = str(root).rstrip("/") + "/"
+        if any(p.startswith(prefix) or p == str(root) for p in seen_paths):
+            continue
+        had = sum(1 for p in db.all_container_paths()
+                  if p.startswith(prefix) or p == str(root))
+        if had:
+            quiet.append(str(root))
+            if progress is not None:
+                progress(f"{root} returned nothing but holds {had} indexed "
+                         f"item(s) — keeping them; it is unreachable, not empty")
+
     for path in db.all_container_paths():
         if path in seen_paths:
+            continue
+        if any(path == q or path.startswith(q.rstrip("/") + "/") for q in quiet):
             continue
         # containers whose backing file is gone (moved/deleted since last
         # scan), and MPC programs an older scan indexed before the
