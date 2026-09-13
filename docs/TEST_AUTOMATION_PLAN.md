@@ -112,7 +112,13 @@ exactly why the Delete-on-an-AKAI-volume bug could ask "this cannot be
 undone", be answered yes, and then raise AttributeError with no test able
 to get in front of it.
 
-eosed's `manual_dialog_seam.py` measures it. Routing all 48 through one
+eosed's `manual_dialog_seam.py` measures it. (The 48 is the figure from
+their pattern and from the narrowed one alike — narrowing `QDialog` out
+changed the raise-site count by exactly zero, and an earlier note here
+saying otherwise was a miscount. A base class is an `ast.Name` in
+`ClassDef.bases`, never a `Call`, so it could not have been counted; the
+false positive was in the IMPORT check, which cannot tell a modal
+imported to be raised from one imported to be subclassed.) Routing all 48 through one
 `vinsamlib/ui/dialogs.py` is a refactor with real regression risk and no
 reported fault behind it, so it is not something to start unasked. Until
 then the test is a **ratchet**: a new modal outside the seam fails it, and
