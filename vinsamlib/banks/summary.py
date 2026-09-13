@@ -497,7 +497,13 @@ def summarize_akai_program(bank: akai.AkaiBank,
         for z in kg.zones:
             samp = bank.find_sample(z.sample_name)
             if samp is not None and z.sample_name not in sample_sizes:
-                sample_sizes[z.sample_name] = samp.size
+                # AUDIO, not the file: an AKAI sample file is a header plus
+                # PCM, and every other format's figure here is the audio
+                # alone. Counting the header made an AKAI preset read a
+                # little large and, summed over a queue of volumes, put the
+                # Pending column visibly out of step with New Bank's meter,
+                # which measures what the sampler loads.
+                sample_sizes[z.sample_name] = max(0, samp.size - samp.header_len)
             zones.append(ZoneSummary(
                 sample_name=z.sample_name,
                 lo_key=lo_key, hi_key=hi_key,

@@ -430,17 +430,31 @@ class PendingBanksPane(QWidget):
         anything inside the file it came from.
         """
         by_bank: dict[int, list] = {}
+        # ACROSS the whole queued bank, not per source volume. A queued entry
+        # can draw presets from several volumes, and the assembler dedupes
+        # what it writes over the WHOLE result -- so deduping only within
+        # each source counted shared audio once per volume it appeared in,
+        # and the Pending column read 42.3 MB where New Bank's meter, which
+        # measures the assembled volume, said 30.4.
+        #
+        # Keyed on (name, size): a collision needs the same name AND the same
+        # byte count, which is what the assembler's own content-aware naming
+        # treats as one sample. Two genuinely different samples that share a
+        # name are kept apart, which is the case that would otherwise lose
+        # real audio from the figure.
+        shared: dict[tuple, int] = {}
         try:
             from ..banks import summary
             for bank, preset, _name in entry.get("items", []):
                 ps = summary.summarize_preset(bank, preset)
-                slot = by_bank.setdefault(id(bank), [bank, ps.format, {}, set()])
-                slot[2].update(ps.sample_sizes)      # name -> bytes, merged
-                slot[3].update(ps.sample_keys)       # KRZ object ids
-            total = 0
-            for bank, fmt, sizes, keys in by_bank.values():
-                total += (summary.audio_bytes_for_keys(bank, fmt, keys)
-                          if fmt == "KRZ" else sum(sizes.values()))
+                for nm, size in ps.sample_sizes.items():
+                    shared[(nm, size)] = size
+                if ps.sample_keys:
+                    slot = by_bank.setdefault(id(bank), [bank, ps.format, set()])
+                    slot[2].update(ps.sample_keys)   # KRZ: object ids, per bank
+            total = sum(shared.values())
+            for bank, fmt, keys in by_bank.values():
+                total += summary.audio_bytes_for_keys(bank, fmt, keys)
             return total
         except Exception:
             return None
