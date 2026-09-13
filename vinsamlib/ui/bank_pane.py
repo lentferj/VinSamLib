@@ -36,6 +36,7 @@ from typing import Any, Optional
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QFrame, QHBoxLayout,
+                             QInputDialog,
                              QGridLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                              QMenu,
                              QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
@@ -506,9 +507,11 @@ class BankPane(QWidget):
         for bank, preset_obj, _fmt, name in items:
             key = _preset_key(bank, preset_obj, self._format)
             if key in existing:
-                if self._prompt_on_duplicate and self._confirm_duplicate(name):
-                    self._items.append((bank, preset_obj, name))
-                    added_names.append(name)
+                chosen = (self._confirm_duplicate(name)
+                          if self._prompt_on_duplicate else None)
+                if chosen is not None:
+                    self._items.append((bank, preset_obj, chosen))
+                    added_names.append(chosen)
                     continue
                 dupe_names.append(name)
                 continue
@@ -518,12 +521,43 @@ class BankPane(QWidget):
         self._refresh()
         return added_names, dupe_names
 
-    def _confirm_duplicate(self, name: str) -> bool:
-        return QMessageBox.question(
-            self, "Duplicate Preset",
-            f'"{name}" is already in this bank. Add it again anyway?',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+    def _confirm_duplicate(self, name: str) -> Optional[str]:
+        """What to call this duplicate, or None to skip it.
+
+        THREE ANSWERS, NOT TWO. "Add anyway" used to be the only way to keep
+        a second copy, and it kept the same label -- so the bank showed two
+        identical rows and nothing said which was which, which is the state
+        the question was asked to avoid. Renaming is the answer most people
+        want and it was the one not offered.
+
+        The name is this program's own label for the row, not the preset's
+        name on the machine: bank_pane's assemble drops it (see _recompute's
+        `for bank, preset, _name`) and the written program name comes from
+        the preset itself. So renaming here cannot reach the media.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Duplicate Preset")
+        box.setText(f'"{name}" is already in this bank.')
+        rename_btn = box.addButton("Rename…", QMessageBox.ButtonRole.AcceptRole)
+        add_btn = box.addButton("Add Anyway", QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = box.addButton("Skip", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(rename_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is skip_btn:
+            return None
+        if clicked is add_btn:
+            return name
+        # Pre-filled with the name it would get anyway, so accepting the
+        # dialog unchanged still leaves the two rows distinguishable.
+        suggestion = self.unique_name(name)
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Preset", "Name for this copy:", text=suggestion)
+        if not ok:
+            return None
+        new_name = new_name.strip()
+        return new_name or suggestion
 
     # -- list management --------------------------------------------------------
 
