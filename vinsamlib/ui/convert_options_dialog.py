@@ -313,8 +313,18 @@ class ConvertOptionsDialog(QDialog):
 
         inner.addLayout(form)
 
-        keep_loops = QCheckBox("Keep loops (skip samples whose loop the trim would cut)")
-        keep_loops.setChecked(False)
+        # "skip samples whose loop the trim would cut" was wrong about what
+        # the option does, which matters now that it is on by default: it
+        # does not skip anything, it stops the cut at the loop edge and
+        # trims the rest (start_trim.py / tail_trim.py's `loop_guarded`).
+        keep_loops = QCheckBox("Keep loops (stop the cut at the loop, trim the rest)")
+        keep_loops.setChecked(True)
+        keep_loops.setToolTip(
+            "On by default. A trim that runs through a sustain loop discards "
+            "it, and a pad that loses its loop stops sustaining -- a change "
+            "in what the instrument can play, not just in how it sounds. "
+            "With this on the cut stops at the loop edge instead; samples "
+            "with no loop are trimmed exactly the same either way.")
         inner.addWidget(keep_loops)
 
         label = QLabel(help_text)

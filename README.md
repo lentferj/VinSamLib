@@ -1036,10 +1036,14 @@ removes silence only, while a lower value such as 45 dB cuts into the
 natural attack or release for a tighter sample. **Fade** is the short
 linear fade at the new cut point that keeps it click-free.
 
-By default, a sample whose loop lies in the region being cut (an
-autosampler's whole-take loop) has that loop **dropped**, leaving a clean
-one-shot. **Keep loops** instead skips the trim for those samples,
-preserving the loop at the cost of the silence.
+**Keep loops** is **on by default**, and it stops the cut at the loop
+edge rather than skipping the sample: everything past the loop is still
+trimmed, and a sample with no loop is trimmed exactly as it would be
+either way. Turning it off lets the trim run through a sustain loop and
+discard it, leaving a clean one-shot — which is what an autosampler's
+whole-take loop usually wants, and what a sustained pad definitely does
+not. A pad that loses its loop stops sustaining, so this changes what
+the instrument can play, not just how long its samples are.
 
 This is useful for MPC Auto Sampler output in particular: the MPC's own
 "Auto Trim Start" only moves a playback *marker* inside the MPC project,

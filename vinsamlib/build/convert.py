@@ -80,12 +80,28 @@ class ConversionOptions:
     # POSITIVE depth below peak (72 = "silence only", 45 = into the attack/
     # release) -- and negated at the call site, exactly as convert.py's own
     # `-abs(args.trim_start)` does. None means the step is off.
+    #
+    # keep_loops DEFAULTS ON here while mpc2emu's own CLI defaults it off,
+    # and the difference is deliberate. Their flag saves bytes; ours has to
+    # not silently change what an instrument can play. Without it the trim
+    # cuts straight through a sustain loop and discards it, so a pad stops
+    # sustaining -- and mpc2emu announces that as a plain print, which never
+    # reaches a GUI user. It cost a real volume: all five samples of one
+    # sustained pad came back unlooped, one of them 77% shorter, and nothing
+    # said so.
+    #
+    # It is close to free, which is why this is not a real trade. keep_loops
+    # does not skip the sample; it moves the cut to the loop edge and trims
+    # everything past it (start_trim.py's `cut = sample.loop_start`,
+    # tail_trim.py's `cut = sample.loop_end + 1`). An unlooped sample is
+    # trimmed exactly as before. So the default costs the tail of looped
+    # samples only, and buys back the loops.
     trim_start_db: Optional[float] = None
     trim_start_fade_ms: float = 5.0
-    trim_start_keep_loops: bool = False
+    trim_start_keep_loops: bool = True
     trim_tail_db: Optional[float] = None
     trim_tail_fade_ms: float = 5.0
-    trim_tail_keep_loops: bool = False
+    trim_tail_keep_loops: bool = True
     # Fit each preset to a memory budget by thinning it -- mpc2emu's
     # --shrink-to / --shrink-by. Exactly one of the two, or neither.
     #
