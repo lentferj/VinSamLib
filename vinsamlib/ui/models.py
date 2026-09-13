@@ -920,6 +920,7 @@ class LibraryTreeModel(QAbstractItemModel):
             return
         self._fill_in_audio_sizes(children)
         self._measure_embedded_presets(node, children)
+        self._measure_reference_audio(children)
         self.beginInsertRows(parent_index, 0, len(children) - 1)
         node.children = children
         self.endInsertRows()
@@ -1000,6 +1001,72 @@ class LibraryTreeModel(QAbstractItemModel):
             for r in rows:
                 if r.audio_bytes is None and r.label in found:
                     r.audio_bytes = found[r.label]
+
+    def _measure_reference_audio(self, children: list[TreeNode]) -> None:
+        """Work out the audio a reference-style row names, for THESE rows.
+
+        An MPC program or a TAL preset names WAVs beside it, and reading
+        their headers is what tells you what it costs. Doing that during the
+        library scan cost 42 ms a file on network storage -- twelve times
+        everything else the scan does to one -- and left MPC unsearchable for
+        minutes after every start while it ground through thousands of them.
+
+        A listing is tens of rows and only happens where someone is looking,
+        so it is done here instead, off the GUI thread, and written back to
+        the index so it is paid once.
+        """
+        if self._index_db is None:
+            return
+        from ..build import refaudio
+        todo = []
+        for n in children:
+            if n.audio_bytes is not None:
+                continue
+            path = _container_path_of(n)
+            if path and Path(path).suffix.lower() in refaudio.HANDLED:
+                todo.append((path, n))
+        if not todo:
+            return
+        pending = [p for p, _n in todo if p not in getattr(self, "_measuring", set())]
+        if not pending:
+            return
+        if not hasattr(self, "_measuring"):
+            self._measuring = set()
+        self._measuring.update(pending)
+
+        def _work():
+            return {p: refaudio.referenced_audio_bytes(p) for p in pending}
+
+        w = workers.Worker(_work)
+        w.signals.finished.connect(
+            lambda sizes, rows=list(todo): self._apply_reference_audio(rows, sizes))
+        w.signals.error.connect(
+            lambda *_a, ps=list(pending): [self._measuring.discard(p) for p in ps])
+        w.signals.finished.connect(lambda *_: self._live_workers.remove(w)
+                                   if w in self._live_workers else None)
+        w.signals.error.connect(lambda *_: self._live_workers.remove(w)
+                                if w in self._live_workers else None)
+        self._live_workers.append(w)
+        workers.run(w)
+
+    def _apply_reference_audio(self, rows: list, sizes: dict) -> None:
+        for path, total in sizes.items():
+            self._measuring.discard(path)
+            if total is None:
+                continue
+            try:
+                self._index_db.set_container_audio_by_path(path, total)
+            except Exception:
+                pass
+            for p, node in rows:
+                if p != path or node.audio_bytes is not None:
+                    continue
+                node.audio_bytes = total
+                idx = self.node_index(node)
+                if idx.isValid():
+                    self.dataChanged.emit(idx, idx)
+                if node.parent is not None:
+                    self._roll_up_audio(node.parent)
 
     def _measure_embedded_presets(self, node: TreeNode,
                                    children: list[TreeNode]) -> None:

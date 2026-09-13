@@ -196,9 +196,18 @@ def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
     kind = "mpc_project" if fmt == "XPJ" else "xpm"
     cid = db.begin_container(path, "xpm", fmt, size, mtime)
     name = Path(path).name
-    # A reference-style format: the file is metadata and its audio lives
-    # beside it, so the size just recorded is not what loading it costs.
-    audio = refaudio.referenced_audio_bytes(path)
+    # NOT MEASURED HERE. Resolving a reference-style file's samples means
+    # opening each one's header, and on network storage that is 42 ms per
+    # program against 3.6 ms for everything else this scan does to it --
+    # twelve times the cost of the scan itself, and 2.8 minutes of pure
+    # header reads for one folder of 4 033 MPC programs. The library stayed
+    # unsearchable for that whole window after every start.
+    #
+    # So it is left NULL and worked out when rows are listed, the same way
+    # SF2 and GIG presets are (ui/models._measure_reference_audio). A listing
+    # is tens of rows, not thousands, and it only happens where someone is
+    # looking.
+    audio = None
     item_id = db.add_item(cid, None, kind, name, native_id=name, format=fmt,
                            size=size, ordinal=0, audio_bytes=audio)
     if audio is not None:
@@ -245,9 +254,18 @@ def _scan_foreign_container(path: str, size: int, db: IndexDB, progress: Progres
     kind = "foreign_bank" if verdict.container else "foreign_preset"
     cid = db.begin_container(path, "foreign", fmt, size, mtime)
     name = Path(path).name
-    # None for SF2 and GIG, which embed their audio -- their file size is
-    # already the honest figure and must not be replaced.
-    audio = refaudio.referenced_audio_bytes(path)
+    # NOT MEASURED HERE. Resolving a reference-style file's samples means
+    # opening each one's header, and on network storage that is 42 ms per
+    # program against 3.6 ms for everything else this scan does to it --
+    # twelve times the cost of the scan itself, and 2.8 minutes of pure
+    # header reads for one folder of 4 033 MPC programs. The library stayed
+    # unsearchable for that whole window after every start.
+    #
+    # So it is left NULL and worked out when rows are listed, the same way
+    # SF2 and GIG presets are (ui/models._measure_reference_audio). A listing
+    # is tens of rows, not thousands, and it only happens where someone is
+    # looking.
+    audio = None
     item_id = db.add_item(cid, None, kind, name, native_id=name, format=fmt,
                           size=size, ordinal=0, audio_bytes=audio)
     if audio is not None:
