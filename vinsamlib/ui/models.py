@@ -903,12 +903,14 @@ class LibraryTreeModel(QAbstractItemModel):
             if idx.isValid():
                 self.dataChanged.emit(idx, idx)
             self._roll_up_emptiness(node)
+            self._roll_up_audio(node)
             return
         self._fill_in_audio_sizes(children)
         self.beginInsertRows(parent_index, 0, len(children) - 1)
         node.children = children
         self.endInsertRows()
         self._roll_up_emptiness(node)
+        self._roll_up_audio(node)
 
     #: Row kinds that ARE an indexed container, so the scan's recorded audio
     #: total is theirs. A preset row computes its own at expand time and a
@@ -943,15 +945,95 @@ class LibraryTreeModel(QAbstractItemModel):
             path = _container_path_of(n)
             if path:
                 wanted.setdefault(path, []).append(n)
-        if not wanted:
-            return
-        try:
-            found = self._index_db.audio_bytes_for_paths(list(wanted))
-        except Exception:
-            return          # a stale or busy index must not break a listing
-        for path, total in found.items():
-            for n in wanted.get(path, ()):
-                n.audio_bytes = total
+        if wanted:
+            try:
+                found = self._index_db.audio_bytes_for_paths(list(wanted))
+            except Exception:
+                found = {}   # a stale or busy index must not break a listing
+            for path, total in found.items():
+                for n in wanted.get(path, ()):
+                    n.audio_bytes = total
+        self._fill_in_item_audio(children)
+
+    def _fill_in_item_audio(self, children: list[TreeNode]) -> None:
+        """Rows INSIDE a disc image, whose figure is on an item row.
+
+        A bank or an AKAI volume on an image is not a container of its own --
+        the image is -- so the path lookup above cannot answer for it. That is
+        exactly how an AKAI volume came to show no size while every program
+        beneath it showed one: the figure was recorded and nothing read it.
+
+        The container is the image the rows were listed out of, which is the
+        volume they share; the row's own name is what the scan filed it under.
+        """
+        by_image: dict[str, list[TreeNode]] = {}
+        for n in children:
+            if n.kind not in ("bank", "folder"):
+                continue
+            payload = n.payload
+            if not (isinstance(payload, tuple) and len(payload) == 2):
+                continue
+            vol_path = getattr(payload[0], "path", None)
+            if not vol_path or Path(str(vol_path)).is_dir():
+                continue     # a plain folder listing, already handled above
+            by_image.setdefault(str(vol_path), []).append(n)
+        for image_path, rows in by_image.items():
+            names = [r.label for r in rows]
+            try:
+                found = self._index_db.audio_bytes_for_items(image_path, names)
+            except Exception:
+                continue
+            for r in rows:
+                if r.audio_bytes is None and r.label in found:
+                    r.audio_bytes = found[r.label]
+
+    def _roll_up_audio(self, node: TreeNode) -> None:
+        """Give a FOLDER the total of what it holds, and carry that upward.
+
+        A folder has no row in the index -- only the files inside it do -- so
+        its figure has to be added up from its children. Jan's report: an
+        image showed a size and so did the programs on it, but the folder
+        above and the volume between them showed nothing, which reads as the
+        feature being half-finished rather than as three different lookups.
+
+        WHAT IS SUMMED is the number each child ROW ITSELF SHOWS: its audio
+        where that is known, and its file size otherwise. For SF2 and GIG,
+        which embed their samples, the file size IS essentially the audio, so
+        this stays honest rather than mixing two quantities.
+
+        ONLY WHEN EVERYTHING BELOW IS KNOWN. A child folder that has not been
+        opened could hold anything, and a total that silently omits it would
+        be read as complete -- the same refusal _container_empty_reason makes,
+        for the same reason.
+        """
+        cur: Optional[TreeNode] = node
+        while cur is not None and cur.kind in _CONTAINER_KINDS:
+            kids = cur.children
+            if kids is None:
+                return
+            total = 0
+            for k in kids:
+                value = k.audio_bytes if k.audio_bytes is not None else k.size
+                if value:
+                    total += value
+                    continue
+                # Unknown ONLY when the row has no figure of its own AND has
+                # not been opened. A disc image knows its own total from the
+                # scan whether or not anyone has expanded it, and treating it
+                # as unknown because its children are unread kept every folder
+                # above it blank until each image had been opened by hand --
+                # which is exactly the half-finished look this fixes.
+                if k.kind in _CONTAINER_KINDS and k.children is None:
+                    return
+                if value is None:
+                    return
+            if cur.audio_bytes == total:
+                return                          # nothing new to carry upward
+            cur.audio_bytes = total
+            idx = self.node_index(cur)
+            if idx.isValid():
+                self.dataChanged.emit(idx, idx)
+            cur = cur.parent
 
     def _roll_up_emptiness(self, node: TreeNode) -> None:
         """Grey a folder whose whole READ subtree holds nothing to import,

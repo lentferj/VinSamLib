@@ -275,6 +275,34 @@ class IndexDB:
                 out[path] = total
         return out
 
+    def audio_bytes_for_items(self, container_path: str,
+                              names: list[str]) -> dict[str, int]:
+        """Recorded totals for rows INSIDE a container, keyed by native id.
+
+        A bank on a disc image is not a container of its own -- the image is
+        -- so audio_bytes_for_paths() cannot answer for it. That is why an
+        AKAI volume on an ISO showed no size while the programs beneath it
+        showed theirs: the figure was recorded, on the item row, and nothing
+        was reading item rows.
+        """
+        if not names:
+            return {}
+        row = self._conn.execute(
+            "SELECT id FROM container WHERE path = ?", (container_path,)).fetchone()
+        if row is None:
+            return {}
+        out: dict[str, int] = {}
+        for i in range(0, len(names), 500):
+            chunk = names[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            for native_id, total in self._conn.execute(
+                    f"SELECT native_id, audio_bytes FROM item "
+                    f"WHERE container_id = ? AND native_id IN ({marks}) "
+                    f"AND audio_bytes IS NOT NULL",
+                    [row[0]] + chunk):
+                out[native_id] = total
+        return out
+
     def search(self, query: str, limit: int = 200) -> list[SearchResult]:
         query = query.strip()
         if not query:
