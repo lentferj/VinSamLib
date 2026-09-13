@@ -25,10 +25,12 @@ import io
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import akai_image
+from . import calllog
 from ..filenames import safe_path_component
 from ..mpc2emu_bridge import fat12, hda_builder, iso_builder
 from ..vfs.base import Entry, EntryKind
@@ -78,12 +80,29 @@ class ImageOpError(RuntimeError):
 
 
 def _run_captured(fn: Callable, *args, **kwargs) -> tuple[Any, str]:
+    # Recorded into the debug call log for the same reason convert.py's
+    # namesake is: writing an image is the far end of the same path, and a
+    # log that stopped at the importer would answer "how was this bank made"
+    # but not "how did it get onto the disc" -- which is where the object
+    # budget, the partition layout and the volume naming are decided.
+    #
+    # Unlike convert.py's, this one hands its captured log back to the
+    # caller, which already shows it. Recording it as well is not redundant:
+    # that copy is shown once and discarded, and the question this log
+    # answers is always asked later.
     buf = io.StringIO()
+    started = time.monotonic()
     try:
         with contextlib.redirect_stdout(buf):
             result = fn(*args, **kwargs)
     except Exception as ex:
+        calllog.record_call(fn, args, kwargs, ok=False,
+                            seconds=time.monotonic() - started,
+                            output=buf.getvalue(), error=str(ex))
         raise ImageOpError(f"{buf.getvalue()}\n\n{ex}".strip()) from ex
+    calllog.record_call(fn, args, kwargs, ok=True,
+                        seconds=time.monotonic() - started,
+                        output=buf.getvalue())
     return result, buf.getvalue()
 
 

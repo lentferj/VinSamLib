@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from . import calllog
+
 FORMAT = "vinsamlib-project"
 #: 1: New Bank + Pending, references and carried blobs.
 VERSION = 1
@@ -67,6 +69,9 @@ class LoadReport:
     #: One sentence per thing that could not be restored. Shown to the user;
     #: an empty list means everything came back.
     problems: list = field(default_factory=list)
+    #: How many mpc2emu calls the project's debug log holds, 0 if it has
+    #: none. Not loaded into the live log -- see load().
+    call_log_lines: int = 0
 
 
 def _source_stamp(path: Path) -> dict:
@@ -323,14 +328,21 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
     # Written to a side file and moved into place: a project half-written over
     # the previous one is worse than no save at all, and this is the file the
     # user's unsaved work is being trusted to.
+    # The debug call log, when one was being kept. Written last and only if
+    # non-empty, so a project saved with the switch off is byte-for-byte the
+    # file it was before this existed.
+    call_log = calllog.as_jsonl()
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("project.json", json.dumps(manifest, indent=1))
         for digest, data in blobs.items():
             z.writestr(f"blobs/{digest}", data)
+        if call_log:
+            z.writestr(calllog.ARCHIVE_NAME, call_log)
     tmp.replace(out)
     mb = out.stat().st_size / 1024 / 1024
+    note = f", {calllog.summary()}" if call_log else ""
     return (f"Saved {out.name}: {referenced} referenced, {carried} carried, "
-            f"{mb:.1f} MB")
+            f"{mb:.1f} MB{note}")
 
 
 def _opts_json(opts) -> Optional[dict]:
@@ -362,6 +374,13 @@ def load(path: str) -> LoadReport:
     """
     rep = LoadReport()
     with zipfile.ZipFile(path) as z:
+        if calllog.ARCHIVE_NAME in z.namelist():
+            # NOT replayed into the live log -- this is a record of what some
+            # other run did, and merging it with what THIS session is doing
+            # would make both unreadable. Reported so the user knows it is
+            # there, and left in the archive to be read with any zip tool.
+            rep.call_log_lines = sum(
+                1 for _ in z.read(calllog.ARCHIVE_NAME).splitlines() if _)
         manifest = json.loads(z.read("project.json"))
         if manifest.get("format") != FORMAT:
             raise ValueError(f"{Path(path).name} is not a VinSamLib project.")

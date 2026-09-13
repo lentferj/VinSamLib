@@ -34,9 +34,12 @@ import io
 import math
 import re
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+from . import calllog
 
 from .. import tempdirs
 from ..filenames import safe_filename
@@ -171,12 +174,30 @@ def _run_captured(fn: Callable, *args, **kwargs) -> Any:
     # order reversed, mpc2emu refusing a MIDI program with a written-out
     # sentence surfaced as "Parsing XPM: /some/path" -- its last progress
     # line -- and the actual reason was never shown to anyone.
+    #
+    # This is also where the debug call log is taken from, and the reason it
+    # is taken HERE rather than at each of the twenty-odd call sites: every
+    # mpc2emu call on the conversion side already funnels through this one
+    # function, so a site added later is recorded without anyone remembering
+    # to. calllog is off by default and checks a flag before formatting
+    # anything, so the disabled path costs an attribute read.
     buf = io.StringIO()
+    started = time.monotonic()
     try:
         with contextlib.redirect_stdout(buf):
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
     except Exception as ex:
+        calllog.record_call(fn, args, kwargs, ok=False,
+                            seconds=time.monotonic() - started,
+                            output=buf.getvalue(), error=str(ex))
         raise ConvertOpError(f"{buf.getvalue()}\n\n{ex}".strip()) from ex
+    # The SUCCESS path is the one worth having. Everything mpc2emu printed
+    # while working is discarded from here on -- that is what lost a pad its
+    # loops with nothing on screen to say so.
+    calllog.record_call(fn, args, kwargs, ok=True,
+                        seconds=time.monotonic() - started,
+                        output=buf.getvalue())
+    return result
 
 
 def _apply_max_sample_rate(bank: Any, hz: int) -> None:
@@ -613,6 +634,14 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
     eight processors and the writer emitted, where a per-call return value
     would be eight plumbing sites to keep in step.
     """
+    # The RESOLVED options, once per conversion, ahead of the calls they
+    # produce. This is the record that would have answered the question that
+    # started the log: the individual calls below show what each processor
+    # was handed, but only this shows the whole set as it stood after
+    # defaults were applied -- which is the thing nobody can reconstruct
+    # afterwards from the output.
+    calllog.note("conversion", source=getattr(bank, "path", ""),
+                 out_stem=out_stem, options=opts)
     with collect_diagnostics_into(risks_out):
         return _apply_and_write_pipeline(bank, opts, out_stem, risks_out)
 

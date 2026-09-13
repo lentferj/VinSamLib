@@ -14,10 +14,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
                              QVBoxLayout)
 
+from ..build import calllog
 from ..config import Config
 
 
@@ -85,6 +86,11 @@ class SettingsDialog(QDialog):
         self._autosave_spin.setSpecialValueText("off")
         self._autosave_spin.setValue(config.autosave_seconds)
         limits_form.addRow("Autosave staged work every:", self._autosave_spin)
+        self._debug_log_check = QCheckBox(
+            "Record every mpc2emu call in the project file")
+        self._debug_log_check.setChecked(bool(
+            getattr(config, "debug_mpc2emu_log", False)))
+        limits_form.addRow("Diagnostics:", self._debug_log_check)
         layout.addLayout(limits_form)
         pram_hint = QLabel(
             "A K2000 keeps programs, keymaps and sample headers in PRAM, "
@@ -122,6 +128,18 @@ class SettingsDialog(QDialog):
         autosave_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         autosave_hint.setWordWrap(True)
         layout.addWidget(autosave_hint)
+        debug_hint = QLabel(
+            "Off by default. With it on, every call into mpc2emu \u2014 import, "
+            "conversion, bank writer and image writer \u2014 is recorded with "
+            "the resolved options it ran with and everything it printed, and "
+            "the log is saved inside the project file. A converted bank "
+            "otherwise carries no account of what produced it, which is only "
+            "a problem the day something in it needs explaining. It makes "
+            "project files larger, and they will contain the paths your "
+            "sources came from \u2014 worth knowing before sending one on.")
+        debug_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        debug_hint.setWordWrap(True)
+        layout.addWidget(debug_hint)
         limits_hint = QLabel(
             "A soft warning in New Bank once a bank exceeds this size — the "
             "most common real RAM configuration, not the format's absolute "
@@ -176,7 +194,9 @@ class SettingsDialog(QDialog):
                            or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb
                            or self._krz_pram_spin.value() != self._config.krz_pram_kb
                            or self._akai_obj_spin.value() != self._config.akai_max_objects
-                           or self._autosave_spin.value() != self._config.autosave_seconds)
+                           or self._autosave_spin.value() != self._config.autosave_seconds
+                           or self._debug_log_check.isChecked()
+                              != bool(getattr(self._config, "debug_mpc2emu_log", False)))
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
@@ -186,6 +206,10 @@ class SettingsDialog(QDialog):
             self._config.krz_pram_kb = self._krz_pram_spin.value()
             self._config.akai_max_objects = self._akai_obj_spin.value()
             self._config.autosave_seconds = self._autosave_spin.value()
+            self._config.debug_mpc2emu_log = self._debug_log_check.isChecked()
+            # Applied immediately, not at the next restart: someone ticking
+            # this box is about to reproduce something.
+            calllog.set_enabled(self._config.debug_mpc2emu_log)
         if path_changed or limits_changed:
             self._config.save()
         super().accept()

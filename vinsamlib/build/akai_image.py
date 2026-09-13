@@ -35,6 +35,7 @@ from typing import Optional, Sequence
 
 from ..banks import akai as vs_akai
 from ..config import Config
+from . import calllog
 from ..mpc2emu_bridge import akai_image
 
 #: kind -> (human label, default volume label, builder keyword)
@@ -237,8 +238,8 @@ def plan_partitions(volumes: Sequence[tuple], kind: str = "akai_hd",
         akai_image.PART_MAX_BLOCKS,
         max(sys_blocks + akai_image.VOLDIR_HD_BLKS,
             (part_mb * 1048576) // akai_image.HD_BLOCK))
-    return akai_image._plan_partitions(list(volumes), part_blocks,
-                                       sys_blocks=sys_blocks)
+    return calllog.traced(akai_image._plan_partitions, list(volumes),
+                          part_blocks, sys_blocks=sys_blocks)
 
 
 def describe_partition_groups(volumes: Sequence[tuple], groups: Sequence[Sequence[int]],
@@ -372,7 +373,8 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
                 f"a floppy holds exactly one volume; {len(volumes)} were given. "
                 f"Build a hard disk or CD-ROM image instead.")
         name, files = volumes[0]
-        info = akai_image.build_akai_floppy_image(
+        info = calllog.traced(
+            akai_image.build_akai_floppy_image,
             files, output_path, volume_name=volume_label or name, density="hd")
     else:
         # `partitions` is index lists into `volumes` (mpc2emu fdc7e39), and
@@ -405,7 +407,8 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
                 seen += len(part)
         kwargs = {"partitions": groups} if groups else {}
         try:
-            info = akai_image.build_akai_hd_image(
+            info = calllog.traced(
+                akai_image.build_akai_hd_image,
                 volumes, output_path, size_mb=size_mb,
                 cdrom=(kind == "akai_cd3000"),
                 # Only the CD3000 has a disc-level label. A hard disk has no
@@ -442,8 +445,8 @@ def append_volumes(image_path: str, folders: Sequence[str],
     other builder."""
     ensure_available(config)
     volumes = [volume_from_folder(f) for f in folders]
-    info = akai_image.append_akai_volumes(image_path, volumes,
-                                           on_duplicate=on_duplicate)
+    info = calllog.traced(akai_image.append_akai_volumes, image_path,
+                          volumes, on_duplicate=on_duplicate)
     return len(volumes), _describe("akai_hd", info)
 
 

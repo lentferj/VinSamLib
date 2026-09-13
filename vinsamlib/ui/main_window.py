@@ -36,6 +36,7 @@ from . import models
 from .favourites_dialog import FavouritesDialog
 from .settings_dialog import SettingsDialog
 from ..banks import e4b, eiii, krz
+from ..build import calllog
 from ..build import convert, foreign_import, sampledir_import, xpm_import
 from ..build import project
 from ..config import Config, user_data_dir
@@ -188,6 +189,14 @@ class MainWindow(QMainWindow):
         """
         self._offer_recovery()
         self._start_autosave()
+        # Armed from the stored setting rather than at import time, so the
+        # switch survives a restart -- which is the whole point of it being
+        # in config.toml: a problem worth recording is rarely reproduced in
+        # the same session it was noticed in.
+        calllog.set_enabled(bool(getattr(self._config, "debug_mpc2emu_log", False)))
+        if calllog.is_enabled():
+            self.statusBar().showMessage(
+                "Debug: recording mpc2emu calls into saved projects", 8000)
 
     def closeEvent(self, event) -> None:
         # Give in-flight background workers (tree fetches, a scan) a bounded
@@ -1315,6 +1324,12 @@ class MainWindow(QMainWindow):
             self._explorer.restore_view_state(rep.explorer)
         loaded = (f"Loaded {Path(path).name}: {len(rep.banks)} preset(s) in "
                   f"New Bank, {len(rep.pending)} bank(s) pending")
+        if getattr(rep, "call_log_lines", 0):
+            # Worth saying out loud: someone who turned the switch on to
+            # capture a problem needs to know the capture is in the file
+            # they just opened, and the file is where they will look.
+            loaded += (f" — carries a debug log of "
+                       f"{rep.call_log_lines} mpc2emu call(s)")
         self.statusBar().showMessage(loaded, 10000)
         if rep.problems:
             # Never a silent partial load: what did not come back is the half

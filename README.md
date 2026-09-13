@@ -1737,6 +1737,30 @@ for setups and effects, matching mpc2emu's own `--pram` default. Set
 same over-limit dialog as the size threshold. Measured on hardware
 2026-08-10; a bank that overruns PRAM does not report anything.
 
+**Record every mpc2emu call in the project file** — a diagnostic switch,
+**off by default**. With it on, every call into mpc2emu is recorded: the
+importers and parsers, each processor in the conversion pipeline, the
+bank writers, and the image writers — with the **resolved** options it
+ran with (after defaults, which is the part nobody can reconstruct
+afterwards) and everything it printed while working. The log is written
+into the project file as `debug/mpc2emu-calls.jsonl`, one JSON object per
+line, and Load Project tells you when the file you opened carries one.
+
+It exists because a converted bank otherwise carries no account of what
+produced it. That gap is only a problem on the day something in a bank
+needs explaining — and on that day it is not recoverable by any amount of
+thinking. A real case: an Akai volume turned up with the sustain loop
+stripped from every sample of a pad and one sample 77% shorter, and
+nothing on either side could say which options had done it.
+
+Two things worth knowing before you turn it on. It makes project files
+larger, and the log contains **the paths your source files came from** —
+so glance at it before sending a project to anyone else. Nothing in it is
+audio: banks and samples are recorded as a one-line description, never
+dumped. Takes effect immediately on OK, and survives a restart, since a
+problem worth recording is rarely reproduced in the session it was
+noticed in.
+
 ### Keyboard Shortcuts
 
 **Delete** removes the current selection wherever a "Remove"-style

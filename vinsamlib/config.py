@@ -90,6 +90,14 @@ class Config:
     #: it. Sixty is a compromise: an autosave that carries converted banks
     #: writes real megabytes, and doing that every few seconds would be felt.
     autosave_seconds: int = 60
+    #: Record every mpc2emu call -- what was invoked, with which resolved
+    #: options, and everything it printed -- into the project file. OFF by
+    #: default: it is a diagnostic aid, not a feature, and it makes project
+    #: files bigger and more revealing (they carry source paths).
+    #:
+    #: It exists because a converted bank otherwise carries no account of
+    #: what produced it. That gap was not theoretical -- see build/calllog.py.
+    debug_mpc2emu_log: bool = False
     # Main-window size, remembered on close. None until the first quit, so a
     # fresh install still gets the built-in default rather than a 0x0 window.
     # Size only, deliberately not position: a window restored onto a monitor
@@ -123,6 +131,8 @@ class Config:
         krz_pram_kb = data.get("krz_pram_kb", defaults.krz_pram_kb)
         akai_max_objects = data.get("akai_max_objects", defaults.akai_max_objects)
         autosave_seconds = data.get("autosave_seconds", defaults.autosave_seconds)
+        debug_mpc2emu_log = bool(data.get("debug_mpc2emu_log",
+                                          defaults.debug_mpc2emu_log))
         return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
                     last_image_dir=last_image_dir, last_library_dir=last_library_dir,
                     last_sample_dir=last_sample_dir, last_program_dir=last_program_dir,
@@ -130,6 +140,7 @@ class Config:
                     krz_pram_kb=krz_pram_kb,
                     akai_max_objects=akai_max_objects,
                     autosave_seconds=autosave_seconds,
+                    debug_mpc2emu_log=debug_mpc2emu_log,
                     window_width=data.get("window_width"),
                     window_height=data.get("window_height"))
 
@@ -173,6 +184,7 @@ class Config:
         lines.append(f"krz_pram_kb = {self.krz_pram_kb}")
         lines.append(f"akai_max_objects = {self.akai_max_objects}")
         lines.append(f"autosave_seconds = {self.autosave_seconds}")
+        lines.append(f"debug_mpc2emu_log = {str(bool(self.debug_mpc2emu_log)).lower()}")
         if self.window_width and self.window_height:
             lines.append(f"window_width = {int(self.window_width)}")
             lines.append(f"window_height = {int(self.window_height)}")

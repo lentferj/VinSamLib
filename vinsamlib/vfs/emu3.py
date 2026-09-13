@@ -347,8 +347,11 @@ class Emu3Volume(WritableVolume):
     def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
         """Delegates to mpc2emu's proven allocator rather than
         reimplementing cluster/slot allocation here."""
+        # Imported here, not at module scope: vfs is imported by the tree
+        # model on startup and build/ pulls in the whole mpc2emu bridge.
+        from ..build import calllog
         from ..mpc2emu_bridge import iso_builder
         self._fat = None            # the allocator rewrites the FAT
         folder_name = folder.ref["name"].strip() if folder is not None else None
-        return iso_builder.emu_hdd_append(self.path, files, folder=folder_name,
-                                            on_duplicate="add-new")
+        return calllog.traced(iso_builder.emu_hdd_append, self.path, files,
+                              folder=folder_name, on_duplicate="add-new")
