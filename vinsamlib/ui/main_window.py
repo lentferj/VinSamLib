@@ -28,7 +28,7 @@ from .bank_pane import BankPane
 from .explorer_pane import ExplorerPane
 from .format_convert_dialog import FormatConvertDialog
 from .image_pane import ImagePane
-from .models import LibraryTreeModel
+from .models import LibraryTreeModel, human_size
 from .pending_pane import PendingBanksPane
 from .samples_pane import SamplesPane
 from .sampledir_import_dialog import SampleDirImportDialog
@@ -450,6 +450,7 @@ class MainWindow(QMainWindow):
             bank_loader=lambda: xpm_import.load_samples_for_test(
                 path, None, preset_index),
             source_text=path)
+        opts = self._with_pending_shrink(opts)
         if opts is None:
             return
         self.statusBar().showMessage(f"Importing {Path(path).name}…")
@@ -572,7 +573,77 @@ class MainWindow(QMainWindow):
                 "To fix, re-import with Convert Options' \"Reduce Velocity "
                 "Layers\", or pick a Stereo Samples method other than Keep "
                 "Stereo to halve every stereo zone's cost.")
-        QMessageBox.warning(self, title, detail)
+        self._show_risk_box(title, detail, risks)
+
+    #: mpc2emu's "you asked for a size I cannot reach by thinning". It carries
+    #: the size it COULD reach, which is the whole reason this gets a button
+    #: of its own rather than a paragraph: the fix is one number.
+    _SHRINK_UNREACHABLE = "SHRINK_TARGET_UNREACHABLE"
+
+    def _with_pending_shrink(self, opts):
+        """Apply a target the user raised from the warning box, once.
+
+        The re-import goes through the ordinary dialog -- same route, same
+        options as before -- and this is the one value that has to come from
+        the button instead. Consumed on use, so a later import the user
+        starts themselves is not quietly re-targeted.
+        """
+        target = getattr(self, "_pending_shrink_target", None)
+        if target is None or opts is None:
+            return opts
+        self._pending_shrink_target = None
+        from dataclasses import replace
+        try:
+            return replace(opts, shrink_to_bytes=int(target), shrink_by_pct=None)
+        except TypeError:
+            return opts
+
+    def _show_risk_box(self, title: str, detail: str, risks: list) -> None:
+        """The warning box, plus a way out where the record supplies one.
+
+        Most diagnostics can only be reported: the user decides whether they
+        care. SHRINK_TARGET_UNREACHABLE is different -- it says the target
+        could not be met AND publishes the smallest size that could, so the
+        obvious next step is a single number this program already knows. It
+        offers that as a button rather than as a sentence asking the user to
+        retype it.
+        """
+        reachable = [r for r in risks
+                     if r.get("code") == self._SHRINK_UNREACHABLE
+                     and isinstance(r.get("detail"), dict)
+                     and r["detail"].get("reached_bytes")]
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        box.setText(detail)
+        raise_btn = None
+        if reachable and getattr(self, "_last_import", None) is not None:
+            # The biggest of them: raising to the largest unreachable floor is
+            # the only single target that clears every preset in the bank.
+            target = max(int(r["detail"]["reached_bytes"]) for r in reachable)
+            raise_btn = box.addButton(
+                f"Raise target to {human_size(target)} and re-import",
+                QMessageBox.ButtonRole.ActionRole)
+            box.setDefaultButton(raise_btn)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.exec()
+        if raise_btn is not None and box.clickedButton() is raise_btn:
+            self._retry_with_shrink_target(target)
+
+    def _retry_with_shrink_target(self, target_bytes: int) -> None:
+        """Re-run the last import with the shrink target raised.
+
+        The presets that came out of the failed attempt are left alone rather
+        than removed: they were thinned as far as thinning goes, which may
+        well be what the user wants to keep. This adds the corrected import
+        beside them, and New Bank's duplicate prompt is what decides -- the
+        same question it asks any other time the same thing arrives twice.
+        """
+        self._pending_shrink_target = int(target_bytes)
+        again = getattr(self, "_last_import", None)
+        if again is None:
+            return
+        again()
 
     def _on_xpm_import_error(self, message: str) -> None:
         last_line = workers.last_error_line(message)
@@ -837,6 +908,7 @@ class MainWindow(QMainWindow):
                 if self._is_mpc_request(r)
                 else foreign_import.load_samples_for_test(r["path"], r.get("ordinal"))),
             source_text=source_text)
+        opts = self._with_pending_shrink(opts)
         if opts is None:
             return
         self._import_queue = list(requests)
@@ -971,6 +1043,7 @@ class MainWindow(QMainWindow):
             bank_loader=lambda: convert.load_sources_samples_for_test(
                 sources, source_fmt or "E4B"),
             source_text=source_text)
+        opts = self._with_pending_shrink(opts)
         if opts is None:
             return
         self._preset_convert_queue = list(nodes)
