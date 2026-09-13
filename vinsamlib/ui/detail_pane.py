@@ -20,8 +20,18 @@ class DetailPane(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
+        # Flush with the tree above it. Both sit in the same splitter, the
+        # tree's frame runs to the pane's edge, and a 10 px inset here left
+        # the two frames visibly out of line down the right-hand side -- most
+        # obvious in a narrow window, where they are only a few pixels apart.
+        # The text does not touch the frame: QTextBrowser keeps its own
+        # document margin inside it.
+        layout.setContentsMargins(0, 0, 0, 0)
         self._browser = QTextBrowser()
+        # The breathing room the layout margin used to give, moved INSIDE the
+        # frame. The frame is what has to line up with the tree above; the
+        # text still should not touch it.
+        self._browser.document().setDocumentMargin(8)
         layout.addWidget(self._browser)
         self._gen = 0
         self._live_workers: list[workers.Worker] = []
