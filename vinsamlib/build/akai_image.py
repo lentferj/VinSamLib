@@ -57,6 +57,12 @@ AKAI_APPENDABLE = {"akai_hd", "akai_cd3000"}
 #: neighbours checked byte-identical (tests/manual_akai_delete_volume.py).
 AKAI_DELETABLE = {"akai_hd", "akai_cd3000"}
 
+#: Size for a blank starter image when the user left Size on "auto". There is
+#: no content to size from, and mpc2emu's own no-content fallback is 8 MB --
+#: smaller than a single volume of most real material, so the first append
+#: would fail on a disc that had just been made for it.
+BLANK_IMAGE_MB = 64
+
 
 class AkaiWriteUnavailable(RuntimeError):
     """Raised when AKAI media writing is not available; message is safe to show."""
@@ -357,8 +363,20 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
         raise AkaiWriteUnavailable(f"unknown AKAI image kind: {kind}")
     if Path(output_path).exists():
         raise AkaiWriteUnavailable(f"{output_path} already exists — choose a new name.")
-    if not folders:
-        raise AkaiWriteUnavailable("an AKAI image needs at least one volume.")
+    if not folders and kind not in AKAI_APPENDABLE:
+        # A FLOPPY genuinely needs one -- build_akai_floppy_image writes a
+        # single volume's files and has nothing to write without them. A hard
+        # disk or CD does not: mpc2emu builds the partition header and an
+        # empty root directory quite happily, and appending into it afterwards
+        # works, which is exactly the "blank starter image" every other kind
+        # here already offers (see build/images.create_image).
+        #
+        # Refusing it blocked the obvious way to start over: New… → AKAI hard
+        # disk → a path → "an AKAI image needs at least one volume", with no
+        # way to make an empty disc to append to.
+        raise AkaiWriteUnavailable(
+            f"an AKAI {'floppy' if kind == 'akai_floppy' else 'image'} "
+            f"needs at least one volume.")
 
     volumes = [volume_from_folder(f) for f in folders]
 
@@ -374,6 +392,18 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
                 f"volume {name!r} holds {len(files)} files; an AKAI volume "
                 f"directory takes {vs_akai.MAX_FILES_PER_VOLUME}. Samples and "
                 f"programs share those entries, so split the folder.")
+
+    if not volumes and kind in AKAI_APPENDABLE:
+        # Size it explicitly: with no content there is nothing to size FROM,
+        # and mpc2emu's own fallback is a 8 MB disc -- smaller than most
+        # single volumes anyone would then append.
+        info = calllog.traced(
+            akai_image.build_akai_hd_image, [], output_path,
+            size_mb=size_mb or BLANK_IMAGE_MB,
+            cdrom=(kind == "akai_cd3000"),
+            **({"label": volume_label} if kind == "akai_cd3000" and volume_label
+               else {}))
+        return _describe(kind, info)
 
     if kind == "akai_floppy":
         if len(volumes) > 1:

@@ -207,7 +207,22 @@ def _mutate_in_place(image_path: str, mutate: Callable[[str], Any]) -> Any:
     if not src.exists():
         raise ImageOpError(f"{image_path} does not exist.")
     tmp = src.with_name(src.name + ".vinsamlib-tmp")
-    shutil.copy2(src, tmp)
+    # The COPY can fail too, and the way it fails matters: a full disk raises
+    # here, outside the try below, and left a half-written .vinsamlib-tmp
+    # sitting beside the image -- consuming the very space that was short, and
+    # looking to the user like a damaged second copy of their disc. The
+    # original is safe either way (nothing unlinks it; os.replace only runs
+    # after a clean mutate), but failing tidily is part of failing safely.
+    try:
+        shutil.copy2(src, tmp)
+    except OSError as ex:
+        tmp.unlink(missing_ok=True)
+        free = shutil.disk_usage(src.parent).free
+        raise ImageOpError(
+            f"Could not stage a working copy of {src.name}: {ex}. "
+            f"{free / 1048576:.0f} MB free in {src.parent} — this needs room "
+            f"for a second copy of the image ({src.stat().st_size / 1048576:.0f} MB)."
+        ) from ex
     try:
         result = mutate(str(tmp))
     except ImageOpError:
