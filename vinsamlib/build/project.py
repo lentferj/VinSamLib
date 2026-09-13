@@ -85,6 +85,37 @@ def _stamp_matches(path: Path, stamp: dict) -> bool:
             and abs(st.st_mtime - float(stamp.get("mtime", 0))) < 2.0)
 
 
+#: What a bank's own file is called, per format. A staged bank whose `path`
+#: does NOT end in one of its format's extensions is not pointing at itself.
+#:
+#: THIS IS THE TRAP THAT LOST EVERY IMPORTED PRESET. A converted bank keeps
+#: the SOURCE's path as its label, deliberately -- New Bank's duplicate check
+#: keys on it, so importing the same .talsmpl twice has to look the same both
+#: times (see main_window._read_back_converted_presets). The bank's CONTENT is
+#: mpc2emu's freshly written E4B; its `path` says "D-50 Arri.talsmpl". Saving
+#: a reference to that path and parsing it back as an E4B gave a bank the
+#: preset was not in, and the load reported "it was found by position and the
+#: bank has changed" for every import in the project.
+#:
+#: A label is not provenance. If the extension does not match the format, the
+#: bytes have to travel.
+_FORMAT_SUFFIXES = {
+    "E4B": (".e4b",),
+    "KRZ": (".krz", ".k25", ".k26"),
+    "EIII": (".e3x", ".esi"),
+}
+
+
+def _path_is_its_own_bank(bank_path: str, fmt: str) -> bool:
+    """True when `bank_path` really is the file this bank was read from."""
+    wanted = _FORMAT_SUFFIXES.get(fmt)
+    if wanted is None:                  # AKAI: a folder or "<image>:VOLUME"
+        return True
+    # "<path>#3" is a per-preset label from a multi-program import.
+    stem = bank_path.split("#", 1)[0]
+    return Path(stem).suffix.lower() in wanted
+
+
 #: A staged bank whose path starts with one of these came out of a temp
 #: directory this session made, so its bytes must travel WITH the project.
 #: Everything else is a file in the user's library and is referenced.
@@ -123,7 +154,13 @@ def _bank_bytes(bank: Any, fmt: str) -> Optional[bytes]:
         return None
     try:
         source = Path(bank.path)
-        if not _is_ephemeral(bank.path) and source.is_file():
+        # Same guard as the reference decision, and it has to be here too: a
+        # converted bank's `path` is the SOURCE's name, so reading it gave a
+        # blob of .talsmpl bytes filed as an E4B. The carry then failed on
+        # load with "not an E4B" instead of failing to reference -- the same
+        # fault, one step further along.
+        if (not _is_ephemeral(bank.path) and source.is_file()
+                and _path_is_its_own_bank(bank.path, fmt)):
             return source.read_bytes()
     except OSError:
         pass
@@ -217,7 +254,8 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
                         "volume": volume, "stamp": _source_stamp(image),
                         "format": fmt}
         src = Path(bank_path)
-        if bank_path and not _is_ephemeral(bank_path) and src.is_file():
+        if (bank_path and not _is_ephemeral(bank_path) and src.is_file()
+                and _path_is_its_own_bank(bank_path, fmt)):
             referenced += 1
             return {"kind": "ref", "path": str(src.resolve()),
                     "stamp": _source_stamp(src), "format": fmt}
@@ -410,6 +448,19 @@ def _restore_bank(z: zipfile.ZipFile, entry: dict, rep: LoadReport):
     if not src.exists():
         rep.problems.append(f"{src} is gone — the presets taken from it were "
                             f"skipped. Put it back and load the project again.")
+        return None
+    if not _path_is_its_own_bank(str(src), fmt or ""):
+        # Written by a version that saved an IMPORT as a reference to its
+        # source. The converted bytes were never stored, so there is nothing
+        # here to restore and nothing this can do about it -- but say which
+        # file and why, instead of the misleading "found by position and the
+        # bank has changed" that a mis-parse produced.
+        rep.problems.append(
+            f"{src.name} was saved as a {fmt} bank by an older version of "
+            f"this program, which recorded the import's SOURCE instead of "
+            f"what it produced. Those presets cannot be restored from this "
+            f"file — import {src.name} again. Projects saved from now on "
+            f"carry the converted audio.")
         return None
     if not _stamp_matches(src, entry.get("stamp") or {}):
         rep.problems.append(f"{src.name} has changed since the project was "
