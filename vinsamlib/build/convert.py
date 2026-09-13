@@ -740,6 +740,49 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
         if not ok:
             raise ConvertOpError(f"Can't convert to AKAI -- {reason}")
         out_path = tmp_dir / out_stem
+        # SNAP TO A PLAYABLE RATE FIRST, and this call is ours to make.
+        #
+        # The S3000XL plays exactly two rates, 22050 and 44100, and its
+        # loader reads the sample record's index byte while IGNORING the
+        # SSRATE field beside it. So a sample carried at any other rate is
+        # written with audio at one rate and a header claiming another, and
+        # the machine plays it at the header's -- transposed, and short by
+        # the same factor.
+        #
+        # That is not hypothetical. `--resample emulator2` leaves samples at
+        # 27777 Hz (the Emulator II rate, which is the point of the option),
+        # and a volume built that way came back 290 803 frames where the
+        # source was 461 680 -- 10.47 s of audio at 27777 playing as 6.59 s
+        # at 44100, every sample +802 cents sharp. Nothing reported it: the
+        # index byte says 44100, so every reader on both sides agreed the
+        # volume was fine.
+        #
+        # mpc2emu's writer deliberately will NOT do this for us (their
+        # akai_s3000_writer.snap_bank_to_playback_rates docstring says why:
+        # resampling is a processor's job, and hiding it inside the writer
+        # would hide the problem from every other output path). It warns and
+        # carries on, and a caller that ignores the warning ships the broken
+        # volume -- which is exactly what this code did until 2026-09-13.
+        #
+        # AFTER every reducing step, because they all change rates: the
+        # resample profiles set them, --max-sample-rate caps them, and the
+        # shrink planner can drop a sample that would have needed snapping.
+        snapped = _run_captured(akai_writer.snap_bank_to_playback_rates, bank)
+        # CHECK THE RESULT, DO NOT ASSUME IT. resample_to_rate() returns its
+        # input unchanged for an upsample, so a caller that counts attempts
+        # instead of outcomes reports success for samples that never moved --
+        # mpc2emu's own convert.py printed "31 sample(s) snapped" while 31
+        # samples went to the writer still at 27777. Each failure has already
+        # emitted AKAI_RATE_SNAP_FAILED with content_lost=True, so it reaches
+        # the risk box; this refuses to write the volume at all, because the
+        # result would be silently transposed on the one machine it is for.
+        failed = int((snapped or {}).get("failed") or 0)
+        if failed:
+            raise ConvertOpError(
+                f"{failed} sample(s) could not be resampled to a rate the "
+                f"S3000XL can play (it plays 22050 and 44100 only). Writing "
+                f"them would produce a volume that sounds sharp and short on "
+                f"the machine, so nothing was written.")
         _run_captured(akai_writer.write_akai_bank, bank, str(out_path), out_stem)
     elif opts.target_format == "KRZ":
         out_path = tmp_dir / f"{out_stem}.krz"

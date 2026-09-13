@@ -16,6 +16,27 @@ from ..banks import summary
 from ..build import xpm_import
 
 
+def unplayable_rate_line(ps) -> str:
+    """One sentence when a preset's samples declare a rate the machine
+    cannot play -- the on-disc form of mpc2emu's AKAI_SSRATE_UNPLAYABLE.
+
+    Their diagnostic fires while CONVERTING. A volume already written is
+    never converted again, so without this the only way to notice is to
+    load it and hear it, which is how it went unnoticed in the first place.
+    """
+    bad = getattr(ps, "unplayable_rates", None)
+    if not bad:
+        return ""
+    cents = sorted(bad.values())
+    span = (f"{cents[0]:+.0f}" if abs(cents[0] - cents[-1]) < 1
+            else f"{cents[0]:+.0f} to {cents[-1]:+.0f}")
+    return (f'<br><br><span style="color:#c0392b"><b>{len(bad)} sample(s) '
+            f"declare a rate this sampler cannot play.</b> The loader uses "
+            f"the index byte instead, so they sound {span} cents off and "
+            f"correspondingly short. Re-convert the source to fix it; the "
+            f"volume on disc cannot be repaired in place.</span>")
+
+
 class DetailPane(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -186,7 +207,8 @@ class DetailPane(QWidget):
         voice_label = {"KRZ": "Keymaps", "AKAI": "Keygroups"}.get(ps.format, "Voices")
         html = (f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br>"
                 f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
-                f"{zone_stats_lines(ps.zones)}")
+                f"{zone_stats_lines(ps.zones)}"
+                f"{unplayable_rate_line(ps)}")
         self._browser.setHtml(html)
 
     def _apply_xpm(self, gen: int, xs: xpm_import.XpmSummary) -> None:

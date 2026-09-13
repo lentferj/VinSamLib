@@ -405,6 +405,50 @@ class AkaiSample:
         return self._PLAYBACK_RATES[1 if self.body[0x01] else 0]
 
     @property
+    def declared_rate(self) -> int:
+        """The rate the header DECLARES, which the loader ignores.
+
+        Kept alongside sample_rate rather than folded into it, because the
+        two answer different questions and the useful one is the comparison.
+        """
+        if len(self.body) < 0x8C:
+            return 0
+        return _u16(self.body, 0x8A)
+
+    @property
+    def rate_is_unplayable(self) -> bool:
+        """True when the declared rate is one the machine cannot produce.
+
+        WHY THIS IS NOT PEDANTRY ABOUT METADATA. sample_rate above is right
+        that the index wins, and answering only that is how this hid: a
+        volume whose audio sat at 27 777 Hz (the Emulator II rate) with the
+        index at 44 100 read back as a serene 44 100 from every reader on
+        both sides of the bridge, and the first check anyone ran said "all
+        playable". The audio really was at 27 777 -- its frame count only
+        reproduced the source duration at that rate -- so every sample
+        played +802 cents sharp and 37 % short, and nothing reported it.
+
+        Deliberately NOT a plain declared-vs-played disagreement: 22.0 % of
+        19 340 factory headers have one, the machine resolves it to the
+        index, and nothing is wrong. An UNPLAYABLE declared rate cannot be a
+        mislabel between the two real ones, which is what makes it the
+        signature of audio written at a rate that was never snapped.
+        """
+        declared = self.declared_rate
+        return bool(declared
+                    and declared not in self._PLAYBACK_RATES
+                    and declared != self.sample_rate)
+
+    @property
+    def rate_cents_off(self) -> float:
+        """How far sharp or flat this plays IF the audio is really at the
+        declared rate. 0.0 when there is nothing to report."""
+        if not self.rate_is_unplayable:
+            return 0.0
+        import math
+        return 1200.0 * math.log2(self.sample_rate / float(self.declared_rate))
+
+    @property
     def frame_count(self) -> int:
         """Frames as the header DECLARES them, which is what to trust: a file
         lifted off a disk is padded out to a block boundary, so its length

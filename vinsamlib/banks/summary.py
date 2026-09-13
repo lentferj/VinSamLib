@@ -110,6 +110,11 @@ class PresetSummary:
     #: union of their extents -- see krz_audio_bytes.
     sample_sizes: dict = field(default_factory=dict)   # name -> bytes
     sample_keys: frozenset = frozenset()               # KRZ object ids
+    #: AKAI only: {sample name: cents off} for samples whose header declares
+    #: a rate the machine cannot produce. mpc2emu's AKAI_SSRATE_UNPLAYABLE
+    #: catches this while CONVERTING; this is the same finding for a volume
+    #: already sitting on a disc, which no diagnostic ever runs over.
+    unplayable_rates: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -492,6 +497,7 @@ def summarize_akai_program(bank: akai.AkaiBank,
     honest and the number meaningful."""
     zones: list[ZoneSummary] = []
     sample_sizes: dict[str, int] = {}
+    unplayable: dict[str, float] = {}
     for kg in prog.keygroups:
         lo_key, hi_key = _clamp_key(kg.lo_key), _clamp_key(kg.hi_key)
         for z in kg.zones:
@@ -515,6 +521,8 @@ def summarize_akai_program(bank: akai.AkaiBank,
                 # wrong one.
                 sample_sizes[z.sample_name] = max(
                     0, samp.size - akai.AkaiBank.SAMPLE_HEADER_BYTES)
+                if samp.rate_is_unplayable:
+                    unplayable[z.sample_name] = samp.rate_cents_off
             zones.append(ZoneSummary(
                 sample_name=z.sample_name,
                 lo_key=lo_key, hi_key=hi_key,
@@ -528,6 +536,7 @@ def summarize_akai_program(bank: akai.AkaiBank,
             ))
     return PresetSummary(name=prog.name.strip(), format="AKAI",
                           sample_sizes=dict(sample_sizes),
+                          unplayable_rates=dict(unplayable),
                           voice_count=len(prog.keygroups), zones=zones,
                           total_sample_bytes=sum(sample_sizes.values()))
 

@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QFrame, 
 
 from . import dnd, workers
 from .models import human_size
-from .detail_pane import _escape, zone_stats_lines
+from .detail_pane import _escape, unplayable_rate_line, zone_stats_lines
 from .sample_placement_dialog import SamplePlacementDialog, vel_window
 from .sample_rename_dialog import SampleRenameDialog
 from ..banks import akai, e4b, eiii, krz, summary
@@ -776,7 +776,8 @@ class BankPane(QWidget):
             f"<b>{_escape(name)}</b><br>"
             f"{voice_label}: {ps.voice_count} &middot; "
             f"Total sample size: {_human(ps.total_sample_bytes)}<br>"
-            f"{zone_stats_lines(ps.zones)}")
+            f"{zone_stats_lines(ps.zones)}"
+            f"{unplayable_rate_line(ps)}")
 
     def _apply_preset_info_error(self, gen: int, message: str) -> None:
         if gen != self._info_gen:
