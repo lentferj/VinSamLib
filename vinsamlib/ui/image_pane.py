@@ -136,6 +136,13 @@ _OUT_OF_ROOM = ("no room", "not enough free", "too large", "no space",
                 "free volume slot", "does not fit", "exceeds")
 
 
+#: Kinds that are laid out once and cannot be appended to afterwards, so an
+#: empty one would be an image nothing can ever be put on. emu3_cd is exact-fit
+#: by construction; k2000_iso9660 is read-only here because mpc2emu never wrote
+#: an ISO 9660 writer past the initial build.
+CREATE_ONCE_KINDS = ("emu3_cd", "k2000_iso9660")
+
+
 def _looks_out_of_room(message: str) -> bool:
     low = message.lower()
     return any(phrase in low for phrase in _OUT_OF_ROOM)
@@ -926,7 +933,13 @@ class _NewImageDialog(QDialog):
 
         layout.addLayout(form)
 
-        layout.addWidget(QLabel("Initial banks (optional for HD/disk/floppy kinds):"))
+        # Kept as a field and rewritten per kind. As a fixed string it read
+        # "optional for HD/disk/floppy kinds", which asks the user to know
+        # which kinds those are and to work out that an EMU3 CD is not one --
+        # and only told them otherwise by refusing on OK, after they had
+        # filled the rest of the dialog in.
+        self._banks_caption = QLabel()
+        layout.addWidget(self._banks_caption)
         self._bank_list = QListWidget()
         for p in self._bank_paths:
             self._bank_list.addItem(QListWidgetItem(Path(p).name))
@@ -969,7 +982,19 @@ class _NewImageDialog(QDialog):
     def _on_kind_changed(self) -> None:
         kind = self._current_kind()
         fmt, _label, default_label = images.IMAGE_KINDS[kind]
-        if not self._label_edit.text():
+        self._banks_caption.setText(
+            "Initial banks — REQUIRED: this format is created once and "
+            "cannot be appended to later:"
+            if kind in CREATE_ONCE_KINDS else
+            "Initial banks (optional — you can append to this kind later):")
+        # A DEFAULT LEFT OVER FROM ANOTHER KIND IS NOT THE USER'S CHOICE.
+        # This only filled an EMPTY field, so switching from an AKAI hard
+        # disk (whose row is hidden, holding "VOLUME 001") to an EMU3 CD left
+        # an AKAI volume name sitting in the disc-label field of a format
+        # that has never heard of it. Anything the user actually typed is
+        # left alone; only a previous kind's own default is replaced.
+        current = self._label_edit.text().strip()
+        if not current or current in {d for _f, _l, d in images.IMAGE_KINDS.values()}:
             self._label_edit.setText(default_label)
         is_floppy = kind == "fat12_floppy"
         needs_size = kind in ("emu3_hd_emu", "emu3_hd_fat", "k2000_fat16")
@@ -1090,7 +1115,7 @@ class _NewImageDialog(QDialog):
         if not output_path:
             QMessageBox.warning(self, "New Image", "Type or choose a location to save the image first.")
             return
-        if kind in ("emu3_cd", "k2000_iso9660") and not self._bank_paths:
+        if kind in CREATE_ONCE_KINDS and not self._bank_paths:
             QMessageBox.warning(self, "New Image",
                                  "This image format is created once and can't be appended to "
                                  "later — add at least one bank.")
