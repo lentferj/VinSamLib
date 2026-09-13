@@ -1151,6 +1151,13 @@ and flow on to Pending and the image builder.
 The entry appears only when this checkout can actually write AKAI, so it
 is absent rather than failing after a slow conversion has already run.
 
+SF2 and GIG are the exception to the rule above, and they are measured
+the first time you expand one. They embed their samples, so one preset's
+share is only knowable by reading the file — too expensive for a blind
+library scan over a shelf of them, and affordable exactly once, when you
+open that row on purpose. The answer is kept in the index, so the next
+time it comes from the same lookup as every other row.
+
 **What it costs.** This is a conversion between two machines that do not
 agree about anything, and it goes through mpc2emu's `Bank` model, which
 is narrower than an AKAI program file. Until recently that was a reason

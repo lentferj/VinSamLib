@@ -303,6 +303,32 @@ class IndexDB:
                 out[native_id] = total
         return out
 
+    def set_item_audio_by_name(self, container_path: str,
+                               sizes: dict[str, int]) -> None:
+        """Record per-row audio totals worked out after the scan.
+
+        For SF2 and GIG, whose per-preset figure is only knowable by reading
+        the file -- too expensive for a blind scan, affordable once when the
+        user expands that row. Written here so the next expand, in any later
+        session, reads it back like every other row.
+        """
+        row = self._conn.execute(
+            "SELECT id FROM container WHERE path = ?", (container_path,)).fetchone()
+        if row is None:
+            return
+        self._conn.executemany(
+            "UPDATE item SET audio_bytes = ? WHERE container_id = ? AND name = ?",
+            [(v, row[0], k) for k, v in sizes.items()])
+        self._conn.commit()
+
+    def set_container_audio_by_path(self, path: str, audio_bytes: int) -> None:
+        """The container's own total, recorded after the fact -- see
+        set_item_audio_by_name for why this cannot happen during the scan."""
+        self._conn.execute(
+            "UPDATE container SET audio_bytes = ? WHERE path = ?",
+            (audio_bytes, path))
+        self._conn.commit()
+
     def search(self, query: str, limit: int = 200) -> list[SearchResult]:
         query = query.strip()
         if not query:

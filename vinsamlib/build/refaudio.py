@@ -180,6 +180,11 @@ def referenced_audio_bytes(path: str) -> Optional[int]:
 
 # ── formats that EMBED their audio ───────────────────────────────────────────
 
+#: Key under which embedded_preset_audio() returns the CONTAINER's own
+#: total, which is not a preset name and cannot collide with one.
+CONTAINER_KEY = "\x00container"
+
+
 def embedded_preset_audio(path: str) -> dict[str, int]:
     """{preset name: loadable bytes} for an SF2 or GIG, by parsing it once.
 
@@ -201,28 +206,27 @@ def embedded_preset_audio(path: str) -> dict[str, int]:
     from . import foreign_import
     listed = foreign_import.list_presets(path) or []
     bank = foreign_import.parse_foreign(path, None, max_presets=len(listed) + 5)
+    # A zone names its sample; it carries no index. The first version of this
+    # looked for `sample_index`, found none on any zone, and reported 0.00 MB
+    # for every preset -- a figure that is wrong and looks deliberate.
+    by_name = {(getattr(s, "name", "") or "").strip(): s
+               for s in (getattr(bank, "samples", []) or [])}
     out: dict[str, int] = {}
     for preset in getattr(bank, "presets", []) or []:
-        seen: dict[int, int] = {}
+        seen: dict[str, int] = {}          # by sample name -- deduped per preset
         for voice in getattr(preset, "voices", []) or []:
             for zone in getattr(voice, "zones", []) or []:
-                idx = getattr(zone, "sample_index", None)
-                if idx is None:
-                    continue
-                smp = _sample_at(bank, idx)
+                nm = (getattr(zone, "sample_name", "") or "").strip()
+                smp = by_name.get(nm)
                 if smp is not None:
-                    seen[id(smp)] = len(getattr(smp, "data", b"") or b"")
+                    seen[nm] = len(getattr(smp, "data", b"") or b"")
         name = (getattr(preset, "name", "") or "").strip()
         if name:
             out[name] = out.get(name, 0) + sum(seen.values())
+    # The container's own figure under a reserved key: every sample in the
+    # file, counted once. NOT the sum of the presets -- they share samples,
+    # and on a multi-instrument library that sum runs well past what the file
+    # holds. Same distinction the bank rows have made all along.
+    out[CONTAINER_KEY] = sum(len(getattr(s, "data", b"") or b"")
+                             for s in (getattr(bank, "samples", []) or []))
     return out
-
-
-def _sample_at(bank, idx):
-    samples = getattr(bank, "samples", None)
-    if samples is None:
-        return None
-    try:
-        return samples[idx]
-    except (KeyError, IndexError, TypeError):
-        return None
