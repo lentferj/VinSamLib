@@ -690,11 +690,96 @@ Two standing rules for anything added here: a test must never call
 
 ---
 
-## AKAI — this branch only (`feat/akai-s3000xl`)
+## What a COVERS claim means
 
-Unmerged and gated on hardware. These rows extend the tables above; they are
-kept here rather than inline so that rebasing onto a `master` that has no
-AKAI support does not smear them through every table.
+A test claims a cell when **the test would fail if that cell's behaviour
+broke**. Not when it merely touches it.
+
+`manual_debug_calllog` sets `trim_tail_db`, builds an `emu3_cd` and calls
+`import_xpm` — and asserts none of them. It uses them as scaffolding to
+check that the call log records what ran. Claiming H12, O3 and P5 for it
+would put three cells in the covered column that no assertion defends,
+which is worse than a gap: a gap is visible and a false claim is not.
+
+The failure is the same shape as a fixture that cannot fail, a
+precondition that cannot fire, and an exemption that cannot expire —
+all four look like work and do none. `tools/suggest_coverage.py` reports
+the evidence and deliberately does not write the claim.
+
+## Matrix H — every conversion option, on every target it applies to
+
+Jan's instruction, 2026-09-13: *"all inputs and output formats, with all
+possible conversion options — and no conversion, also covering details of
+each format."* The three axes above cross source with target with
+destination; this one crosses each OPTION with the targets it is legal for,
+because an option that works for E4B and corrupts KRZ is a bug neither
+Matrix B nor Matrix C can see.
+
+**The full cross-product is not the goal and claiming it would be a lie.**
+Nineteen options, four targets and continuous ranges on six of them do not
+enumerate. What does enumerate, and is therefore what this matrix asserts:
+
+* every option is exercised **at least once per target it applies to**;
+* every option is exercised **at its boundary**, not only in the middle —
+  the value that does nothing and the value that refuses;
+* **no conversion at all** is a row in its own right, per source (`P1`), and
+  a *no-op conversion* (`P2`) is a different row that must produce the same
+  bytes;
+* every option is exercised **in combination with the one it is ordered
+  against**, where the order was decided for a reason (trims before mono
+  before reduce before resample before rate cap before shrink before write).
+
+| # | Option | Targets | Boundary that must be tested |
+|---|---|---|---|
+| H1 | *(none — a true no-op)* | all 4 | output is byte-identical to `P1` |
+| H2 | `resample_profile` | all 4 | each profile; and that AKAI snaps the result back to a playable rate |
+| H3 | `no_bandpass` | all 4 | on and off, with a profile set |
+| H4 | `resample_keep_gain` | all 4 | on and off, with a profile set |
+| H5 | `max_sample_rate` | all 4 | above every sample's rate (no-op); below all of them |
+| H6 | `reduce_key_zones_pct` | all 4 | 0 (no-op); a value that leaves one zone |
+| H7 | `reduce_velocity_layers_pct` | all 4 | 0; a value that leaves one layer |
+| H8 | `mono` | all 4 | `mix`/`left`/`right`, on stereo and on already-mono |
+| H9 | `pan_law` | **E4B only** | both laws; and that it is ignored elsewhere |
+| H10 | `trim_start_db` + fade | all 4 | 72 (silence only) and 45 (into the attack) |
+| H11 | `trim_start_keep_loops` | all 4 | **default ON**; off must drop a loop and say so |
+| H12 | `trim_tail_db` + fade | all 4 | 72 and 45 |
+| H13 | `trim_tail_keep_loops` | all 4 | **default ON**; off must drop a loop and say so |
+| H14 | `shrink_to_bytes` | all 4 | reachable; and unreachable, which must be announced |
+| H15 | `shrink_by_pct` | all 4 | 0; and a target that thins every preset |
+| H16 | `krz_faithful_layers` | **KRZ only** | both; the faithful one must warn it is silent on a normal channel |
+| H17 | `krz_drum_program` | **KRZ only** | both |
+
+## Matrix I — the details of each format, which no cross-product reaches
+
+These are the limits and structures a format imposes. None of them is a
+source, a target or a destination, and all of them decide whether a written
+file loads.
+
+| # | Detail | Where it bites |
+|---|---|---|
+| J1 | **E4B bank splitting** | a bank over the size threshold; "Keep Anyway" must still build |
+| J2 | **KRZ PRAM budget** | objects, not bytes — a small bank can still refuse to load |
+| J3 | **KRZ object id ceiling** | 999 per type, clamped silently by the machine |
+| J4 | **AKAI volume file limit** | 510 directory entries; samples and programs SHARE them |
+| J5 | **AKAI resident objects** | 1006 on a 32 MB machine; a volume can fit the directory and still not load |
+| J6 | **AKAI root directory slots** | 100 volumes per partition |
+| J7 | **AKAI partition count** | `MAX_PARTITIONS`; a plan needing more must refuse, not truncate |
+| J8 | **AKAI partition planning** | explicit breaks vs. automatic; a break must size the disc |
+| J9 | **AKAI playback rates** | 22050/44100 only; anything else must be snapped before the write |
+| J10 | **AKAI name collisions** | one name in two partitions; and 12-char truncation colliding |
+| J11 | **EMU3 exact-fit CD** | created once, cannot be appended; an empty one must be refused |
+| J12 | **EMU3 rebuild-on-full** | append runs out of clusters and the image is rebuilt larger |
+| J13 | **Name survival** | a `/` or a trailing dot in a bank name, through every writer |
+| J14 | **Sample rate/bit depth** | 8/16/24-bit and 22k/44.1k/48k sources into each target |
+
+## AKAI — merged to master 2026-09-13
+
+**This section was written while AKAI was an unmerged, read-only branch and
+every claim below about "withheld" is now false.** It is corrected in place
+rather than deleted, because a release run following the old text would have
+skipped every row that matters most: AKAI is now a full target, its media are
+written, and a volume can be deleted from an image. Kept as its own section
+only because the AKAI axes are numerous enough to crowd the tables above.
 
 **Inputs**
 
@@ -710,18 +795,22 @@ AKAI support does not smear them through every table.
 | # | Output |
 |---|---|
 | O2 | Save as… a **folder** (AKAI volume) |
-| O11 | AKAI media — **withheld pending hardware**, must be *refused*, not attempted |
+| O12 | Image: `akai_hd` — hard disk, appendable, volumes deletable |
+| O13 | Image: `akai_cd3000` — CD3000 raw, appendable, volumes deletable |
+| O14 | Image: `akai_floppy` — one volume, create-only, empty is refused |
+| O15 | **Blank** image of an appendable AKAI kind, filled by a later append |
+| O16 | An append that does not fit, and the **rebuild larger** that follows |
 
 **Matrix A** — `| I8–I11 AKAI | ✅ manual_akai_real_discs | ✅ | ✅ manual_akai_search |`
 
-**Matrix B** — AKAI is a valid SOURCE to all three native targets, and is
-never a target: `AKAI → E4B ✅`, `→ KRZ ✅`, `→ EIII ✅`, `→ AKAI ⛔ refused
-by design`. Every other source → AKAI is `⛔ withheld`. AKAI→AKAI is refused
-for a different reason than the rest: the pipeline runs through mpc2emu's
-`Bank` model, which holds a fraction of an AKAI program.
+**Matrix B** — AKAI is a valid source to all three native targets AND a
+valid target from every source: `AKAI → E4B/KRZ/EIII ✅`, and
+`E4B/EIII/KRZ/MPC/SF2/SFZ/EXS24/TAL/GIG/samples → AKAI ✅`. Only `AKAI →
+AKAI` is refused, and for a reason none of the others share: the pipeline
+runs through mpc2emu's `Bank` model, which holds a fraction of an AKAI
+program, so the round trip would lose what it did not understand.
 
-**Matrix C** — AKAI content reaches `O2` (folder) only; every image kind is
-`⛔` until hardware confirms one. Each of Matrix C's rows must ALSO be run
+**Matrix C** — AKAI content reaches `O2` and `O12`–`O16`. Each of Matrix C's rows must ALSO be run
 with AKAI-sourced material, which is ordinary E4B/KRZ/EIII by then and so
 *should* behave identically — a prediction, and the prediction is what needs
 testing. `manual_akai_end_to_end` exists for exactly that row.
