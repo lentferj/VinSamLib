@@ -108,11 +108,22 @@ _FORMAT_SUFFIXES = {
 
 def _path_is_its_own_bank(bank_path: str, fmt: str) -> bool:
     """True when `bank_path` really is the file this bank was read from."""
-    wanted = _FORMAT_SUFFIXES.get(fmt)
-    if wanted is None:                  # AKAI: a folder or "<image>:VOLUME"
-        return True
     # "<path>#3" is a per-preset label from a multi-program import.
     stem = bank_path.split("#", 1)[0]
+    if fmt == "AKAI":
+        # An AKAI volume is a FOLDER of loose files, or "<image>:VOLUME" out
+        # of a disc image. Nothing else is one.
+        #
+        # Exempting AKAI wholesale -- "it has no suffix to check" -- was the
+        # first fix and it missed the case that actually happens: a New Bank
+        # locked to AKAI, holding programs converted FROM .xpm files. Their
+        # label is an .xpm, the format is AKAI, and the exemption waved them
+        # straight through to being referenced again. The report came back
+        # unchanged, which is what said the fix was aimed at the wrong thing.
+        return ":" in stem or Path(stem).is_dir()
+    wanted = _FORMAT_SUFFIXES.get(fmt)
+    if wanted is None:
+        return False                    # an unknown format proves nothing
     return Path(stem).suffix.lower() in wanted
 
 
