@@ -612,12 +612,21 @@ class MainWindow(QMainWindow):
                      if r.get("code") == self._SHRINK_UNREACHABLE
                      and isinstance(r.get("detail"), dict)
                      and r["detail"].get("reached_bytes")]
+        if not (reachable and getattr(self, "_last_import", None) is not None):
+            # THE ORDINARY PATH STAYS THE ORDINARY CALL. Replacing this with a
+            # constructed box unconditionally broke every test that triggers a
+            # warning -- they stub QMessageBox.warning, which a constructed
+            # box with its own exec() never reaches, so they hung on a modal
+            # dialog. The custom box is for the one case that has a button to
+            # add; everything else keeps the static call it always used.
+            QMessageBox.warning(self, title, detail)
+            return
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle(title)
         box.setText(detail)
         raise_btn = None
-        if reachable and getattr(self, "_last_import", None) is not None:
+        if True:
             # The biggest of them: raising to the largest unreachable floor is
             # the only single target that clears every preset in the bank.
             target = max(int(r["detail"]["reached_bytes"]) for r in reachable)
