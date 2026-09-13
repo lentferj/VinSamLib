@@ -123,6 +123,19 @@ def _import_request(node: TreeNode) -> dict:
             "ordinal": ordinal, "name": node.label}
 
 
+def formats_for_filter(wanted: Optional[str]) -> Optional[list[str]]:
+    """The format labels a dropdown entry covers, for an index query.
+
+    The same definition format_matches_filter() applies row by row, in the
+    shape a SQL `IN` needs -- so the search can restrict before it limits
+    rather than after, which is what made a filtered search come back empty
+    on a large library.
+    """
+    if wanted is None:
+        return None
+    return list(MPC_FORMATS) if wanted == MPC_FILTER else [wanted]
+
+
 def format_matches_filter(format_label: str, wanted: Optional[str]) -> bool:
     """Shared by the tree's filter proxy and the search-results filter, so
     both read one definition of what the dropdown's entries mean."""

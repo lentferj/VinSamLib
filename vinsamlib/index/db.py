@@ -329,18 +329,33 @@ class IndexDB:
             (audio_bytes, path))
         self._conn.commit()
 
-    def search(self, query: str, limit: int = 200) -> list[SearchResult]:
+    def search(self, query: str, limit: int = 200,
+               formats: Optional[list[str]] = None) -> list[SearchResult]:
+        """Ranked FTS hits, optionally restricted to a set of formats.
+
+        `formats` IS APPLIED IN THE QUERY, and that is the whole point of it
+        existing. Filtering the returned page instead means the limit is
+        spent on rows the caller is about to throw away: searching "909" in a
+        library of 90 000 items returned 200 hits with not one MPC program
+        among them, so the MPC filter showed "No matches" while 49 real ones
+        sat further down the ranking.
+        """
         query = query.strip()
         if not query:
             return []
         fts_query = _fts_query(query)
+        sql = ("SELECT item.id, item.kind, item.name, item.format, container.path "
+               "FROM item_fts JOIN item ON item.id = item_fts.rowid "
+               "JOIN container ON container.id = item.container_id "
+               "WHERE item_fts MATCH ?")
+        params: list = [fts_query]
+        if formats:
+            sql += f" AND item.format IN ({','.join('?' * len(formats))})"
+            params.extend(formats)
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(limit)
         try:
-            rows = self._conn.execute(
-                "SELECT item.id, item.kind, item.name, item.format, container.path "
-                "FROM item_fts JOIN item ON item.id = item_fts.rowid "
-                "JOIN container ON container.id = item.container_id "
-                "WHERE item_fts MATCH ? ORDER BY rank LIMIT ?",
-                (fts_query, limit)).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         except sqlite3.OperationalError:
             # A background scan's writer connection briefly held the file
             # (WAL keeps this rare — see __init__) — better to show no

@@ -213,8 +213,12 @@ class ExplorerPane(QWidget):
             self._results.addItem(placeholder)
             return
 
-        hits = self._index_db.search(text)
         format_filter = self._current_format_filter()
+        # Restricted in the QUERY, not afterwards: the limit must be spent on
+        # rows that can survive the filter, or a format with fewer or
+        # lower-ranked matches reads as "No matches" on a big library.
+        hits = self._index_db.search(
+            text, formats=models.formats_for_filter(format_filter))
         if format_filter is not None:
             # Non-bank hits (folders, presets/programs) carry the format of
             # the bank they belong to (see index/scanner.py), so filtering
