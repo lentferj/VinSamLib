@@ -312,15 +312,25 @@ def polyphony_risk_lines(risks: list[dict]) -> list[str]:
     """polyphony_risk() rendered for a GUI message box -- one line per
     preset, naming the two Convert Options controls that actually fix it
     (mpc2emu's own warning names its CLI flags, which don't exist here)."""
-    lines = []
+    lines: list[str] = []
+    #: message -> how many records said exactly that, so the same sentence is
+    #: shown ONCE. mpc2emu emits per preset and per keygroup, so a bank of
+    #: five presets that all overrun DECAY1 produced the identical paragraph
+    #: five times -- a wall of text that reads as five problems and is one.
+    #: The count is what the user needs; the repetition is what hides it.
+    seen: dict[str, int] = {}
+    order: list[str] = []
     for r in risks:
         # A risk carrying its own sentence renders verbatim. Not every risk
         # this list now holds is a polyphony one -- _verify_written adds
         # written-file findings through the same channel, because they reach
         # the user by the same route and a second mechanism would just be a
         # second thing to forget to display.
-        if r.get("message"):
-            lines.append(r["message"])
+        msg = r.get("message")
+        if msg:
+            if msg not in seen:
+                order.append(msg)
+            seen[msg] = seen.get(msg, 0) + 1
             continue
         why = (f" ({r['stereo']} of {r['samples']} samples are stereo, and a "
                f"stereo sample costs two voices)") if r["stereo"] else ""
@@ -328,7 +338,10 @@ def polyphony_risk_lines(risks: list[dict]) -> list[str]:
             f"\"{r['preset']}\" stacks {r['voices']} voices on {r['key']} at "
             f"velocity {r['velocity']}, over the {r['limit']}-voice-per-note "
             f"limit{why} -- the extra layers will be stolen on playback.")
-    return lines
+    # Grouped messages first: they are the converter's own findings, and a
+    # per-preset polyphony line is more specific than any of them.
+    grouped = [(f"{seen[m]} ×  {m}" if seen[m] > 1 else m) for m in order]
+    return grouped + lines
 
 
 def suggest_mono_side(samples: list) -> dict:

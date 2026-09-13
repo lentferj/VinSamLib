@@ -563,7 +563,16 @@ class MainWindow(QMainWindow):
                 f"{others} written-bank warning(s)" if others else "")
             if part)
         self.statusBar().showMessage(summary, 8000)
-        detail = "\n\n".join(lines)
+        # CAPPED. Even grouped, a conversion can produce more distinct
+        # findings than anybody reads standing up, and a box taller than the
+        # screen is one nobody reads at all -- the first few are the ones
+        # that get acted on either way.
+        shown, extra = lines[:8], max(0, len(lines) - 8)
+        detail = "\n\n".join(shown)
+        if extra:
+            detail += (f"\n\n… and {extra} more finding(s) of other kinds. "
+                       f"They are of the same severity as these; nothing is "
+                       f"being hidden because it is worse.")
         if polyphony:
             detail += (
                 "\n\nA stereo sample costs two voices, and the ceiling is per "
