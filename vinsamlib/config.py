@@ -41,6 +41,66 @@ def user_data_dir() -> Path:
     return Path(base) / _APP_NAME
 
 
+#: Set by app.py before anything opens the index. Nothing else sets it, and
+#: that asymmetry is the point -- see require_real_state_opt_in().
+REAL_STATE_ENV = "VINSAMLIB_ALLOW_REAL_STATE"
+
+
+class RealStateRefused(RuntimeError):
+    """Raised when something reaches for the user's real index or config
+    without having said it meant to. The message is safe to show."""
+
+
+def home_data_dir() -> Path:
+    """Where the user's OWN data lives, ignoring XDG_DATA_HOME.
+
+    Deliberately not user_data_dir(). That one honours the environment --
+    which is the whole mechanism isolation uses -- so comparing a path
+    against it can never tell the two apart: point XDG_DATA_HOME at a temp
+    directory and user_data_dir() moves with it, so "is this the real one?"
+    answers yes for every path. The first version of the guard below did
+    exactly that and refused the isolated index it was meant to permit.
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+        return Path(base) / _APP_NAME
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / _APP_NAME
+    return Path.home() / ".local" / "share" / _APP_NAME
+
+
+def real_state_allowed() -> bool:
+    return bool(os.environ.get(REAL_STATE_ENV))
+
+
+def require_real_state_opt_in(what: str) -> None:
+    """Refuse to touch the user's real data unless the application asked for it.
+
+    WHY THIS IS A RUNTIME GUARD AND NOT A LINT RULE. A test script that
+    opened the real index emptied this user's library -- 7,306 containers
+    down to 224 -- and the protection since has been "remember to set
+    XDG_DATA_HOME", which is a habit, not a mechanism. Tonight alone I
+    relied on remembering it a dozen times.
+
+    A source scan is the weaker half of the same idea: it asserts what the
+    code SAYS, and is evaded by getattr, by a path assembled at runtime, by
+    a config string -- anything one level of indirection away. This refuses
+    at the moment of use, whatever the source looks like.
+
+    The opt-in is set by app.py alone, so the real application gets its own
+    data and everything else -- a test, a one-off script, a tool run from a
+    shell -- has to point somewhere harmless or say out loud that it meant
+    the real thing.
+    """
+    if real_state_allowed():
+        return
+    raise RealStateRefused(
+        f"Refusing to open the real {what} at {home_data_dir()}. Point "
+        f"XDG_DATA_HOME somewhere disposable, or set {REAL_STATE_ENV}=1 if "
+        f"you genuinely mean the user's own data. A test script that did "
+        f"this once destroyed a library index.")
+
+
 def _default_mpc2emu_path() -> Path:
     """mpc2emu is a sibling checkout by convention (../mpc2emu relative to
     this repo). Used only as a fallback default; always overridable."""

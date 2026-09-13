@@ -104,6 +104,17 @@ class SearchResult:
 
 class IndexDB:
     def __init__(self, path: Path):
+        # THE GUARD GOES HERE, at the moment of opening, because that is the
+        # only place that knows which file is actually about to be written.
+        # A caller can assemble this path any way it likes; it still has to
+        # come through here.
+        from ..config import home_data_dir, require_real_state_opt_in
+        try:
+            same = Path(path).resolve() == (home_data_dir() / "index.db").resolve()
+        except OSError:
+            same = False
+        if same:
+            require_real_state_opt_in("library index")
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), timeout=5.0)
         self._conn.execute("PRAGMA foreign_keys = ON")

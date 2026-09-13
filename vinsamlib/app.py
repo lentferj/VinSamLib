@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from PySide6.QtWidgets import QApplication
 
 from . import mpc2emu_bridge, tempdirs
+from . import config as config_mod
 from .config import Config
 from .ui.main_window import MainWindow
 
 
 def main() -> int:
+    # THE ONE PLACE THAT SAYS "I MEAN THE USER'S OWN DATA". Everything else
+    # -- a test, a script, a tool -- has to point XDG_DATA_HOME somewhere
+    # disposable or opt in explicitly. See config.require_real_state_opt_in.
+    os.environ.setdefault(config_mod.REAL_STATE_ENV, "1")
     config = Config.load()
     # Fail fast, with a clear message, rather than on the first tree expand —
     # every bank/image operation needs mpc2emu importable.
