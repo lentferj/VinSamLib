@@ -97,6 +97,21 @@ and the substring match around it was not; the perturbation was designed
 and whether it perturbed anything was assumed. **Confidence is where the
 untested reasoning is.**
 
+**Carry a comparison whose answer you already know.** (eosed) Then the
+method's error is measured as a by-product, and a method too coarse for
+the question announces itself rather than waiting to be asked about.
+Their two knowns — two runs that must reach the same level, and a
+no-attack control with nothing to measure — between them disposed of a
+1.655× effect that did not exist, and neither required anyone to be
+clever at the right moment.
+
+Deliberately not "state your uncertainty first", which is what this
+project first wrote down: **that version requires knowing to, which is
+precisely the discipline an interesting result erodes.** The redundant
+version works when nobody remembers the rule. It is the same instrument
+as reintroducing a real bug to prove a check can fail, and as pinning a
+literal rather than asking the code under test what it expects.
+
 **Verify that a control actually removes what it claims to remove.**
 Three attempts at "run without the corpus" did not remove the corpus:
 only 3 of 88 tests read `$VINSAMLIB_CORPUS`, while 62 call `Path.home()`
