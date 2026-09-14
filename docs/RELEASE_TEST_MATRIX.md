@@ -771,6 +771,7 @@ file loads.
 | J12 | **EMU3 rebuild-on-full** | append runs out of clusters and the image is rebuilt larger |
 | J13 | **Name survival** | a `/` or a trailing dot in a bank name, through every writer |
 | J14 | **Sample rate/bit depth** | 8/16/24-bit and 22k/44.1k/48k sources into each target |
+| J15 | **MPC pad→note map** | a drum program follows its `<PadNoteMap>`; a keygroup program's `[0,1,2,…]` placeholder is ignored |
 
 ## AKAI — merged to master 2026-09-13
 
