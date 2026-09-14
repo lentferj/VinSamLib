@@ -81,6 +81,26 @@ _ASSEMBLE_FNS = {"E4B": e4b.assemble, "KRZ": krz.assemble, "EIII": eiii.assemble
 _FORMAT_EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
 _DEFAULT_BANK_NAME = "NewBank"
 
+#: What the FIRST preset in New Bank is numbered in the built bank, per
+#: format. Verified by assembling three presets and reading the result back,
+#: not from the writers' constants:
+#:
+#:   KRZ   object ids 200, 201, 202   (per type, from krz.assemble's base_id)
+#:   E4B   preset index 0, 1, 2
+#:   EIII  preset index 0, 1, 2
+#:   AKAI  MIDI program number 0, 1, 2 -- the byte is 0-based and the
+#:         sampler's panel displays it 1-based, so the tooltip says both
+#:
+#: This is why ORDER MATTERS in this pane, and it was invisible before: the
+#: position a preset sits at here is the number it answers to on the machine.
+_FIRST_PRESET_NUMBER = {"KRZ": 200, "E4B": 0, "EIII": 0, "AKAI": 0}
+
+#: Past this many presets AKAI runs out of MIDI program numbers and
+#: banks.akai.assemble leaves the extras' bytes alone rather than wrapping
+#: (wrapping would put program 128 on top of program 0). So the pane must not
+#: claim a number for them either.
+_AKAI_LAST_NUMBERED = 127
+
 #: An EIII zone stores its root as an E-mu key number where 0 is MIDI 21
 #: (A-1) -- mpc2emu's eiii_writer KEY_OFFSET. E4B stores plain MIDI.
 _EIII_KEY_OFFSET = 21
@@ -586,6 +606,65 @@ class BankPane(QWidget):
 
     # -- list management --------------------------------------------------------
 
+    def _preset_number(self, row: int):
+        """The number this row will carry in the built bank, or None.
+
+        None while no format is locked (an empty pane cannot know), and None
+        for AKAI rows past 127, where assemble() deliberately leaves the byte
+        alone rather than wrapping — claiming a number there would be the pane
+        inventing one.
+        """
+        first = _FIRST_PRESET_NUMBER.get(self._format or "")
+        if first is None:
+            return None
+        if self._format == "AKAI" and row > _AKAI_LAST_NUMBERED:
+            return None
+        return first + row
+
+    def _number_tooltip(self, number: int) -> str:
+        if self._format == "AKAI":
+            # 0-based byte, 1-based panel: confirmed on hardware twice, for
+            # this field and for the volume register, so it is a machine-wide
+            # convention rather than a quirk of one screen.
+            return (f"MIDI program number {number} — the sampler's panel "
+                    f"shows this as {number + 1}. Reorder to change it.")
+        if self._format == "KRZ":
+            return (f"Program {number} on the K2000 — the number you dial up "
+                    f"to hear it. Reorder to change it.")
+        return f"Preset {number} in the built bank. Reorder to change it."
+
+    def _move_rows(self, delta: int) -> None:
+        """Move the selected rows one place up (-1) or down (+1).
+
+        Operates on `self._items` and rebuilds, rather than shuffling
+        QListWidget rows: the list is rebuilt from `_items` on every refresh
+        anyway, and the numbers in the row text have to be recomputed for
+        EVERY row after a move, not just the ones that moved.
+        """
+        rows = sorted(i.row() for i in self._list.selectedIndexes())
+        if not rows or not self._can_move(rows, delta):
+            return
+        items = list(self._items)
+        # Nearest-edge first, so a block of adjacent rows cannot overwrite
+        # itself on the way past its neighbour.
+        for row in (rows if delta < 0 else reversed(rows)):
+            items[row + delta], items[row] = items[row], items[row + delta]
+        self._items = items
+        moved = {r + delta for r in rows}
+        self._refresh()
+        # Selection follows the presets, not the positions -- otherwise a
+        # second Move Up would move whatever had just taken their place.
+        for r in moved:
+            if 0 <= r < self._list.count():
+                self._list.item(r).setSelected(True)
+        if moved:
+            self._list.setCurrentRow(min(moved))
+
+    def _can_move(self, rows, delta: int) -> bool:
+        if not rows:
+            return False
+        return (min(rows) > 0) if delta < 0 else (max(rows) < len(self._items) - 1)
+
     def _on_list_context_menu(self, pos) -> None:
         if not self._items:
             return
@@ -612,7 +691,32 @@ class BankPane(QWidget):
             "Rename Samples of Selected…" if n_sel > 1 else "Rename Samples…")
         rename_action.setEnabled(self._rename_btn.isEnabled())
         rename_action.setToolTip(self._rename_btn.toolTip())
+
+        # Reordering lives here rather than on two more buttons: the button
+        # grid is already the busiest part of the pane, and the list is where
+        # a user looks for what to do WITH a row. Drag-and-drop still works
+        # (the list is InternalMove) -- this is the precise version of it,
+        # which matters now that position decides the number a preset answers
+        # to on the machine.
+        menu.addSeparator()
+        rows = sorted(i.row() for i in self._list.selectedIndexes())
+        up_action = menu.addAction("Move Up")
+        up_action.setEnabled(self._can_move(rows, -1))
+        down_action = menu.addAction("Move Down")
+        down_action.setEnabled(self._can_move(rows, +1))
+        if self._format in _FIRST_PRESET_NUMBER:
+            hint = ("renumbers the programs" if self._format in ("KRZ", "AKAI")
+                    else "renumbers the presets")
+            up_action.setToolTip(f"Move earlier — {hint}")
+            down_action.setToolTip(f"Move later — {hint}")
+
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+        if chosen is up_action:
+            self._move_rows(-1)
+            return
+        if chosen is down_action:
+            self._move_rows(+1)
+            return
         if chosen is rename_action:
             self._rename_samples(selected_only=True)
             return
@@ -701,7 +805,12 @@ class BankPane(QWidget):
         self._info_label.setText("")
         self._prune_audio_memo()
         self._list.clear()
-        for item in self._items:
+        # BOTH SIDES OF THIS ROW ARE WANTED, and neither branch knew about
+        # the other: the number this preset will get on the sampler came
+        # from feat/newbank-reorder, the audio it needs from master. A row
+        # reading "12 <tab> Dark Piano    6.0 MB" answers both questions a
+        # user has about it.
+        for row, item in enumerate(self._items):
             bank, preset, name = item
             audio = self._preset_audio(bank, preset)
             if audio is None:
@@ -713,12 +822,22 @@ class BankPane(QWidget):
                 label = f"{name}    no audio"
             else:
                 label = f"{name}    {human_size(audio)}"
+            number = self._preset_number(row)
+            if number is not None:
+                label = f"{number}\u2003{label}"
             widget_item = QListWidgetItem(label)
             widget_item.setData(Qt.ItemDataRole.UserRole, item)
-            widget_item.setToolTip(
-                "Audio this preset needs on its own. The bank's figure above "
-                "is DEDUPED, so these will not add up to it whenever two "
-                "presets share a sample.")
+            # AND BOTH TOOLTIPS. The branch set its own and master set one
+            # unconditionally three lines later, so a naive merge would have
+            # kept the number in the label and silently dropped its
+            # explanation -- the half of a conflict that resolves itself
+            # into looking fine.
+            tip = ("Audio this preset needs on its own. The bank's figure "
+                   "above is DEDUPED, so these will not add up to it "
+                   "whenever two presets share a sample.")
+            if number is not None:
+                tip = f"{self._number_tooltip(number)}\n\n{tip}"
+            widget_item.setToolTip(tip)
             self._list.addItem(widget_item)
         self._stack.setCurrentIndex(1 if self._items else 0)
         # EIII banks are placed on the exact same EMU3 CD/HD images E4B
