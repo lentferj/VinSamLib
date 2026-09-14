@@ -485,6 +485,27 @@ def load_sources_samples_for_test(sources: list, fmt: str) -> list:
 _DIAG_SEVERITIES = ("warning", "error")
 
 
+def _worth_interrupting_for(record) -> bool:
+    """Whether this diagnostic reaches the user.
+
+    SEVERITY IS NOT THE ONLY TEST, and assuming it was left a hole for
+    three days. mpc2emu's KRZ_LPGATE_APPROXIMATED is severity `info` with
+    **content_lost: true** -- a K2000 lowpass whose cutoff the amp envelope
+    scales, converted as a static filter at the starting frequency, because
+    no target format here has an envelope-scaled cutoff. That is a
+    different thing sharing a number, not a rougher version of the same
+    thing, and a filter on severity alone would have dropped it silently.
+
+    `content_lost` is the field whose entire job is to say something did
+    not survive. A record carrying it reaches the user whatever its
+    severity, because the severity says how loud the author was and the
+    flag says whether the user's material is intact.
+    """
+    if getattr(record, "severity", "") in _DIAG_SEVERITIES:
+        return True
+    return bool(getattr(record, "content_lost", False))
+
+
 @contextlib.contextmanager
 def _collect_diagnostics():
     """Collect mpc2emu's structured diagnostics for the block, if it has them.
@@ -548,7 +569,7 @@ def _diagnostic_risks(records) -> list[dict]:
     """
     out: list[dict] = []
     for d in records:
-        if getattr(d, "severity", "") not in _DIAG_SEVERITIES:
+        if not _worth_interrupting_for(d):
             continue
         detail = dict(getattr(d, "detail", None) or {})
         parts = [str(getattr(d, "message", "")).strip()]
