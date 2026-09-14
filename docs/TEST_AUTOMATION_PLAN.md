@@ -97,6 +97,28 @@ and the substring match around it was not; the perturbation was designed
 and whether it perturbed anything was assumed. **Confidence is where the
 untested reasoning is.**
 
+**A suite that only compares itself to itself cannot see a common-mode
+error.** (s3ked, the hard way) They ran a hardcoded 44100 against a JACK
+server at 48000; every check they had compared one of their own
+measurements against another, so the error was invisible to all of them
+and cost five withdrawn sections. What broke it was an *a priori* value
+— the probe note's own frequency — sitting in the same capture the whole
+time, recorded under a different question.
+
+**This project has exactly that exposure and it is already written down.**
+`roundtrip_krz_corpus.py` says so in its own second line: mpc2emu is
+write-only for KRZ, so there is no independent reader to cross-validate
+against and the test checks self-consistency instead — parse, assemble,
+re-parse, compare. Every KRZ claim we make is our own reader agreeing
+with our own writer. The E4B round trip is not in this position (it
+validates against mpc2emu's independent parser) and the EIII one is
+partly out of it.
+
+So the KRZ strand is single, it is known to be single, and the only
+external evidence is roughly six programs heard on hardware. That is not
+a defect to fix today; it is the thing to remember before believing a
+green KRZ result.
+
 **Carry a comparison whose answer you already know.** (eosed) Then the
 method's error is measured as a by-product, and a method too coarse for
 the question announces itself rather than waiting to be asked about.
