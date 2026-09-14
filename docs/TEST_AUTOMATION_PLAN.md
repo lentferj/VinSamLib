@@ -30,9 +30,11 @@ that a machine without a corpus reports "could not check" rather than
 are either real gaps or unmapped tests, and telling those apart is a job
 that must not be guessed at.
 
-**3. `tests/` is gitignored.** All 100 files are local to one machine and
-travel with nothing. This is the largest structural hole and it gates
-much of the rest — see "The decision that is Jan's".
+**3. `tests/` stays gitignored.** Jan's decision, 2026-09-14. All 100
+files are local to this machine and travel with nothing, deliberately.
+What follows from that is set out under "Untracked, and what that costs"
+— the short version is that the *record* has to live in tracked files,
+because the tests cannot.
 
 ---
 
@@ -142,12 +144,43 @@ so does removing one without lowering the baseline.
 | `ui/convert_options_dialog.py` | 2 |
 | three others | 1 each |
 
-## The decision that is Jan's
+## Untracked, and what that costs
 
-Tracking `tests/` puts ~100 files in the repository. Everything above
-assumes it: eosed's repo-invariants scan reads `git ls-files` and would
-otherwise pass cleanly over a tree containing none of the tests;
-k2kremote's backup directory exists only because there is no other net;
-and a test improvement made tonight could not be committed at all.
+Jan decided on 2026-09-14 that `tests/` stays ignored. Three things
+follow, and they are not all bad.
 
-Nothing is pushed. 16 commits are local and unreviewed.
+**Any tree-scanning invariant must read the WORKING TREE, never
+`git ls-files`.** eosed anticipated this and scoped theirs accordingly,
+with the reason in the docstring; that choice is now permanent rather
+than provisional. A tracked-set scan would pass cleanly over a tree
+containing none of the 100 test files — the worst available result,
+because it is indistinguishable from success.
+
+**There is no net under the tests but the ones we make.** k2kremote's
+backup before their 88-file conversion was the only reason that pass was
+safe to attempt. Bulk edits to `tests/` need a copy taken first, every
+time, as a working rule rather than a good habit.
+
+**The tracked artifacts carry the record, so they have to be the honest
+ones.** `docs/RELEASE_TEST_MATRIX.md`, this file, and `tools/` are what
+survive a clone. That is why the matrix's stale AKAI section mattered
+enough to correct rather than delete, and why `matrix_coverage.py`
+reports a difference instead of a document claiming a number.
+
+**It also reframes the portability work.** Running the suite with `HOME`
+emptied looked like a question about other machines, which no longer
+arises. It is not: a test that needs the corpus without declaring it is
+broken *here* too — it simply always finds what it never asked for, and
+would pass over nothing the day the NFS share is slow. The 36 that fail
+or crash on an empty home are 36 tests whose preconditions are unstated,
+and that is a defect on this machine, today.
+
+**One question left over, and it is not the same question.** The
+*harness* — `_status.py`, `run_manual.py`, `_fixtures.py`,
+`expected_failures.txt` — is infrastructure rather than tests, and it is
+the part whose loss would cost most. It could live in `tools/` and be
+tracked without putting a single test in the repository. Jan's call,
+asked separately rather than assumed, because reinterpreting a decision
+one has just been given is not the same as following it.
+
+Nothing is pushed. 111 commits are local and unreviewed.
