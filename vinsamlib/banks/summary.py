@@ -634,7 +634,14 @@ def summarize_akai_program(bank: akai.AkaiBank,
                 sample_name=z.sample_name,
                 lo_key=lo_key, hi_key=hi_key,
                 lo_vel=_clamp_key(z.lo_vel), hi_vel=_clamp_key(z.hi_vel),
-                root_key=samp.root_key if samp else 60,
+                # EFFECTIVE, not stored. A sample carrying -1200 cents of
+                # its own tuning sounds an octave from the root byte in its
+                # header, and the pane's job is to say what the sampler will
+                # play. mpc2emu reports the same number by a different route
+                # (it has no coarse-tune field, so the semitones go on the
+                # root), and the two disagreed on 274 of 418 samples until
+                # this line stopped reading the raw byte.
+                root_key=samp.effective_root_key if samp else 60,
                 loop=samp.loop if samp else "?",
                 sample_rate=samp.sample_rate if samp else None,
                 # The format carries 16-bit PCM and no bit-depth field,

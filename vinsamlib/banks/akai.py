@@ -76,7 +76,11 @@ Sample file layout:
     0x02        root note
     0x03..0x0f  name, 12 bytes
     0x13        playback type; 2 (and only 2) means "no loop"
-    0x14        pitch offset, signed 16-bit fixed point (cents * 256)
+    0x14        pitch offset, signed 16-bit: 256 units per SEMITONE
+                (so 2.56 per cent -- an octave down is -3072). This line
+                said "cents * 256" until 2026-09-14, which is out by a
+                factor of 100 and is why reading it gave -12 where the
+                field means -1200.
     0x1a        length in SAMPLES, 32-bit
     0x26        loop 1 END (LOOPAT1), 32-bit -- the point playback RETURNS
                 TO, not where the loop begins. 0x2c (LLNGTH1) measures
@@ -403,6 +407,45 @@ class AkaiSample:
         if not self.is_s3000:
             return declared
         return self._PLAYBACK_RATES[1 if self.body[0x01] else 0]
+
+    #: 256 raw units per SEMITONE, so 2.56 per cent. Derived rather than
+    #: typed, exactly as mpc2emu derives theirs: writing 2.56 as a literal
+    #: is how it gets mistyped, and this file's own header map carried
+    #: "cents * 256" -- a factor of 100 out -- for as long as the reader
+    #: has existed, unnoticed because nothing read the field.
+    _TUNE_UNITS_PER_SEMITONE = 256.0
+    _TUNE_UNITS_PER_CENT = _TUNE_UNITS_PER_SEMITONE / 100.0
+
+    @property
+    def tune_cents(self) -> float:
+        """The sample's own pitch offset, in cents. Signed; an octave down
+        is -1200.
+
+        Documented at 0x14 in this file's own header map since the reader
+        was written, and read by nothing until 2026-09-14 -- which is how
+        the Detail pane came to show a root note that ignored up to an
+        octave of tuning.
+        """
+        if len(self.body) < 0x16:
+            return 0.0
+        return _s16(self.body, 0x14) / self._TUNE_UNITS_PER_CENT
+
+    @property
+    def effective_root_key(self) -> int:
+        """The root note AFTER the sample's own coarse tuning.
+
+        TWO QUANTITIES SHARE THE NAME "root note" HERE, and comparing them
+        as one is what made 274 of 418 samples look like a decoding
+        disagreement with mpc2emu for five weeks. `root_key` is the byte the
+        file stores. This is what the sampler actually plays it at: a sample
+        stored with root 29 and -1200 cents of tuning sounds as root 41, and
+        mpc2emu reports the second because its model has no coarse-tune
+        field to put the semitones in.
+
+        Neither reading was wrong. The test comparing them was.
+        """
+        semis = int(self.tune_cents / 100.0)   # toward zero, as mpc2emu does
+        return max(0, min(127, self.root_key - semis))
 
     @property
     def declared_rate(self) -> int:
