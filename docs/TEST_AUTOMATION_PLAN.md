@@ -168,6 +168,20 @@ external evidence is roughly six programs heard on hardware. That is not
 a defect to fix today; it is the thing to remember before believing a
 green KRZ result.
 
+**A scan built on the fixed code cannot see the bug the fix removes.**
+(mpc2emu) Looking for WAVs with a `0xFFFFFFFF` pitch fraction *through
+the corrected reader* returns zero, by construction — the fix normalises
+exactly that value away. The zero is indistinguishable from "this
+library does not have it". Scan the raw bytes, and **keep a known count
+to check the scan against**: theirs was validated only because 2 062 was
+already known from another pass, and both of their wrong scans produced
+a clean-looking zero.
+
+This one has a second edge. Reading the field at the wrong offset in the
+`smpl` chunk yields `numSampleLoops`, which is 1 on nearly everything —
+so a wrong offset produces a plausible answer too. Both of this
+project's first attempts, independently, read the wrong dword.
+
 **Carry a comparison whose answer you already know.** (eosed) Then the
 method's error is measured as a by-product, and a method too coarse for
 the question announces itself rather than waiting to be asked about.
