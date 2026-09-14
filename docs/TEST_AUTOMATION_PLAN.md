@@ -133,8 +133,26 @@ way to know a check works:
       manual_image_pane_clicks             FAIL  'AkaiVolume' has no 'delete'
       manual_every_button_survives_a_press FAIL  [yes] same
 
-The sweep covers the image pane, New Bank and Pending — three tests
-rather than thirty conversions.
+The sweep covers the image pane, New Bank and Pending; a fourth test
+does the same for the main window, whose verbs are menu actions rather
+than buttons and so need a different driver. Four tests, not thirty
+conversions.
+
+Each was validated by planting a real fault and watching it fail — a
+delete routed back through the VFS, an `IndexError` in Remove Selected,
+an `AttributeError` in a checkable menu action. **A check that has never
+caught anything is not known to work**, and two of these did not until
+they were made to.
+
+The menu sweep's **skip list is its most important part**, and the
+reasons in it are of exactly two kinds: the action waits for a human (a
+native file dialog no synthetic trigger can answer) or it ends the
+process. "Might do something inconvenient" is not a reason and must
+never appear there — that is how an exemption list becomes the place
+where inconvenient truths are filed. 9 of 15 actions are skipped, and
+that ratio is itself the argument for the dialog seam: two thirds of
+this window's verbs are untestable because of where they raise a
+modal.
 
 **Two flaws were found in the sweep itself, both by planting a bug
 rather than by reading it.** Its first version **passed** the test. It declined every
