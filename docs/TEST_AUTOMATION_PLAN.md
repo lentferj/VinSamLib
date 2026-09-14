@@ -104,15 +104,55 @@ directly. Two runs were reported as evidence before this was noticed.
 
 ---
 
+## Driving the GUI as a user, not as a caller
+
+Asked on 2026-09-14 whether the automation had actually been run, the
+honest answer was no. The suite exercises GUI code — 20 tests build a
+real `MainWindow` — but it does not operate the application:
+
+    simulate real input (click/key):   2 of 88
+    call a private handler directly:  30 of 88
+
+Calling the handler skips the button, so **a button in the wrong state is
+invisible**: the handler runs whether or not a user could have reached
+it. That is exactly how Delete came to be enabled on a volume whose class
+cannot delete — every test called `_delete_selected()`, which was guarded
+and returned cleanly.
+
+Two pieces answer it. `tests/_click.py` presses things and traps the
+modals a synthetic click cannot otherwise answer. And
+`manual_every_button_survives_a_press` is the generalisation: it knows
+what no button means, and asserts the one property all of them share —
+**a user can press it and the application does not raise** — across four
+states and with confirmations both declined and accepted.
+
+**Both were validated by reintroducing the real bug**, which is the only
+way to know a check works:
+
+    delete routed back through the VFS, as before mpc2emu's eac5d11
+      manual_image_pane_clicks             FAIL  'AkaiVolume' has no 'delete'
+      manual_every_button_survives_a_press FAIL  [yes] same
+
+The sweep's first version **passed** that test. It declined every
+confirmation, so it pressed the destructive button and stopped at the
+question — the path the bug lived on never ran. A check that presses
+everything and confirms nothing looks thorough and exercises the safe
+half. It now answers both ways, and the `[yes]`/`[no]` tag says which
+pass found a fault.
+
 ## What is left, in order
 
-1. **Declare preconditions for the 36.** Evidence-driven: the
+1. **Extend the press-sweep to the other panes** — New Bank, Pending
+   and the main window. One test per pane, not 30 conversions: the
+   sweep covers buttons nobody thought to test, which is where this
+   class of bug lives.
+2. **Declare preconditions for the 36.** Evidence-driven: the
    another-machine run names them exactly.
-2. **Map the remaining 40 matrix cells.** `suggest_coverage.py` proposes;
+3. **Map the remaining 40 matrix cells.** `suggest_coverage.py` proposes;
    a person decides. Cells with no test at all become new tests.
-3. **Fill Matrix H and J.** Every option at its boundaries, per target;
+4. **Fill Matrix H and J.** Every option at its boundaries, per target;
    the format details no cross-product reaches.
-4. **The image set per device**, and the listening pass — the only stage
+5. **The image set per device**, and the listening pass — the only stage
    that wants hardware, and deliberately outside the automation.
 
 ## A finding that needs a decision of its own
