@@ -156,10 +156,14 @@ than provisional. A tracked-set scan would pass cleanly over a tree
 containing none of the 100 test files — the worst available result,
 because it is indistinguishable from success.
 
-**There is no net under the tests but the ones we make.** k2kremote's
+**There is no net under the tests but the ones we make**, so it is a
+command rather than a discipline: `tools/backup_tests.py` (tracked)
+writes a zip outside the repository (untracked). Source only by default
+— `tests/` is 37 MB of which 28 MB is Akai disc images that do not
+change when a test is edited, and a backup too expensive to take is a
+backup nobody takes. `--with-data` covers the other accident. k2kremote's
 backup before their 88-file conversion was the only reason that pass was
-safe to attempt. Bulk edits to `tests/` need a copy taken first, every
-time, as a working rule rather than a good habit.
+safe to attempt.
 
 **The tracked artifacts carry the record, so they have to be the honest
 ones.** `docs/RELEASE_TEST_MATRIX.md`, this file, and `tools/` are what
@@ -175,12 +179,49 @@ would pass over nothing the day the NFS share is slow. The 36 that fail
 or crash on an empty home are 36 tests whose preconditions are unstated,
 and that is a defect on this machine, today.
 
-**One question left over, and it is not the same question.** The
-*harness* — `_status.py`, `run_manual.py`, `_fixtures.py`,
-`expected_failures.txt` — is infrastructure rather than tests, and it is
-the part whose loss would cost most. It could live in `tools/` and be
-tracked without putting a single test in the repository. Jan's call,
-asked separately rather than assumed, because reinterpreting a decision
-one has just been given is not the same as following it.
+**The harness stays local too.** Asked separately and answered the same
+way: everything under `tests/` is local, machinery included. So the
+mitigation is not to move it but to make it **reconstructible** — the
+contract below is tracked even though the code is not, and
+`tools/backup_tests.py` makes the snapshot a command rather than a
+discipline.
+
+### The harness contract, recorded here because the code is not tracked
+
+If `tests/` is ever lost, this is what has to be rebuilt. It is written
+down rather than remembered for the same reason the matrix is: the thing
+nobody can reconstruct afterwards is the part that was obvious at the
+time.
+
+**Exit codes**, one per outcome, because two states cannot express the
+difference between "did not run" and "ran and was fine":
+
+| code | meaning |
+|---|---|
+| 0 | PASSED — ran, checks held |
+| 77 | CHECKED_NOTHING — a precondition was absent, nothing was verified |
+| 1 | FAILED — ran, something is wrong |
+| 99 | CRASHED — could not complete; a failure, kept distinct so a reader sees which kind of red |
+
+77 because automake and most CI runners already read it as "skipped".
+
+**`need(condition, what)`** declares a precondition and raises `Skipped`,
+which must never be an `AssertionError` — it must not be caught by a
+handler written for failures, and must never come from a check that ran.
+
+**`require(n, ...)`** raises `Vacuous` when a check ran against a sample
+of zero. **`Vacuous` is a FAILURE and must never map to 77.** A test that
+never started is not a test that looked at nothing and said yes; merging
+them rebuilds, inside the reporting layer, the bug that let four real
+defects survive a green suite.
+
+**`expected_failures.txt`** is `name: reason`, and an entry without a
+reason is refused at load — "known failure" is precisely what it
+replaces. The runner exits non-zero when a listed test **starts
+passing**, naming it as stale.
+
+**Corpus and scratch roots come from the environment**
+(`$VINSAMLIB_CORPUS`, `$VINSAMLIB_SCRATCH`), never from a literal home
+directory.
 
 Nothing is pushed. 111 commits are local and unreviewed.
