@@ -97,6 +97,17 @@ and the substring match around it was not; the perturbation was designed
 and whether it perturbed anything was assumed. **Confidence is where the
 untested reasoning is.**
 
+**A contract read from a generated file survives changes a message
+cannot describe in advance.** In one day mpc2emu added two diagnostic
+codes, removed one, corrected a `content_lost` flag and changed two
+filter mappings. Nothing here needed editing, because the test sweeps
+their `docs/diagnostics.json` — generated from their source and asserted
+on their side — rather than a list somebody would have had to remember
+to update. **The removal is the case worth having checked**: an addition
+is safe for a sweep by construction, a removal is where a sweep and a
+by-name lookup diverge. Verified by running it, on their suggestion,
+rather than reasoning from the addition.
+
 **When two guards protect the same thing, a test must say which one it
 is testing.** The AKAI directory-entry ceiling is enforced twice — once
 here with a message that explains programs and samples share the entries
@@ -113,9 +124,22 @@ test.
 **A warning that fires where nothing is wrong destroys the ones that
 matter.** (mpc2emu) They shipped `KRZ_NULL_STAGE_SPACED` with
 `content_lost: true` on reasoning that turned out wrong in both halves,
-and corrected it to `false` the same day — not because the flag was
-harmless, but because "a `content_lost` that fires where nothing is lost
-trains people to ignore the ones where something is".
+corrected it to `false` four hours later, and **deleted the code and the
+rule that emitted it four hours after that** — all on the day it
+shipped. Their reason for the correction was that "a `content_lost` that
+fires where nothing is lost trains people to ignore the ones where
+something is"; the deletion went further, because the behaviour it
+guarded against does not exist. k2kremote measured it twice with a
+positive control in the same run, and the programs that should have
+differed agreed to 0.00 dB while the control separated by a factor of
+140.
+
+The original finding was explained rather than merely contradicted: the
+bank it came from wrote envelope bytes under a superseded layout, so a
+`3` landed in the loop flag and every program in it had an active loop
+nobody knew about. **A wrong reading that produces a plausible
+phenomenon is worse than one that produces nonsense** — nonsense gets
+investigated.
 
 That is the cost side of every rule above. A fixture that cannot fail, a
 precondition that cannot fire, an exemption that cannot expire and a
