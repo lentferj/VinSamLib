@@ -2359,6 +2359,37 @@ and every row was locked. The control worked only on hand-authored banks.
 
 ### Akai S1000 / S3000
 
+**Playback rates: 22050 and 44100, and nothing else.** The sampler's
+loader reads the rate from an index byte in the sample record and
+**ignores the `SSRATE` field beside it**, so a sample carried at any
+other rate ships with audio at one rate and a header claiming another —
+and the machine plays the header's. Writing an Akai volume therefore
+resamples anything else to a rate the machine can play, immediately
+before the write and after every option that could change a rate.
+
+This is not hypothetical. `--resample emulator2` leaves samples at
+27 777 Hz — that is the point of the option — and until 2026-09-13
+nothing snapped them back. A volume built that way held 290 803 frames
+where the source had 461 680: **10.47 s of audio at 27 777 played as
+6.59 s at 44 100, every sample +802 cents sharp.** Nothing reported it,
+because the index byte said 44 100 and every reader on both sides agreed
+the volume was fine. If a sample cannot be resampled, the write is
+**refused** rather than warned about.
+
+The Detail pane says so for volumes that already exist: *"N sample(s)
+declare a rate this sampler cannot play"*, with the cents. A disc
+written before that fix cannot be repaired in place — re-convert it.
+
+**Working with Akai images.** A hard disk or CD-ROM image can be created
+**empty** and filled later; only a floppy needs its one volume up front.
+A volume can be **deleted** from an image in place, which frees its
+blocks without disturbing its neighbours. And an append that does not
+fit **rebuilds the image larger**, carrying the existing volumes across
+unchanged, the same way an EMU3 image has always behaved — the file
+itself cannot grow, because a partition table declares its own extent
+and bytes past it are unaddressable.
+
+
 **Nothing here is confirmed on an Akai sampler.** Akai never published
 the disk or file format; it is reconstructed from Hiroyuki Ohsaki's
 binary analysis, cross-checked against `akaiutil`, and — the part that
