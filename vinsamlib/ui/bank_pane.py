@@ -180,6 +180,16 @@ class BankPane(QWidget):
         self._info_gen = 0
         self._pre_add_snapshot: Optional[list] = None
         self._was_over_limit = False
+        #: Set by "Keep Anyway", cleared the moment the bank fits again.
+        #: Settings promises this button to someone whose hardware is
+        #: bigger than the default figure assumes, and without a flag the
+        #: promise was empty -- the box closed and Save stayed disabled.
+        self._limit_override = False
+        #: Whether the current overage is one no amount of installed RAM
+        #: can fix (a format's own preset/file ceiling). Keep Anyway must
+        #: not clear THAT: assemble() refuses it anyway, so the build
+        #: would fail later and somewhere with less to say about why.
+        self._over_hard = False
         self._live_workers: list[workers.Worker] = []
         self._recompute_timer = QTimer(self)
         self._recompute_timer.setSingleShot(True)
@@ -1550,7 +1560,8 @@ class BankPane(QWidget):
             limit_bytes = self._config.e4b_bank_limit_mb * 1024 * 1024
             self._meter_label.setText(
                 f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}")
-            over = len(data) > limit_bytes or n > _E4B_MAX_PRESETS
+            hard = n > _E4B_MAX_PRESETS
+            over = len(data) > limit_bytes or hard
             detail = (f"{n} presets exceed the E4XT's {_E4B_MAX_PRESETS}-preset limit."
                       if n > _E4B_MAX_PRESETS else
                       f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
@@ -1564,7 +1575,8 @@ class BankPane(QWidget):
             limit_bytes = self._config.e4b_bank_limit_mb * 1024 * 1024
             self._meter_label.setText(
                 f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}")
-            over = len(data) > limit_bytes or n > _EIII_MAX_PRESETS
+            hard = n > _EIII_MAX_PRESETS
+            over = len(data) > limit_bytes or hard
             detail = (f"{n} presets may exceed the EIIIX/ESI {_EIII_MAX_PRESETS}-preset "
                       f"limit (some presets use more than one preset slot)."
                       if n > _EIII_MAX_PRESETS else
@@ -1600,7 +1612,12 @@ class BankPane(QWidget):
                 meter += (f"  ·  {rom_refs} ROM refs ≈ {secs // 60}m{secs % 60:02d}s "
                           f"to load")
             self._meter_label.setText(meter)
-            over = (len(data) > limit_bytes or n > _KRZ_MAX_PRESETS or over_pram)
+            hard = n > _KRZ_MAX_PRESETS
+            # PRAM is NOT hard. It is a Settings spinbox describing one
+            # machine's fitted memory, and the expansion exists -- same
+            # class as the RAM figure beside it, not the same class as a
+            # preset ceiling the format itself cannot encode.
+            over = (len(data) > limit_bytes or hard or over_pram)
             if n > _KRZ_MAX_PRESETS:
                 detail = f"{n} presets exceed the K2000's {_KRZ_MAX_PRESETS}-preset limit."
             elif over_pram:
@@ -1618,7 +1635,7 @@ class BankPane(QWidget):
                           f"{_human(limit_bytes)} K2000 RAM limit (Settings…).")
         self._meter_label.setStyleSheet(
             f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;")
-        self._save_btn.setEnabled(not over)
+        self._set_over(over, hard)
         self._maybe_warn_over_limit(over, detail)
 
     def _apply_size_akai(self, gen: int, files: list, n: int) -> None:
@@ -1648,8 +1665,13 @@ class BankPane(QWidget):
             f"{n} program(s), {len(files)} file(s) — "
             f"{_human(total)} / {_human(limit_bytes)} — "
             f"{objs} / {budget} objects")
-        over = (total > limit_bytes or len(files) > _AKAI_MAX_FILES
-                or objs > budget)
+        # The 510-entry directory is the only hard one here: it is the
+        # volume's own structure. The byte figure and the object budget are
+        # both Settings spinboxes about one 32 MB machine -- and the object
+        # budget's own message says what the machine does past it is NOT
+        # verified, which is a reason to let someone try, not to stop them.
+        hard = len(files) > _AKAI_MAX_FILES
+        over = (total > limit_bytes or hard or objs > budget)
         detail = (f"{len(files)} files exceed the {_AKAI_MAX_FILES}-entry AKAI "
                   f"volume directory (samples and programs share it)."
                   if len(files) > _AKAI_MAX_FILES else
@@ -1666,8 +1688,23 @@ class BankPane(QWidget):
                   f"sampler RAM limit (Settings…).")
         self._meter_label.setStyleSheet(
             f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;")
-        self._save_btn.setEnabled(not over)
+        self._set_over(over, hard)
         self._maybe_warn_over_limit(over, detail)
+
+    def _set_over(self, over: bool, hard: bool) -> None:
+        """Record the overage and set Save from it.
+
+        Save is enabled when the bank fits, or when the user has already
+        pressed Keep Anyway AND the overage is one more hardware could
+        actually clear. The override is dropped the moment the bank fits
+        again, so a later add that goes over asks afresh rather than
+        inheriting a decision made about a different bank.
+        """
+        self._over_hard = bool(hard)
+        if not over:
+            self._limit_override = False
+        self._save_btn.setEnabled(not over
+                                  or (self._limit_override and not hard))
 
     def _apply_size_error(self, gen: int, message: str) -> None:
         if gen != self._gen:
@@ -1676,6 +1713,10 @@ class BankPane(QWidget):
         last_line = workers.last_error_line(message)
         self._meter_label.setText(f"Can't assemble: {last_line}")
         self._meter_label.setStyleSheet("color: #c0392b; font-size: 11px;")
+        # assemble() actually refused: there are no bytes to save, so this
+        # is not a limit anyone can keep anyway.
+        self._over_hard = True
+        self._limit_override = False
         self._save_btn.setEnabled(False)
         self._maybe_warn_over_limit(True, _friendly_assemble_error(last_line))
 
@@ -1743,6 +1784,20 @@ class BankPane(QWidget):
                 # _remove_selected(), just reached a different way.
                 self._reset_format_lock()
             self._refresh()
+            return
+        # KEEP ANYWAY IS THE FALL-THROUGH, and it used to do nothing at all:
+        # the box closed, Save stayed disabled, and Send to Image went on
+        # refusing with "remove some presets first". Settings tells the user
+        # this button is there for someone whose sampler holds more than the
+        # default figure assumes, so doing nothing made that sentence false.
+        #
+        # Honoured only for a SOFT overage. A bank past the format's own
+        # preset or directory ceiling cannot be assembled at all, and
+        # enabling Save there would move the failure to the end of a build
+        # with less to say about why.
+        if not self._over_hard:
+            self._limit_override = True
+            self._save_btn.setEnabled(True)
 
     # -- save --------------------------------------------------------------------
 
