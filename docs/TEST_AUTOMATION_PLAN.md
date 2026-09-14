@@ -217,6 +217,36 @@ hook; with it the same plant reports:
 — naming the button, the exception and the states, and correctly staying
 silent in the one state where a selection exists.
 
+## An intermittent hang, observed once
+
+`manual_ui_smoke_convert_preset` reported **TIMEOUT at 300.1 s** in the
+run of 2026-09-14 12:05. It takes **3.4–3.5 s** in every other run
+before and since, and passed three isolated runs and a full suite
+afterwards. Recorded rather than dismissed, with what is known:
+
+* **Not machine load.** Every other test in that run was within noise of
+  the previous one — 41.6 s against 41.6, 71 against 70, 173 against
+  140. Only this one moved, and it moved by a factor of 88.
+* **Not obviously the day's change.** It converts to KRZ, and
+  `content_lost` had just been un-filtered, which lets
+  `KRZ_LPGATE_APPROXIMATED` reach the risk box — a modal, which in a
+  headless run nobody answers. That is a plausible mechanism and it is
+  **not evidence**; the same code passed four runs.
+* **The shape has form here.** Worker threads plus a modal is exactly
+  the combination that makes `QTest.qWait` segfault under PySide6, which
+  is why this project has its own `qwait` shim.
+
+It is written down because an intermittent hang in worker-and-modal code
+is the kind of thing that gets called flaky and turns out to be a race.
+k2kremote's TIMEOUT classification is what made it visible at all: as a
+plain non-zero exit it would have been indistinguishable from a failed
+assertion, and at 300 s it would have been read as a slow test.
+
+**If it recurs, the next thing to do is capture a stack** rather than
+reason about it further — `faulthandler.dump_traceback_later()` in the
+harness would name the frame it is blocked in, which is the one fact
+nobody has.
+
 ## What is left, in order
 
 1. **Extend the press-sweep to the other panes** — New Bank, Pending
