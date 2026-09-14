@@ -133,12 +133,34 @@ way to know a check works:
       manual_image_pane_clicks             FAIL  'AkaiVolume' has no 'delete'
       manual_every_button_survives_a_press FAIL  [yes] same
 
-The sweep's first version **passed** that test. It declined every
+The sweep covers the image pane, New Bank and Pending — three tests
+rather than thirty conversions.
+
+**Two flaws were found in the sweep itself, both by planting a bug
+rather than by reading it.** Its first version **passed** the test. It declined every
 confirmation, so it pressed the destructive button and stopped at the
 question — the path the bug lived on never ran. A check that presses
 everything and confirms nothing looks thorough and exercises the safe
 half. It now answers both ways, and the `[yes]`/`[no]` tag says which
 pass found a fault.
+
+And the second flaw was worse: **an exception raised inside a Qt slot
+does not propagate to the caller.** PySide6 prints the traceback and
+routes it to `sys.excepthook`, so a `try/except` around
+`QTest.mouseClick` never sees it. Planting an `IndexError` in "Remove
+Selected" produced a traceback on stderr and a **PASSED** verdict. A
+sweep whose entire purpose is "pressing this must not raise", which
+cannot observe a raise, is decoration. `_click.SlotErrors` installs the
+hook; with it the same plant reports:
+
+    FAIL: 4 button press(es) raised:
+       [no/newbank empty]        'Remove Selected' raised IndexError
+       [no/newbank/no selection] 'Remove Selected' raised IndexError
+       [yes/newbank empty]       ...
+       [yes/newbank/no selection] ...
+
+— naming the button, the exception and the states, and correctly staying
+silent in the one state where a selection exists.
 
 ## What is left, in order
 
