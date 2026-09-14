@@ -97,6 +97,19 @@ and the substring match around it was not; the perturbation was designed
 and whether it perturbed anything was assumed. **Confidence is where the
 untested reasoning is.**
 
+**When two guards protect the same thing, a test must say which one it
+is testing.** The AKAI directory-entry ceiling is enforced twice — once
+here with a message that explains programs and samples share the entries
+and tells you to split the folder, and once in mpc2emu's writer with its
+own. A test asserting only "something raised and the text contains 510"
+passed with ours deliberately disabled, because theirs caught it.
+
+Ours is the one under test: it is what the user reads and the only one
+that says what to DO. Theirs is the backstop, and **a backstop that
+quietly becomes the only guard is how the message a user sees degrades
+without anything failing.** Found by disabling ours, not by reading the
+test.
+
 **A warning that fires where nothing is wrong destroys the ones that
 matter.** (mpc2emu) They shipped `KRZ_NULL_STAGE_SPACED` with
 `content_lost: true` on reasoning that turned out wrong in both halves,
