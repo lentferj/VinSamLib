@@ -2485,12 +2485,18 @@ itself cannot grow, because a partition table declares its own extent
 and bytes past it are unaddressable.
 
 
-**Nothing here is confirmed on an Akai sampler.** Akai never published
-the disk or file format; it is reconstructed from Hiroyuki Ohsaki's
-binary analysis, cross-checked against `akaiutil`, and — the part that
-actually settles arguments — against a growing set of **real commercial
-library discs from a dozen publishers**, in both the S1000 and S3000
-formats. Every figure below is from this project's own run over the discs
+**Banks and images written here have been built and loaded on a real
+S3000XL** — by hand, on 2026-09-13, and that is where the findings about
+images, volumes and partitions in this section come from rather than
+from reading a format note. What is *not* settled is said where it
+applies: the attack law is the best available and carries an error of
+order tens of percent, and the filter mapping is partial by construction.
+
+Akai never published the disk or file format; it is reconstructed from
+Hiroyuki Ohsaki's binary analysis, cross-checked against `akaiutil`,
+and — the part that settled most arguments before the hardware did —
+against a growing set of **real commercial library discs from a dozen
+publishers**, in both the S1000 and S3000 formats. Every figure below is from this project's own run over the discs
 present at the time, not from upstream's totals. That is what the ✅ column below means and
 does not mean.
 
