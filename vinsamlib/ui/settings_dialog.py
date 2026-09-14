@@ -150,7 +150,12 @@ class SettingsDialog(QDialog):
         limits_hint.setWordWrap(True)
         layout.addWidget(limits_hint)
 
-        from PySide6.QtWidgets import QCheckBox
+        # The local import this had is gone: master now imports QCheckBox at
+        # module level, and a function-local `from ... import QCheckBox`
+        # makes the name local for the WHOLE function -- so the debug
+        # checkbox built eighty lines earlier raised UnboundLocalError
+        # before this line ever ran. The merge introduced it; opening
+        # Settings crashed.
         self._loop_click_box = QCheckBox("Check loops for audible clicks")
         self._loop_click_box.setChecked(config.loop_click_check)
         layout.addWidget(self._loop_click_box)
