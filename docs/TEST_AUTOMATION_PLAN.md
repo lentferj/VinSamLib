@@ -97,6 +97,18 @@ and the substring match around it was not; the perturbation was designed
 and whether it perturbed anything was assumed. **Confidence is where the
 untested reasoning is.**
 
+**A warning that fires where nothing is wrong destroys the ones that
+matter.** (mpc2emu) They shipped `KRZ_NULL_STAGE_SPACED` with
+`content_lost: true` on reasoning that turned out wrong in both halves,
+and corrected it to `false` the same day — not because the flag was
+harmless, but because "a `content_lost` that fires where nothing is lost
+trains people to ignore the ones where something is".
+
+That is the cost side of every rule above. A fixture that cannot fail, a
+precondition that cannot fire, an exemption that cannot expire and a
+coverage claim nothing defends all waste attention quietly; a false
+alarm spends it loudly and takes the true alarms with it.
+
 **A suite that only compares itself to itself cannot see a common-mode
 error.** (s3ked, the hard way) They ran a hardcoded 44100 against a JACK
 server at 48000; every check they had compared one of their own
