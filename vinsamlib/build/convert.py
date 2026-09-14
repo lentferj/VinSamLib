@@ -804,6 +804,35 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
                 f"S3000XL can play (it plays 22050 and 44100 only). Writing "
                 f"them would produce a volume that sounds sharp and short on "
                 f"the machine, so nothing was written.")
+        # A SUCCESSFUL SNAP IS STILL A CHANGE TO THE USER'S AUDIO, and until
+        # now it was the only irreversible one this pipeline made in silence.
+        # mpc2emu's snapper `print`s each resample and `_diag`s only the
+        # FAILURES, and _run_captured discards stdout on success -- so a
+        # 48 kHz library converted cleanly, played correctly, and never
+        # mentioned that every sample had been resampled.
+        #
+        # Reported, not refused: the S3000XL plays 22050 and 44100 and
+        # nothing else, so this is the only way to produce a working volume.
+        # That is the same standing as AKAI_FILTER_SHAPE_LOST, which is
+        # equally unavoidable and is equally reported -- an unavoidable
+        # change is still a change the person who owns the material gets to
+        # know about.
+        n_snapped = int((snapped or {}).get("snapped") or 0)
+        if n_snapped and risks_out is not None:
+            risks_out.append({
+                "code": "AKAI_RATE_SNAPPED",
+                "subject": out_stem,
+                "message": (
+                    f"{n_snapped} sample(s) were resampled to 22050 or 44100 Hz. "
+                    f"An S3000XL plays those two rates only -- it reads an index "
+                    f"byte and ignores the stored rate, so anything else would "
+                    f"have played transposed rather than failing. The audio in "
+                    f"this volume is not bit-identical to the source."),
+                "body": f"{n_snapped} sample(s) resampled for the S3000XL",
+                "content_lost": False,
+                "detail": {"snapped": n_snapped,
+                           "unchanged": int((snapped or {}).get("unchanged") or 0)},
+            })
         _run_captured(akai_writer.write_akai_bank, bank, str(out_path), out_stem)
     elif opts.target_format == "KRZ":
         out_path = tmp_dir / f"{out_stem}.krz"
