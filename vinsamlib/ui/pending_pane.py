@@ -34,7 +34,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDia
 from . import workers
 from .. import tempdirs
 from ..banks import akai
-from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _sanitize_bank_name
+from .bank_pane import (_ASSEMBLE_FNS, _FORMAT_EXT, _LOOP_REPAIRABLE,
+                        _sanitize_bank_name)
 from .convert_options_dialog import ConvertOptionsDialog
 from ..build.convert import (apply_conversion, load_sources_samples_for_test,
                               polyphony_risk_lines)
@@ -105,6 +106,13 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         velocity = entry.get("voice_velocity") or {}
         if velocity and fmt == "E4B":
             kwargs["voice_velocity"] = velocity
+        # Gated on the same list the pane binds by, imported rather than
+        # spelled out again here: the rename above is the cautionary tale of
+        # a SECOND copy of a format list, which went stale and dropped KRZ
+        # renames on the way to an image.
+        repairs = entry.get("loop_repair") or {}
+        if repairs and fmt in _LOOP_REPAIRABLE:
+            kwargs["loop_repair"] = repairs
         data = fn(selections, **kwargs)
         ext = _FORMAT_EXT[fmt]
         # Session-scoped: the returned paths go to the image builders, which
@@ -127,7 +135,11 @@ _ROW_INDEX_ROLE = Qt.ItemDataRole.UserRole + 1
 
 class PendingBanksPane(QWidget):
     statusMessage = Signal(str)
-    moveToNewBankRequested = Signal(str, str, list, dict, dict, dict)   # (+ voice_velocity)
+    # EACH SIDE IS A SUPERSET IN ONE SIGNAL AND NOT THE OTHER, so neither
+    # version could simply win. The branch added loop_repair to the first
+    # (its emit already carried master's voice_velocity); master added the
+    # partition groups to the second, which the branch never had.
+    moveToNewBankRequested = Signal(str, str, list, dict, dict, dict, dict)   # (+ loop_repair)
     buildRequested = Signal(list, str, list)          # (paths, format, partition groups)
 
     def __init__(self, parent=None):
@@ -265,7 +277,8 @@ class PendingBanksPane(QWidget):
     def add_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
                      sample_renames: Optional[dict] = None,
                      zone_placement: Optional[dict] = None,
-                     voice_velocity: Optional[dict] = None) -> bool:
+                     voice_velocity: Optional[dict] = None,
+                     loop_repair: Optional[dict] = None) -> bool:
         if not items:
             return False
         if self._format is not None and fmt != self._format:
@@ -278,7 +291,8 @@ class PendingBanksPane(QWidget):
                                "convert_opts": None,
                                "sample_renames": dict(sample_renames or {}),
                                "zone_placement": dict(zone_placement or {}),
-                               "voice_velocity": dict(voice_velocity or {})})
+                               "voice_velocity": dict(voice_velocity or {}),
+                               "loop_repair": dict(loop_repair or {})})
         self._refresh()
         self._list.setCurrentRow(len(self._pending) - 1)
         if (name or "").strip().upper() in self._duplicate_names():
@@ -670,7 +684,8 @@ class PendingBanksPane(QWidget):
         self.moveToNewBankRequested.emit(entry["name"], entry["format"], entry["items"],
                                           dict(entry.get("sample_renames") or {}),
                                           dict(entry.get("zone_placement") or {}),
-                                          dict(entry.get("voice_velocity") or {}))
+                                          dict(entry.get("voice_velocity") or {}),
+                                          dict(entry.get("loop_repair") or {}))
 
     def _clear(self) -> None:
         self._pending = []

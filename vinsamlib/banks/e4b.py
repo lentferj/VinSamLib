@@ -46,6 +46,8 @@ from __future__ import annotations
 
 import re
 import struct
+
+from . import loopcheck
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -127,6 +129,105 @@ class E4BSample:
     @property
     def size(self) -> int:
         return len(self.body)
+
+
+#: Bytes of E3S1 header before the PCM. Every loop/length field in the header
+#: is a BYTE offset from the struct start, so a frame index is
+#: `(field - PCM_OFFSET) // 2` (E4B_FORMAT.md, sample-header table).
+PCM_OFFSET = 92
+
+#: Where the PCM actually begins in the chunk body. The header fields count
+#: from 92, but the body carries a 2-byte `sample_idx` in front of emu3bm's
+#: 92-byte struct — mpc2emu's parser slices `body[start_l + 2:]` for exactly
+#: this reason. So a frame index is `(field - 92) // 2` and it indexes a
+#: buffer starting at 94.
+PCM_START = 94
+
+#: E4B PCM is LITTLE-endian, where KRZ is big. Passed explicitly to
+#: banks/loopcheck.py, which reads one as the other otherwise and reports a
+#: corpus of impossibly clean loops.
+PCM_BIG_ENDIAN = False
+
+#: `options` bit that marks a forward loop (0x0031 = MONO_L | LOOP).
+_OPT_LOOP = 0x0001
+
+
+def sample_pcm(samp: "E4BSample") -> bytes:
+    """The sample's PCM, without the header. For a stereo sample this is the
+    left channel followed by the right; loop points index the left."""
+    return samp.body[PCM_START:]
+
+
+def sample_loops(samp: "E4BSample") -> list[tuple[int, int]]:
+    """[(loop_start_frame, loop_end_frame)] for a looped E4B sample.
+
+    Frames are indices into this sample's OWN PCM (unlike KRZ, where they are
+    absolute in a shared region), and `loop_end_frame` is the last frame
+    PLAYED.
+
+    THE +1 IS NOT A GUESS. `loop_end_l` stores the frame BEFORE the true
+    inclusive last loop frame, so the last played frame is
+    `(loop_end_l - 92) // 2 + 1`. ConvertWithMoss established this (PR #220)
+    by measuring the amplitude step at the loop seam across a commercial
+    corpus: reading the raw value left a discontinuity in many samples, and
+    the +1 raised the clean-seam share from 78% to 95%. mpc2emu encodes and
+    decodes it consistently, so it matters only when reading a third-party
+    bank -- which is exactly what this program does.
+    """
+    b = samp.body
+    if len(b) < 62:
+        return []
+    opts = struct.unpack_from("<H", b, 60)[0]
+    if not (opts & _OPT_LOOP):
+        return []
+    start_b = struct.unpack_from("<I", b, 38)[0]
+    end_b = struct.unpack_from("<I", b, 46)[0]
+    if start_b < PCM_OFFSET or end_b < PCM_OFFSET:
+        return []
+    frames = max(0, (len(b) - PCM_START) // 2)
+    start = (start_b - PCM_OFFSET) // 2
+    end = min((end_b - PCM_OFFSET) // 2 + 1, frames - 1)
+    return [(start, end)] if end > start >= 0 else []
+
+
+def _repair_body_loops(body: bytes, kind: str) -> bytes:
+    """Apply one loop repair to a sample body, returning a new body.
+
+    The body is header+PCM, so a cross-fade rewrites bytes in place from
+    PCM_START and the two point repairs rewrite the loop fields at 38 and 46.
+
+    THE +1 GOES BACK IN. `sample_loops` returns the last frame PLAYED, and
+    `loop_end_l` stores the frame BEFORE it (ConvertWithMoss PR #220), so the
+    end written here is `(end - 1) * 2 + PCM_OFFSET`. Reading and writing
+    through different conventions would move every repaired loop by one frame
+    — small enough to look like success and audible on a short loop.
+    """
+    out = bytearray(body)
+    for start, end in sample_loops_of_body(bytes(out)):
+        pcm = bytes(out[PCM_START:])
+        got = loopcheck.apply_repair(kind, pcm, start, end,
+                                     big_endian=PCM_BIG_ENDIAN)
+        if got is None:
+            continue
+        new_pcm, new_start, new_end = got
+        if new_pcm is not None:
+            out[PCM_START:] = new_pcm
+        struct.pack_into("<I", out, 38, new_start * 2 + PCM_OFFSET)
+        struct.pack_into("<I", out, 46, (new_end - 1) * 2 + PCM_OFFSET)
+    return bytes(out)
+
+
+def sample_loops_of_body(body: bytes) -> list[tuple[int, int]]:
+    """`sample_loops` for a raw body, so the assembler can work on the bytes
+    it is about to write rather than on the source object."""
+    return sample_loops(_BodyOnly(body))
+
+
+class _BodyOnly:
+    __slots__ = ("body",)
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
 
 
 @dataclass
@@ -502,7 +603,8 @@ def _split_voices_by_velocity(body: bytearray, num_voices: int,
 def assemble(selections: list[tuple[E4BFile, E4BPreset]],
               sample_names: Optional[dict] = None,
               zone_placement: Optional[dict] = None,
-              voice_velocity: Optional[dict] = None) -> bytes:
+              voice_velocity: Optional[dict] = None,
+              loop_repair: Optional[dict] = None) -> bytes:
     """Build a new E4B FORM from selected (source_bank, preset) pairs.
 
     Each preset's original chunk bytes are copied verbatim; only the 2-byte
@@ -603,6 +705,12 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
                 # reference it: a reader (mpc2emu's own e4b_parser included)
                 # keys samples by this embedded value, not by file position.
                 sbody = bytearray(samp.body)
+                # Loop repair before anything else touches the body: it is
+                # keyed by sample name, so every copy of this sample gets the
+                # same treatment and the dedupe decision above stays valid.
+                _rk = (loop_repair or {}).get(samp.name.strip())
+                if _rk:
+                    sbody = bytearray(_repair_body_loops(bytes(sbody), _rk))
                 struct.pack_into(">H", sbody, 0, new_idx & 0xFFFF)
                 final_name = (sample_names or {}).get(samp.name, samp.name)
                 if final_name != samp.name:

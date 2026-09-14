@@ -45,7 +45,9 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from dataclasses import dataclass, field
+
+from . import loopcheck
+from dataclasses import dataclass, field, replace
 
 #: Longest authored name in 9 700 real KRZ objects, and the width of the
 #: K2000's own display. E4B and EIII enforce it with a fixed field; KRZ
@@ -775,6 +777,31 @@ class KrzFile:
             hi = en if hi is None else max(hi, en)
         return max(0, hi - lo + 1) if lo is not None else 0
 
+    def sample_loops(self, samp: KrzObject) -> list[tuple[int, int]]:
+        """[(loop_start_word, loop_end_word)] for each LOOPED local-data
+        header, absolute PCM word offsets.
+
+        Per KRZ_FORMAT.md's Soundfilehead table: `sampleLoopStart` at 16:20 is
+        the loop start for a looped header, `sampleEnd` at 20:24 is the loop
+        END rather than the PCM end, and flags bit 0x80 CLEAR means looped.
+        A one-shot collapses both onto the PCM end, so it has no loop and is
+        skipped rather than reported as a zero-length one."""
+        body = samp.body()
+        n = struct.unpack_from(">h", body, 2)[0] + 1
+        out = []
+        for h in range(n):
+            ho = SAMPLE_HDR + h * SFH_SIZE
+            if ho + SFH_SIZE > len(body):
+                break
+            flags = body[ho + 1]
+            if not (flags & 0x40) or (flags & 0x80):
+                continue                      # no local data, or one-shot
+            start = struct.unpack_from(">i", body, ho + 16)[0]
+            end = struct.unpack_from(">i", body, ho + 20)[0]
+            if end > start >= 0:
+                out.append((start, end))
+        return out
+
     def sample_word_extent(self, samp: KrzObject) -> tuple[int, int]:
         """(start_word, num_words) for a sample object — see
         `_all_sample_lengths` for how num_words is determined."""
@@ -900,7 +927,8 @@ def parse(path: str) -> KrzFile:
 def assemble(selections: list[tuple[KrzFile, KrzObject]],
              sample_names: dict | None = None,
              warnings_out: list | None = None,
-             pram_kb: int | None = None) -> bytes:
+             pram_kb: int | None = None,
+             loop_repair: dict | None = None) -> bytes:
     """Build a new KRZ file from selected (source_bank, program) pairs.
 
     `warnings_out`, if given, collects advisory strings — currently one when
@@ -996,8 +1024,11 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
     for key in sample_order:
         samp = sample_lookup[key]
         src = src_by_id[key[0]]
+        # Repair first: in KRZ the loop end IS the sample end, so the extent
+        # below has to be taken from the repaired fields (see the helper).
+        samp, src_pcm = _repair_sample_loops(src, samp, loop_repair)
         old_start, n_words = src.sample_word_extent(samp)
-        piece = src.pcm[old_start * 2:(old_start + n_words) * 2] if n_words else b""
+        piece = src_pcm[old_start * 2:(old_start + n_words) * 2] if n_words else b""
 
         # The key includes a digest of the AUDIO, not just the object header.
         # `KrzObject.block` is the header alone -- unlike banks/e4b.py, whose
@@ -1225,6 +1256,60 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
                 f"renaming produced a bank with {len(check.samples)} of "
                 f"{len(sample_objs)} sample(s) -- refusing to hand it on")
     return out
+
+
+def _repair_sample_loops(src: "KrzFile", samp: KrzObject,
+                         loop_repair: dict | None) -> tuple[KrzObject, bytes]:
+    """Apply the user's chosen loop repair to one sample.
+
+    Returns `(sample, pcm)` — the object with its loop fields patched, and
+    the PCM region to slice this sample out of, which is `src.pcm` unless a
+    cross-fade rewrote it. Both are the originals when nothing is asked for.
+
+    KEYED BY STRIPPED NAME, the same shape the dialog shows and the other two
+    assemblers use. Applied per sample, so every zone and keymap entry playing
+    it moves together — a loop point belongs to the audio, not to one use of it.
+
+    WHY THIS RUNS BEFORE THE EXTENT IS TAKEN. In KRZ the loop end and the
+    sample's end are THE SAME FIELD (Soundfilehead 20), so moving a loop point
+    moves what `sample_word_extent` reports. Repairing first means the extent,
+    the PCM slice and the rebias downstream are all computed from the repaired
+    values and stay consistent; repairing afterwards would leave a loop end
+    pointing past the audio actually copied. `nudge_to_match` can move the end
+    LATER as well as earlier, so this is not a theoretical ordering.
+    """
+    kind = (loop_repair or {}).get(samp.name.strip())
+    if kind is None:
+        return samp, src.pcm
+
+    block = bytearray(samp.block)
+    body_start = samp.body_start()
+    body = samp.body()
+    pcm = src.pcm
+    n_headers = struct.unpack_from(">h", body, 2)[0] + 1
+    for h in range(n_headers):
+        hdr = body_start + SAMPLE_HDR + h * SFH_SIZE
+        if hdr + SFH_SIZE > len(block):
+            break
+        flags = block[hdr + 1]
+        if not (flags & 0x40) or (flags & 0x80):     # ROM, or not looped
+            continue
+        start = struct.unpack_from(">i", block, hdr + 16)[0]
+        end = struct.unpack_from(">i", block, hdr + 20)[0]
+        if end <= start:
+            continue
+        out = loopcheck.apply_repair(kind, pcm, start, end, big_endian=True)
+        if out is None:
+            # The repair declined (loop too short, no crossing found). Leave
+            # this header exactly as authored rather than approximate it.
+            continue
+        new_pcm, new_start, new_end = out
+        if new_pcm is not None:
+            pcm = new_pcm
+        struct.pack_into(">i", block, hdr + 16, new_start)
+        struct.pack_into(">i", block, hdr + 20, new_end)
+
+    return replace(samp, block=bytes(block)), pcm
 
 
 def _rebias_sample_block(samp: KrzObject, delta: int) -> bytes:

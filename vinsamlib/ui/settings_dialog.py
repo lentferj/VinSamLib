@@ -150,6 +150,22 @@ class SettingsDialog(QDialog):
         limits_hint.setWordWrap(True)
         layout.addWidget(limits_hint)
 
+        from PySide6.QtWidgets import QCheckBox
+        self._loop_click_box = QCheckBox("Check loops for audible clicks")
+        self._loop_click_box.setChecked(config.loop_click_check)
+        layout.addWidget(self._loop_click_box)
+        loop_hint = QLabel(
+            "Reports a forward loop whose wrap-around lands on a mismatched "
+            "level — heard as a tick on every repeat. Off by default because "
+            "it reads the audio of every sample a preset touches. This setting "
+            "only REPORTS, in the Detail pane; the loop is written exactly as "
+            "the source authored it. To repair one, use Check Loops… in New "
+            "Bank, which offers a zero-snap, a nudge and a cross-fade per "
+            "sample — and never applies one you did not choose.")
+        loop_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        loop_hint.setWordWrap(True)
+        layout.addWidget(loop_hint)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -196,7 +212,9 @@ class SettingsDialog(QDialog):
                            or self._akai_obj_spin.value() != self._config.akai_max_objects
                            or self._autosave_spin.value() != self._config.autosave_seconds
                            or self._debug_log_check.isChecked()
-                              != bool(getattr(self._config, "debug_mpc2emu_log", False)))
+                              != bool(getattr(self._config, "debug_mpc2emu_log", False))
+                           or self._loop_click_box.isChecked()
+                              != self._config.loop_click_check)
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
@@ -207,6 +225,7 @@ class SettingsDialog(QDialog):
             self._config.akai_max_objects = self._akai_obj_spin.value()
             self._config.autosave_seconds = self._autosave_spin.value()
             self._config.debug_mpc2emu_log = self._debug_log_check.isChecked()
+            self._config.loop_click_check = self._loop_click_box.isChecked()
             # Applied immediately, not at the next restart: someone ticking
             # this box is about to reproduce something.
             calllog.set_enabled(self._config.debug_mpc2emu_log)

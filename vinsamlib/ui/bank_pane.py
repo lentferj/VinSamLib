@@ -45,8 +45,9 @@ from . import dnd, workers
 from .models import human_size
 from .detail_pane import _escape, unplayable_rate_line, zone_stats_lines
 from .sample_placement_dialog import SamplePlacementDialog, vel_window
+from .loop_repair_dialog import LoopRepairDialog
 from .sample_rename_dialog import SampleRenameDialog
-from ..banks import akai, e4b, eiii, krz, summary
+from ..banks import akai, e4b, eiii, krz, loopcheck, summary
 from ..build import akai_image
 from ..filenames import safe_filename
 from ..config import Config
@@ -78,6 +79,17 @@ _AKAI_MAX_FILES = akai.MAX_FILES_PER_VOLUME
 
 _ASSEMBLE_FNS = {"E4B": e4b.assemble, "KRZ": krz.assemble, "EIII": eiii.assemble,
                  "AKAI": akai.assemble}
+
+#: Formats whose assemble() takes `loop_repair`. Named explicitly rather than
+#: left ungated on the reasoning "all three formats store loop points" -- that
+#: is true of the three above and stops being true the moment a fourth arrives.
+#:
+#: THE FOURTH HAS NOW ARRIVED, and the comment predicted this merge exactly:
+#: AKAI is in _ASSEMBLE_FNS above, akai.assemble() takes (sample_names,
+#: volume_name) and nothing else, and binding loop_repair to it would raise
+#: TypeError from the size meter. So AKAI stays out of this tuple, which is
+#: what the branch author said it would need to do.
+_LOOP_REPAIRABLE = ("E4B", "KRZ", "EIII")
 _FORMAT_EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
 _DEFAULT_BANK_NAME = "NewBank"
 
@@ -127,7 +139,7 @@ def _sanitize_bank_name(name: str) -> str:
 
 class BankPane(QWidget):
     statusMessage = Signal(str)
-    sendToPendingRequested = Signal(str, str, list, dict, dict, dict)   # (+ voice_velocity)
+    sendToPendingRequested = Signal(str, str, list, dict, dict, dict, dict)   # (+ loop_repair)
     #: A soundfont-style source was dropped here: list of import-request
     #: dicts (see ui/dnd.build_import_mime_data). MainWindow converts them
     #: and calls back into add_presets() with what they became.
@@ -144,6 +156,10 @@ class BankPane(QWidget):
 
         self._format: Optional[str] = None
         self._items: list[tuple[Any, Any, str]] = []   # (bank, preset_obj, name)
+        #: {sample name: "snap"|"nudge"|"fade"}, from the Clicking Loops
+        #: dialog. Applies to all three formats, unlike the renames and the
+        #: placement edits beside it, because every format stores loop points.
+        self._loop_repairs: dict = {}
         #: {original sample name: new name}, from the Rename Samples dialog.
         #: Cleared with the bank -- a rename belongs to the material that
         #: was staged, not to the pane.
@@ -267,13 +283,19 @@ class BankPane(QWidget):
         self._placement_btn = QPushButton("Adjust Placement…")
         self._placement_btn.clicked.connect(self._adjust_placement)
         buttons.addWidget(self._placement_btn, 1, 1)
+        self._loops_btn = QPushButton("Check Loops…")
+        self._loops_btn.setToolTip(
+            "Look for loops that click where they wrap, and choose per sample "
+            "what to do about it. Nothing is changed unless you pick a repair.")
+        self._loops_btn.clicked.connect(self._check_loops)
+        buttons.addWidget(self._loops_btn, 2, 1)
         # Second cell left empty rather than filled with the status: a label
         # there would be the only thing in the grid that is not a button, and
         # it was what knocked the row out of line in the first place.
         self._rename_status = QLabel("")
         self._rename_status.setStyleSheet(
             "color: palette(placeholdertext); font-size: 11px;")
-        buttons.addWidget(self._rename_status, 2, 0, 1, 2)
+        buttons.addWidget(self._rename_status, 2, 0)
 
         self._send_to_image_btn = QPushButton("Send to Image Column")
         self._send_to_image_btn.setToolTip(
@@ -318,7 +340,8 @@ class BankPane(QWidget):
         self.sendToPendingRequested.emit(name, self._format, list(self._items),
                                           dict(self._sample_renames),
                                           dict(self._zone_placement),
-                                          dict(self._voice_velocity))
+                                          dict(self._voice_velocity),
+                                          dict(self._loop_repairs))
 
     @property
     def format(self) -> Optional[str]:
@@ -348,7 +371,8 @@ class BankPane(QWidget):
     def load_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
                       sample_renames: Optional[dict] = None,
                       zone_placement: Optional[dict] = None,
-                      voice_velocity: Optional[dict] = None) -> None:
+                      voice_velocity: Optional[dict] = None,
+                      loop_repair: Optional[dict] = None) -> None:
         """Public entry point for the Pending column's double-click "send
         back to New Bank" — replaces whatever's currently staged here with
         the given recipe, exactly as if it had been assembled from scratch."""
@@ -356,6 +380,7 @@ class BankPane(QWidget):
         self._sample_renames = dict(sample_renames or {})
         self._zone_placement = dict(zone_placement or {})
         self._voice_velocity = dict(voice_velocity or {})
+        self._loop_repairs = dict(loop_repair or {})
         self._format = fmt
         self._name_edit.setText(name)
         self._head.setText(f"New Bank  [{fmt}]")
@@ -739,6 +764,7 @@ class BankPane(QWidget):
     def _clear(self) -> None:
         self._items = []
         self._sample_renames = {}
+        self._loop_repairs = {}
         self._zone_placement = {}
         self._voice_velocity = {}
         self._reset_format_lock()
@@ -1335,6 +1361,111 @@ class BankPane(QWidget):
         self._sync_rename_button()
         self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
 
+    def _clicking_rows(self, items) -> list[dict]:
+        """[{"name", "step_pct", "presets"}] for samples whose loop clicks.
+
+        Dispatched on the BANK rather than on `self._format`, the same rule
+        `_samples_of` documents: the two disagree while the pane repopulates,
+        and taking the label as the switch is what once sent an E4B bank down
+        the KRZ path and raised out of a repaint.
+
+        Deduped by name and keeping the WORST step, because that is the number
+        the user is deciding on and a repair is keyed by name anyway -- one
+        sample used by six zones is one decision, not six rows.
+        """
+        worst: dict = {}
+        where: dict = {}
+        for bank, preset, label in items:
+            for samp, loops, pcm, big_endian in self._loops_of(bank, preset):
+                name = samp.name.strip()
+                where.setdefault(name, set()).add(label)
+                for ls, le in loops:
+                    hit = loopcheck.check_loop(pcm, ls, le, name,
+                                               big_endian=big_endian)
+                    if hit and hit.step_pct > worst.get(name, 0.0):
+                        worst[name] = hit.step_pct
+        return [{"name": n, "step_pct": p, "presets": where.get(n, set())}
+                for n, p in sorted(worst.items(), key=lambda kv: -kv[1])]
+
+    def _loops_of(self, bank, preset):
+        """(sample, [(start, end)], pcm, big_endian) per sample of one preset.
+
+        KRZ reaches its samples through KEYMAPS and keeps one PCM pool on the
+        bank; E4B and EIII carry PCM inside each sample body and store it
+        little-endian. Getting that last part wrong does not raise -- it
+        reports a corpus with no clicking loops at all.
+        """
+        seen = set()
+        if hasattr(bank, "program_keymap_refs"):
+            for km_id in bank.program_keymap_refs(preset):
+                km = bank.keymaps.get(km_id)
+                if km is None:
+                    continue
+                for sid in bank.keymap_sample_refs(km):
+                    if sid in seen:
+                        continue
+                    seen.add(sid)
+                    samp = bank.samples.get(sid)
+                    if samp is not None:
+                        yield samp, bank.sample_loops(samp), bank.pcm, True
+            return
+        # Explicit, with NO fallback. `mod = e4b if isinstance(...) else eiii`
+        # sent every other bank type down the EIII path, and an AKAI sample
+        # does not fail there -- AkaiSample.body is "header block + 16-bit
+        # mono PCM", so eiii.sample_loops() happily reads an options word at
+        # 58 and loop offsets at 36/44 out of an AKAI header and returns
+        # whatever those bytes happen to say. Rows for loops that do not
+        # exist, which is worse than the AttributeError that this same
+        # dispatch-by-elimination produced twice before in this pane.
+        if isinstance(bank, e4b.E4BFile):
+            mod = e4b
+        elif isinstance(bank, eiii.EIIIFile):
+            mod = eiii
+        else:
+            return
+        for idx in getattr(preset, "sample_indices", []) or []:
+            if idx in seen:
+                continue
+            seen.add(idx)
+            samp = bank.samples.get(idx)
+            if samp is not None:
+                yield (samp, mod.sample_loops(samp), mod.sample_pcm(samp),
+                       mod.PCM_BIG_ENDIAN)
+
+    def _check_loops(self) -> None:
+        if not self._items:
+            self.statusMessage.emit("Nothing staged to check yet")
+            return
+        if self._format not in _LOOP_REPAIRABLE:
+            self.statusMessage.emit(
+                f"Loop checking isn't available for {self._format} banks")
+            return
+        items = self._selected_presets()
+        rows = self._clicking_rows(items)
+        if not rows:
+            # Said plainly rather than shown as an empty dialog: "no clicking
+            # loops" is a real and common answer, not a failure to find any.
+            self.statusMessage.emit(
+                "No clicking loops found in the staged preset(s)")
+            return
+        repairs = LoopRepairDialog.get_repairs(
+            rows, existing=self._loop_repairs, parent=self)
+        if repairs is None:
+            return                     # cancelled: keep whatever was set before
+        # Merged the same way renames are: the dialog is a view onto part of
+        # the bank, so only the samples it actually showed may be revised by it.
+        shown = {r["name"] for r in rows}
+        self._loop_repairs = {k: v for k, v in self._loop_repairs.items()
+                               if k not in shown}
+        self._loop_repairs.update(repairs)
+        n = len(self._loop_repairs)
+        self.statusMessage.emit(
+            f"{n} loop repair(s) will be applied when this bank is built"
+            if n else "No loop repairs set")
+        # A repair changes the bytes, so the meter has to recompute rather
+        # than keep showing the size of a bank nobody is going to build.
+        self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
+
     def _rename_samples(self, selected_only: bool = False) -> None:
         # Always follows the selection, from the button and the context menu
         # alike. They used to differ -- button bank-wide, right-click scoped --
@@ -1400,6 +1531,11 @@ class BankPane(QWidget):
             fn = functools.partial(fn, zone_placement=dict(self._zone_placement))
         if self._voice_velocity and self._format in self._PLACEABLE:
             fn = functools.partial(fn, voice_velocity=dict(self._voice_velocity))
+        # Gated like the two above. Every format this pane can build stores
+        # loop points, but not every assemble() accepts the argument -- see
+        # _LOOP_REPAIRABLE.
+        if self._loop_repairs and self._format in _LOOP_REPAIRABLE:
+            fn = functools.partial(fn, loop_repair=dict(self._loop_repairs))
         return fn
 
     def _apply_size(self, gen: int, data: bytes) -> None:

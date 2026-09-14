@@ -854,6 +854,49 @@ the same window beside the note, but only when a preset actually has more than
 one — repeating `v1-127` down seventy rows hides the note instead of
 qualifying it.
 
+**Check Loops…** ⚠️ *the repairs are experimental* looks for loops that
+*click*, and offers to repair them. Reporting is safe and changes nothing;
+no sampler has yet played a **repaired** loop — see [Repairing a clicking
+loop](#️-repairing-a-clicking-loop--experimental-not-hardware-confirmed). A
+looped sample plays to its last frame and jumps back to the loop start; if
+those two frames sit at different levels, the jump is a step you hear as a tick
+on every repetition, forever. It is a property of how the sample was authored —
+this program copies loop points verbatim — but the first hint is usually the
+preset ticking on the sampler, where finding the culprit means auditioning
+everything.
+
+The button scans the staged presets and lists each sample whose loop steps
+audibly, worst first, with the step shown as a percentage of the local level
+(the number that corresponds to how loud the tick is). **Finding nothing is a
+normal result**, and common for E4B and EIII material: measured across this
+library, 96 of 3416 looped E4B headers click (2.8%) and 1 of 237 EIII ones
+(0.4%), against 1545 of 11551 for KRZ (13.4%).
+
+Nothing is repaired unless you choose a repair, and nothing is preselected —
+a clicking loop **may be deliberate**, since percussive and rhythmic material
+clicks on purpose. Three choices, in increasing order of what they cost:
+
+| | what it does | audio | cleared the click in |
+|---|---|---|---|
+| **Snap to zero crossings** | moves both loop points to the nearest zero crossing of the same slope | untouched | ~64% |
+| **Nudge the loop end to match** | searches back for where the waveform best matches the loop start, and moves the loop *end* there; the loop gets slightly shorter | untouched | ~99% |
+| **Cross-fade the wrap** | blends the frames approaching the loop end into the frames before the loop start | **rewritten** | always continuous |
+
+(measured on 101 clicking loops from real K2000 banks.)
+
+The most effective repair is the only lossy one, which is why they are not
+ranked by success rate and why the cross-fade says so in its own row: it
+destroys the frames it smooths. The two that only move loop *points* cannot
+make the audio wrong. As everywhere else in New Bank, **the file in your
+library is never modified** — the repair is applied while the new bank is
+assembled, and a repair is keyed by sample, so it applies everywhere that
+sample is used.
+
+There is also a passive version: switch on **Check loops for audible clicks** in
+Settings and the Detail pane notes them for any preset you select, without
+building anything. It is off by default because it reads the audio around
+every loop a preset touches.
+
 Overlapping key ranges are normal once samples are separated by velocity —
 that is what layering *is* — so the overlap warning stays a warning.
 
@@ -2257,6 +2300,41 @@ source its own run when a batch mixes them.
 ---
 
 ## Known Limitations
+
+### ⚠️ Repairing a clicking loop — EXPERIMENTAL, not hardware-confirmed
+
+**Check Loops…** can move a loop's points or cross-fade its wrap (see [Check
+Loops](#check-loops)). Detecting and *reporting* a clicking loop changes
+nothing and carries no caveat; the three **repairs** do, because **no sampler
+has yet played a loop repaired this way.** Keep the original file.
+
+| Repair | What a sampler is being asked to accept | Risk |
+|---|---|---|
+| **Snap to zero crossings** | loop start and end at different word offsets | ⚠️ low — ordinary field values, of the kind every authored bank already contains |
+| **Nudge the loop end** | as above, and the loop is shorter | ⚠️ low, with one exception below |
+| **Cross-fade the wrap** | PCM the source never contained | ⚠️ the only one that alters audio, and the alteration is irreversible in the built bank |
+
+**The exception, and it is KRZ-specific.** In a KRZ Soundfilehead the loop end
+and the *sample's own end* are the **same field** (offset 20). Everything
+downstream — how many words of PCM get copied, where the next sample starts —
+is derived from it, so moving a loop point in KRZ moves the sample's declared
+extent too. This program keeps that consistent: the repair is applied before
+the extent is taken, so the copy, the rebias and the loop all agree, and a
+re-read of the built bank confirms it. What no test here can tell you is
+whether a K2000 agrees with our reading of that field in the first place.
+
+That last sentence is the whole caveat, and it is the same one the rename
+carries: a round-trip proves the file we wrote is the file we can read. It
+says nothing about what a field *means to the machine*. mpc2emu wrote four
+values to an S3000XL sample's tuning field over SysEx, read all four back
+exactly, and the pitch never moved — stored faithfully, meaning nothing.
+
+**What would lift the label.** Build one bank holding a handful of repaired
+loops — ideally the same program repaired three ways, plus the unrepaired
+original as a control — load it on the K2000, and listen for the tick. The
+control is the point: the repairs are only worth having if the difference is
+audible in the direction claimed, and a bank that merely *loads* proves the
+weaker half.
 
 ### ⚠️ Renaming samples inside a bank — EXPERIMENTAL, not hardware-confirmed
 

@@ -85,6 +85,8 @@ one.
 from __future__ import annotations
 
 import struct
+
+from . import loopcheck
 from dataclasses import dataclass, field
 
 NAME_LENGTH = 16
@@ -436,9 +438,40 @@ def parse(path: str) -> EIIIFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
+class _BodyOnly:
+    __slots__ = ("body",)
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+
+def _repair_body_loops(body: bytes, kind: str) -> bytes:
+    """Apply one loop repair to an EIII sample body, returning a new body.
+
+    Header+PCM in one buffer, so a cross-fade rewrites from PCM_START and the
+    point repairs rewrite the loop fields at 36 and 44. Unlike E4B there is no
+    off-by-one convention here: both fields are plain byte offsets from the
+    start of the header, so the value written back is `frame * 2 + PCM_START`.
+    """
+    out = bytearray(body)
+    for start, end in sample_loops(_BodyOnly(bytes(out))):
+        pcm = bytes(out[PCM_START:])
+        got = loopcheck.apply_repair(kind, pcm, start, end,
+                                     big_endian=PCM_BIG_ENDIAN)
+        if got is None:
+            continue
+        new_pcm, new_start, new_end = got
+        if new_pcm is not None:
+            out[PCM_START:] = new_pcm
+        struct.pack_into("<I", out, 36, new_start * 2 + PCM_START)
+        struct.pack_into("<I", out, 44, new_end * 2 + PCM_START)
+    return bytes(out)
+
+
 def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x",
              bank_name: str | None = None,
-             sample_names: dict | None = None) -> bytes:
+             sample_names: dict | None = None,
+             loop_repair: dict | None = None) -> bytes:
     """Build a new EIII bank from selected (source_bank, preset) pairs.
 
     Each preset's every linked segment is copied verbatim; only each
@@ -513,6 +546,10 @@ def assemble(selections: list[tuple[EIIIFile, EIIIPreset]], variant: str = "e3x"
                     # change which samples are distinct.
                     final_name = (sample_names or {}).get(samp.name, samp.name)
                     body = samp.body
+                    # Keyed by stripped name, like the other two assemblers.
+                    _rk = (loop_repair or {}).get(samp.name.strip())
+                    if _rk:
+                        body = _repair_body_loops(body, _rk)
                     if final_name != samp.name:
                         patched_body = bytearray(body)
                         patched_body[0:NAME_LENGTH] = _encode_name(final_name)
@@ -588,3 +625,49 @@ def _build_bank(fmt: BankFormat, bank_name: str, preset_segments: list[bytes],
     _put_u32(out, BANK_TOTAL_BLOCKS, total_blocks)
 
     return bytes(out)
+
+
+#: EIII sample header: PCM begins here, and loop/length fields are byte
+#: offsets counted from the same point (EIII_FORMAT.md: "a loop position in
+#: frames = (loopStart - 92) / 2").
+PCM_START = 92
+
+#: Little-endian, like E4B and unlike KRZ.
+PCM_BIG_ENDIAN = False
+
+_EIII_OPT_LOOP = 0x0001
+
+
+def sample_pcm(samp) -> bytes:
+    return samp.body[PCM_START:]
+
+
+def sample_loops(samp) -> list[tuple[int, int]]:
+    """[(loop_start_frame, loop_end_frame)] for a looped EIII sample.
+
+    Per EIII_FORMAT.md's sample header: loop start of the left channel at 36,
+    loop end of the left channel at 44, both u32 byte offsets from the start
+    of the 92-byte header, and 0x0001 in the options word at 58 marks a loop. Only the LEFT channel is read — the two
+    channels of a stereo sample are stored as separate blocks and share their
+    loop positions.
+    """
+    b = getattr(samp, "body", b"")
+    if len(b) < 60:
+        return []
+    try:
+        # options at 58, NOT 50 — the offset was guessed first and the doc
+        # corrected it. EIII_FORMAT.md's header table: 58 uint16 options,
+        # 0x0001 = looped.
+        opts = struct.unpack_from("<H", b, 58)[0]
+    except Exception:
+        return []
+    if not (opts & _EIII_OPT_LOOP):
+        return []
+    ls_b = struct.unpack_from("<I", b, 36)[0]
+    le_b = struct.unpack_from("<I", b, 44)[0]
+    if ls_b < PCM_START or le_b < PCM_START:
+        return []
+    frames = max(0, (len(b) - PCM_START) // 2)
+    ls = (ls_b - PCM_START) // 2
+    le = min((le_b - PCM_START) // 2, frames - 1)
+    return [(ls, le)] if le > ls >= 0 else []

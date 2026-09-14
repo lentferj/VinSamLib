@@ -158,6 +158,12 @@ class Config:
     #: It exists because a converted bank otherwise carries no account of
     #: what produced it. That gap was not theoretical -- see build/calllog.py.
     debug_mpc2emu_log: bool = False
+    #: Check every forward loop for an audible step at its wrap-around point
+    #: and note it in the Detail pane. OFF by default: it reads the PCM of
+    #: every sample a preset touches, which is far more work than summarising
+    #: one, and most users are not auditing loops. Nothing is ever modified —
+    #: see banks/loopcheck.py for why this reports and never repairs.
+    loop_click_check: bool = False
     # Main-window size, remembered on close. None until the first quit, so a
     # fresh install still gets the built-in default rather than a 0x0 window.
     # Size only, deliberately not position: a window restored onto a monitor
@@ -193,6 +199,7 @@ class Config:
         autosave_seconds = data.get("autosave_seconds", defaults.autosave_seconds)
         debug_mpc2emu_log = bool(data.get("debug_mpc2emu_log",
                                           defaults.debug_mpc2emu_log))
+        loop_click_check = bool(data.get("loop_click_check", defaults.loop_click_check))
         return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
                     last_image_dir=last_image_dir, last_library_dir=last_library_dir,
                     last_sample_dir=last_sample_dir, last_program_dir=last_program_dir,
@@ -201,6 +208,7 @@ class Config:
                     akai_max_objects=akai_max_objects,
                     autosave_seconds=autosave_seconds,
                     debug_mpc2emu_log=debug_mpc2emu_log,
+                    loop_click_check=loop_click_check,
                     window_width=data.get("window_width"),
                     window_height=data.get("window_height"))
 
@@ -245,6 +253,7 @@ class Config:
         lines.append(f"akai_max_objects = {self.akai_max_objects}")
         lines.append(f"autosave_seconds = {self.autosave_seconds}")
         lines.append(f"debug_mpc2emu_log = {str(bool(self.debug_mpc2emu_log)).lower()}")
+        lines.append(f"loop_click_check = {str(self.loop_click_check).lower()}")
         if self.window_width and self.window_height:
             lines.append(f"window_width = {int(self.window_width)}")
             lines.append(f"window_height = {int(self.window_height)}")
