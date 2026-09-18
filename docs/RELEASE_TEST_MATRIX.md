@@ -524,6 +524,8 @@ cannot reach.**
 | a key field accepts a note name TYPED at it | ✅ (format-independent) | | | `manual_note_field_typing` ¹⁵ |
 | **Adjust Placement…** enabled, or disabled with a reason | ✅ enabled | ✅ disabled + tooltip | ✅ disabled + tooltip | `manual_placement_reaches_image` |
 | it opens on the bank's REAL ranges, not defaults | ✅ | n/a | n/a | `manual_placement_reaches_image` |
+| **every control in every dialog survives being operated** | ✅ (format-independent) | | | `manual_dialog_controls_survive` ¹⁶ |
+| the new conversion options are reachable BY CLICK, and a gated one refuses a click | ✅ (format-independent) | | | `manual_convert_dialog_clicks` |
 
 ¹⁵ **The purest example this file has.** `NoteSpinBox` overrides
 `textFromValue`/`valueFromText`, so it displays "C3" and steps by semitone and
@@ -533,6 +535,25 @@ Double-click a Low/Root/High field, backspace it empty, and only digits go in.
 That shipped with the editor and survived every test, because every test set
 the value through the model (`setValue`) or read it back (`value`) — never
 through the keyboard.
+
+¹⁶ **The pane sweep stops at the pane.** `press_every_enabled_button` walks
+New Bank, Pending and Image and never opens a dialog, so the largest surfaces
+in the program were reached only by tests that set a widget and read a value
+back. Measured 2026-09-18 before the sweep was written: Convert Options
+carries 25 interactive controls and Settings 10, and between them exactly
+**four** had ever been clicked — while Settings had no test of any kind, and is
+the dialog that crashed with `UnboundLocalError` the moment a user opened it on
+2026-09-14.
+
+Two things the sweep had to learn, both of which made it pass while covering
+almost nothing. A dialog that is never `show()`n has zero-sized widgets and
+`QTest.mouseClick` aims at a widget's centre, so every click lands outside. And
+Convert Options hides each section's body until its group box is ticked — a
+hidden control is still `isEnabled()` and still turns up in `findChildren`, so
+the first draft operated 10 controls in a dialog holding 25 and called it a
+pass. Expanding every collapsible section first took the run from 52 operations
+to 132. A dialog contributing **zero** operations is now a failure in itself,
+because it looks exactly like one that passed.
 
 Reported from the GUI, not found here. The check uses `QTest.keyClicks`;
 asserting on `valueFromText("C3")` passes with the validator removed again.
