@@ -748,6 +748,10 @@ enumerate. What does enumerate, and is therefore what this matrix asserts:
 | H15 | `shrink_by_pct` | all 4 | 0; and a target that thins every preset |
 | H16 | `krz_faithful_layers` | **KRZ only** | both; the faithful one must warn it is silent on a normal channel |
 | H17 | `krz_drum_program` | **KRZ only** | both |
+| H18 | `akai_ib304f` | **AKAI only** | must change a highpass/bandpass source and NOT a lowpass one |
+| H19 | `chromatic_pads` | **MPC drum sources** | the factory map, and the consecutive run |
+| H20 | `split_velocity_layers` | all 4 | one preset per layer, against the reducer that discards them |
+| H21 | `lfo_sync_bpm` | **MPC sources** | a set tempo, and no leak into the next import |
 
 ## Matrix I — the details of each format, which no cross-product reaches
 

@@ -399,7 +399,8 @@ class ProjectSummary:
     total_sample_bytes: int = 0
 
 
-def parse_mpc(path: str, wav_dir: Optional[str] = None):
+def parse_mpc(path: str, wav_dir: Optional[str] = None,
+              chromatic_pads: bool = False, lfo_sync_bpm=None):
     """Parse any MPC container mpc2emu accepts (program, track or project)
     into its Bank -- the one parse every read-only caller here shares.
 
@@ -409,7 +410,30 @@ def parse_mpc(path: str, wav_dir: Optional[str] = None):
     a cached one."""
     if wav_dir is None:
         wav_dir = str(Path(path).resolve().parent)
-    return _run_captured(xpm_parser.parse_xpm, path, wav_dir)
+    # SYNC_BPM IS A MODULE GLOBAL ON THEIR SIDE, not a parameter -- convert.py
+    # sets `_xpm.SYNC_BPM` before parsing and leaves it set. Restored here
+    # afterwards, because a GUI parses many programs in one session and a
+    # tempo chosen for one import must not leak into the next.
+    kw = {}
+    if chromatic_pads:
+        try:
+            names = xpm_parser.parse_xpm.__code__.co_varnames
+        except Exception:
+            names = ()
+        if "chromatic_pads" not in names:
+            raise ValueError(
+                "this mpc2emu checkout cannot lay drum pads out chromatically "
+                "(no `chromatic_pads` in its XPM reader) -- update mpc2emu, or "
+                "turn the option off to keep the program's own pad map.")
+        kw["chromatic_pads"] = True
+    prev = getattr(xpm_parser, "SYNC_BPM", None)
+    try:
+        if lfo_sync_bpm is not None and prev is not None:
+            xpm_parser.SYNC_BPM = float(lfo_sync_bpm)
+        return _run_captured(xpm_parser.parse_xpm, path, wav_dir, **kw)
+    finally:
+        if prev is not None:
+            xpm_parser.SYNC_BPM = prev
 
 
 def _preset_samples(bank, preset) -> list:
@@ -535,7 +559,9 @@ def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = 
     An MPC program is the likeliest source to trip it -- a keygroup program
     stacks up to four layers per pad by design, and every stereo one of them
     costs two E4B voices."""
-    bank = parse_mpc(xpm_path, wav_dir)
+    bank = parse_mpc(xpm_path, wav_dir,
+                     chromatic_pads=opts.chromatic_pads,
+                     lfo_sync_bpm=opts.lfo_sync_bpm)
     if not bank.presets:
         # Same empty-kit case summarize_program() explains: readable, listed,
         # and holding nothing. Refuse in words rather than writing a bank with

@@ -116,6 +116,8 @@ class ConvertOptionsDialog(QDialog):
         groups.addWidget(self._build_trim_group())
         groups.addWidget(self._build_pan_law_group())
         groups.addWidget(self._build_krz_layers_group())
+        groups.addWidget(self._build_akai_hw_group())
+        groups.addWidget(self._build_source_group())
         groups.addWidget(self._build_stereo_group())
         groups.addWidget(self._build_resample_group())
         groups.addWidget(self._build_max_rate_group())
@@ -135,6 +137,7 @@ class ConvertOptionsDialog(QDialog):
 
         self._refresh_pan_law_availability()
         self._refresh_krz_layers_availability()
+        self._refresh_akai_hw_availability()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -180,6 +183,12 @@ class ConvertOptionsDialog(QDialog):
                         if f == opts.krz_faithful_layers
                         and d == opts.krz_drum_program), 0)
         self._krz_layers_box.setCurrentIndex(krz_idx)
+        self._akai_ib304f_box.setChecked(opts.akai_ib304f)
+        self._chromatic_pads_box.setChecked(opts.chromatic_pads)
+        self._split_vel_box.setChecked(opts.split_velocity_layers)
+        if opts.lfo_sync_bpm is not None:
+            self._lfo_bpm_box.setChecked(True)
+            self._lfo_bpm_spin.setValue(float(opts.lfo_sync_bpm))
         if opts.trim_start_db is not None:
             self._trim_start_group.setChecked(True)
             self._trim_start_db_spin.setValue(abs(opts.trim_start_db))
@@ -410,6 +419,107 @@ class ConvertOptionsDialog(QDialog):
         label.setWordWrap(True)
         label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(label)
+        return group
+
+    def _build_akai_hw_group(self) -> QGroupBox:
+        group = QGroupBox("Akai S3000XL Hardware")
+        self._akai_hw_group = group
+        outer = QVBoxLayout(group)
+
+        self._akai_ib304f_box = QCheckBox(
+            "This machine has the IB-304F second-filter board")
+        outer.addWidget(self._akai_ib304f_box)
+
+        label = QLabel(
+            "The S3000XL's second filter is an optional board. WITHOUT it a "
+            "highpass, bandpass, band-stop or band-boost source has nowhere "
+            "to go and collapses to a 2-pole lowpass; with it those keep "
+            "their shape on filter 2.\n\n"
+            "Nothing in a file or on the wire says whether a board is fitted, "
+            "so this can only be you telling us about your own machine — "
+            "which is also why it is off by default. Tick it only if yours "
+            "has one: a machine WITHOUT the board refuses such a program "
+            "outright with \"2nd filter board IB304F not fitted!\".\n\n"
+            "Not hardware-verified. The corner law behind it was measured in "
+            "lowpass mode only, and the corner moves about 41% between modes, "
+            "so a highpass or EQ corner is placed by a law measured on a "
+            "different one.")
+        label.setWordWrap(True)
+        label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        outer.addWidget(label)
+        return group
+
+    def _refresh_akai_hw_availability(self) -> None:
+        """AKAI-only, greyed rather than hidden — same reason as the pan-law
+        and K2000 groups: a control that vanishes reads as a bug."""
+        is_akai = self._current_target_format() == "AKAI"
+        self._akai_hw_group.setEnabled(is_akai)
+        if not is_akai:
+            self._akai_ib304f_box.setChecked(False)
+        self._akai_hw_group.setToolTip(
+            "" if is_akai else
+            "Akai (AKAI) only — the IB-304F is an S3000XL expansion board and "
+            "no other target here has a second filter to map onto.")
+
+    def _build_source_group(self) -> QGroupBox:
+        group = QGroupBox("Source Handling")
+        outer = QVBoxLayout(group)
+
+        self._chromatic_pads_box = QCheckBox(
+            "Lay MPC drum pads out chromatically from C1")
+        outer.addWidget(self._chromatic_pads_box)
+        lab1 = QLabel(
+            "An MPC drum program carries its own pad-to-note map, and that "
+            "map is the MPC's FACTORY layout — stamped on every drum program "
+            "whatever it holds, kits and FX banks alike. Sixteen pads land on "
+            "37 36 42 82 40 38 …, which spreads them over two and a half "
+            "octaves with holes in between and one pad stranded at A#5.\n\n"
+            "Faithful, and right for a real kit whose GM positions a pattern "
+            "was written against. Rarely what you want for a MELODIC program "
+            "on pads — piano chords, say — which this lays out on consecutive "
+            "keys instead. Affects MPC sources only.")
+        lab1.setWordWrap(True)
+        lab1.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        outer.addWidget(lab1)
+
+        self._split_vel_box = QCheckBox(
+            "Split velocity layers into separate presets")
+        outer.addWidget(self._split_vel_box)
+        lab2 = QLabel(
+            "Each velocity layer becomes a preset of its own at full "
+            "velocity — one instrument turned into a palette of its layers, "
+            "playable one at a time.\n\n"
+            "The opposite instrument to Reduce Velocity Layers below, which "
+            "throws them away. This keeps every one and costs preset slots "
+            "instead: a four-layer preset becomes four.")
+        lab2.setWordWrap(True)
+        lab2.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        outer.addWidget(lab2)
+
+        row = QHBoxLayout()
+        self._lfo_bpm_box = QCheckBox("Synced MPC LFOs assume")
+        row.addWidget(self._lfo_bpm_box)
+        self._lfo_bpm_spin = QDoubleSpinBox()
+        self._lfo_bpm_spin.setRange(20.0, 300.0)
+        self._lfo_bpm_spin.setDecimals(1)
+        self._lfo_bpm_spin.setSingleStep(1.0)
+        self._lfo_bpm_spin.setSuffix(" BPM")
+        self._lfo_bpm_spin.setValue(120.0)
+        self._lfo_bpm_spin.setEnabled(False)
+        self._lfo_bpm_box.toggled.connect(self._lfo_bpm_spin.setEnabled)
+        row.addWidget(self._lfo_bpm_spin)
+        row.addStretch()
+        outer.addLayout(row)
+        lab3 = QLabel(
+            "An MPC LFO can be locked to the project tempo, and the XPM does "
+            "not store what that tempo was — so a synced rate can only be "
+            "reproduced against an assumed one. Left off, mpc2emu assumes "
+            "120, the MPC's own new-project default. Set it to the tempo the "
+            "material was actually made at and every synced LFO lands at the "
+            "rate it had.")
+        lab3.setWordWrap(True)
+        lab3.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        outer.addWidget(lab3)
         return group
 
     def _refresh_krz_layers_availability(self) -> None:
@@ -902,6 +1012,11 @@ class ConvertOptionsDialog(QDialog):
             shrink_by_pct=shrink_by,
             krz_faithful_layers=krz_faithful,
             krz_drum_program=krz_drum,
+            akai_ib304f=self._akai_ib304f_box.isChecked(),
+            chromatic_pads=self._chromatic_pads_box.isChecked(),
+            split_velocity_layers=self._split_vel_box.isChecked(),
+            lfo_sync_bpm=(self._lfo_bpm_spin.value()
+                          if self._lfo_bpm_box.isChecked() else None),
         )
 
     @staticmethod

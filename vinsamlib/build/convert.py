@@ -131,6 +131,39 @@ class ConversionOptions:
     # visible -- see _collect_diagnostics below for the visible half.
     krz_faithful_layers: bool = False
     krz_drum_program: bool = False
+    #: AKAI only -- mpc2emu's --akai-ib304f. The S3000XL's second filter is an
+    #: OPTIONAL BOARD, and without it a highpass, bandpass, band-stop or
+    #: band-boost source collapses to a 2-pole lowpass. With it those map onto
+    #: filter 2 and keep their shape.
+    #:
+    #: OFF BY DEFAULT AND IT MUST STAY THAT WAY. Nothing in a file or on the
+    #: wire says whether a board is fitted -- `LSI2_ON` reads back 1 either way
+    #: -- so this can only ever be the user telling us about their own machine.
+    #: A machine WITHOUT the board refuses such a program outright with "2nd
+    #: filter board IB304F not fitted!", which is the failure mode that makes
+    #: guessing worse than asking. mpc2emu also records the corner law behind
+    #: it as measured in lowpass mode only, with the corner moving ~41% between
+    #: modes, and the whole thing as not hardware-verified.
+    akai_ib304f: bool = False
+    #: MPC DRUM programs only -- mpc2emu's --chromatic-pads. A drum program
+    #: carries a pad->note map and it is the MPC's factory layout, stamped on
+    #: every program whatever its content: 37 36 42 82 ... which spreads
+    #: sixteen pads over two and a half octaves with holes and one stranded at
+    #: A#5. Faithful for a kit whose GM positions mean something, and rarely
+    #: what anyone wants for a MELODIC program on pads (piano chords, say).
+    #: This lays them out from MIDI 36 instead.
+    chromatic_pads: bool = False
+    #: mpc2emu's --split-velocity-layers: explode each preset's velocity
+    #: layers into separate full-velocity presets. Turns one playable
+    #: instrument into a palette of its own layers -- which is a different
+    #: thing from reduce_velocity_layers_pct, which THROWS THEM AWAY.
+    split_velocity_layers: bool = False
+    #: mpc2emu's --lfo-sync-bpm. An MPC LFO can be tempo-synced, and the XPM
+    #: does not store the tempo -- so a synced rate can only be reproduced
+    #: against an assumed one. mpc2emu assumes 120 (the MPC's own new-project
+    #: default); None leaves that alone rather than restating it, so a future
+    #: change to their default arrives here instead of being overridden.
+    lfo_sync_bpm: Optional[float] = None
 
     def is_noop(self, source_format: str = "E4B") -> bool:
         """`source_format` matters now that KRZ can be a source too: a
@@ -158,6 +191,10 @@ class ConversionOptions:
                 and self.shrink_to_bytes is None
                 and self.shrink_by_pct is None
                 and not self.krz_drum_program
+                and not self.akai_ib304f
+                and not self.chromatic_pads
+                and not self.split_velocity_layers
+                and self.lfo_sync_bpm is None
                 and self.trim_start_db is None
                 and self.trim_tail_db is None)
 
@@ -714,6 +751,13 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
     if opts.mono is not None:
         _run_captured(_apply_mono, bank, opts.mono)
 
+    # BEFORE the reducers, matching mpc2emu's own order ("before the fit
+    # assistant + split so both see the final preset set"). It is the opposite
+    # instrument to reduce_velocity_layers_pct below: that one DISCARDS layers,
+    # this one promotes each to a preset of its own.
+    if opts.split_velocity_layers:
+        _run_captured(zone_reducer.explode_velocity_layers, bank)
+
     if opts.reduce_key_zones_pct > 0 or opts.reduce_velocity_layers_pct > 0:
         _run_captured(zone_reducer.reduce_bank, bank,
                       opts.reduce_key_zones_pct, opts.reduce_velocity_layers_pct)
@@ -852,7 +896,30 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
                 "detail": {"snapped": n_snapped,
                            "unchanged": int((snapped or {}).get("unchanged") or 0)},
             })
-        _run_captured(akai_writer.write_akai_bank, bank, str(out_path), out_stem)
+        # NOT write_akai_bank: it hardcodes `build_akai_volume(bank, name)`
+        # with no keyword passthrough, so the board flag cannot reach the
+        # writer through it. Asked of the function rather than assumed, the
+        # same way _krz_writer_kwargs does -- a checkout predating the flag
+        # raises TypeError on a keyword it has never heard of.
+        _akai_kw = {}
+        if opts.akai_ib304f:
+            try:
+                names = akai_writer.build_akai_volume.__code__.co_varnames
+            except Exception:
+                names = ()
+            if "ib304f" in names:
+                _akai_kw["ib304f"] = True
+            else:
+                raise ConvertOpError(
+                    "this mpc2emu checkout's AKAI writer has no IB-304F "
+                    "support, so the second-filter option cannot be honoured. "
+                    "Update mpc2emu, or turn the option off to write a volume "
+                    "for a machine without the board.")
+        out_path.mkdir(parents=True, exist_ok=True)
+        _files = _run_captured(akai_writer.build_akai_volume, bank, out_stem,
+                               **_akai_kw)
+        for _fn, _data in _files:
+            (out_path / _fn).write_bytes(_data)
     elif opts.target_format == "KRZ":
         out_path = tmp_dir / f"{out_stem}.krz"
         _run_captured(krz_writer.write_krz, bank, str(out_path),

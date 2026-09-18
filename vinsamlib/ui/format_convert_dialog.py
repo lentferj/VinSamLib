@@ -177,6 +177,7 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # fell back to "E4B". Re-run now that the real picker is in place.
         self._refresh_pan_law_availability()
         self._refresh_krz_layers_availability()
+        self._refresh_akai_hw_availability()
 
     def _current_target_format(self) -> str:
         # Python dispatches to this override from the BASE __init__, which runs
@@ -192,6 +193,7 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # out (and clear it) rather than leave a setting that would be dropped.
         self._refresh_pan_law_availability()
         self._refresh_krz_layers_availability()
+        self._refresh_akai_hw_availability()
 
     def _apply_krz_sane_default(self) -> None:
         # Only nudges the max-sample-rate step (now its own independent
