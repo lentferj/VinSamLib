@@ -187,8 +187,17 @@ class BankPane(QWidget):
         self._limit_override = False
         #: Whether the current overage is one no amount of installed RAM
         #: can fix (a format's own preset/file ceiling). Keep Anyway must
-        #: not clear THAT: assemble() refuses it anyway, so the build
-        #: would fail later and somewhere with less to say about why.
+        #: not clear THAT.
+        #:
+        #: IN PRACTICE _apply_size_error SETS THIS, not the meter branches.
+        #: Every assemble() raises AT the same ceiling the meter compares
+        #: against -- e4b.py's MAX_PRESETS, krz.py's 800, eiii's per-format
+        #: max, akai's MAX_FILES_PER_VOLUME -- so the worker fails and the
+        #: meter never receives bytes to count. The `hard` flags computed in
+        #: _apply_size and _apply_size_akai are therefore belt-and-braces
+        #: against a writer that one day returns an over-limit bank rather
+        #: than refusing, and the detail strings beside them are unreached
+        #: today: the user sees assemble()'s own message instead.
         self._over_hard = False
         self._live_workers: list[workers.Worker] = []
         self._recompute_timer = QTimer(self)
@@ -1732,6 +1741,17 @@ class BankPane(QWidget):
         if not over:
             self._was_over_limit = False
             self._pre_add_snapshot = None
+            # AND THE OVERRIDE, which _set_over cannot reach when the bank is
+            # EMPTY: _recompute() returns early with no items, so _apply_size
+            # never runs and the flag outlived Clear. Staging one oversized
+            # bank, pressing Keep Anyway, clearing, and staging a DIFFERENT
+            # oversized bank then enabled Save before the new warning was
+            # even shown -- inheriting a decision made about another bank,
+            # which is exactly what _set_over's docstring promises cannot
+            # happen. This is the one place every "the bank fits now" route
+            # passes through, including _refresh()'s empty branch.
+            self._limit_override = False
+            self._over_hard = False
             return
         if self._was_over_limit:
             return

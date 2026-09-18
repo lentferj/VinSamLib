@@ -2471,6 +2471,13 @@ because the index byte said 44 100 and every reader on both sides agreed
 the volume was fine. If a sample cannot be resampled, the write is
 **refused** rather than warned about.
 
+A resample that *succeeds* is reported too. It is an irreversible change
+to your audio — the band above the new Nyquist is gone — so a conversion
+that snapped anything says how many samples it touched and that the
+result is no longer bit-identical to the source. Unavoidable is not the
+same as unremarkable: there is no way to make a playable volume without
+it, and you still get told.
+
 The Detail pane says so for volumes that already exist: *"N sample(s)
 declare a rate this sampler cannot play"*, with the cents. A disc
 written before that fix cannot be repaired in place — re-convert it.

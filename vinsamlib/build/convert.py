@@ -828,8 +828,27 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
                     f"byte and ignores the stored rate, so anything else would "
                     f"have played transposed rather than failing. The audio in "
                     f"this volume is not bit-identical to the source."),
-                "body": f"{n_snapped} sample(s) resampled for the S3000XL",
-                "content_lost": False,
+                # BODY CARRIES THE WHOLE SENTENCE, because `body` is what
+                # polyphony_risk_lines() actually renders -- `message` is read
+                # only as a truthiness flag and as a dedupe key. Every risk
+                # built by _diagnostic_risks keeps body == message minus the
+                # subject prefix; a bare summary here meant the sentence this
+                # was written to deliver was never shown to anyone.
+                "body": (
+                    f"{n_snapped} sample(s) were resampled to 22050 or 44100 Hz. "
+                    f"An S3000XL plays those two rates only -- it reads an index "
+                    f"byte and ignores the stored rate, so anything else would "
+                    f"have played transposed rather than failing. The audio in "
+                    f"this volume is not bit-identical to the source."),
+                # TRUE, despite the conversion being unavoidable. Resampling
+                # discards the band above the new Nyquist irreversibly, and
+                # mpc2emu's AKAI_FILTER_SHAPE_LOST -- equally forced, and the
+                # precedent this was written to follow -- carries True. It also
+                # feeds main_window._warn_polyphony's "N losing content" count,
+                # which is the one figure a user scans, and a whole library
+                # snapped to 44100 reporting zero there is the under-report
+                # this flag exists to prevent.
+                "content_lost": True,
                 "detail": {"snapped": n_snapped,
                            "unchanged": int((snapped or {}).get("unchanged") or 0)},
             })
