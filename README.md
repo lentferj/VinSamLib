@@ -112,12 +112,12 @@ Reading needs **no mpc2emu at all** — `banks/akai.py` and `vfs/akai.py`
 are VinSamLib's own, like the E4B and KRZ readers. Converting needs an
 mpc2emu checkout that has AKAI support.
 
-None of it is confirmed on real Akai hardware yet; see
-[Known Limitations](#akai-s1000--s3000). The format was never published
-by Akai, so every byte of it is reconstructed — this project reads
-**real commercial library discs from a dozen publishers** — both S1000
-and S3000, thousands of volumes — correctly, and writes nothing a sampler
-has been asked to mount.
+**Banks and images built here have been loaded and played on a real
+S3000XL** (first on 2026-09-13); see [Known
+Limitations](#akai-s1000--s3000) for what within that is settled and what
+is not. The format was never published by Akai, so every byte of it is
+reconstructed — this project reads **real commercial library discs from a
+dozen publishers**, both S1000 and S3000, thousands of volumes.
 
 ### Browse your whole library at once
 
@@ -396,16 +396,34 @@ with a written-out reason, and VinSamLib doesn't list them. A file whose
 kind can't be read from its header (an MPC 3 program, or anything unusual)
 is always listed — the rule only acts on what declares itself otherwise.
 
-⚠️ **An MPC 2.x drum kit can land on different keys than it had on the
-MPC.** 2.x files don't record which key each pad plays (every `<PadNote>`
-in mpc2emu's corpus is empty), so its pads are laid out on consecutive keys
-from 36 (C1). Kits that used a General MIDI or hand-built layout come
-through complete and at the right pitch, just re-ordered. MPC 3 files carry
-a real pad map and are unaffected; the Detail pane says which case you're
-looking at. Also note that a drum kit converted to **KRZ** fills the keys
-between pads with a copy of the neighbouring hit — a K2000 locks up on
-Master→Delete if a keymap has holes, so `krz_writer` fills them
-deliberately.
+**Drum kits land on the keys the file asks for.** An MPC program carries
+a `<PadNoteMap>` giving each pad its note, and both 2.x and MPC 3 files are
+read the same way.
+
+> ⚠️ **This was wrong until 2026-09-14, and kits imported before then are
+> on the wrong keys.** The map was believed absent: mpc2emu's reader looked
+> at the `<PadNote>` element's own body, where the value is in a nested
+> `<Note>` child, so it read a clean zero — and "MPC 2.x does not store
+> one" was written down as a property of the format. Pads were laid out on
+> consecutive keys from 36 instead. **Confirmed on an E4XT:** of the
+> nineteen notes a converted kit puts sound on, exactly one was right, and
+> a key the source leaves silent spoke. Re-import anything that matters.
+
+The factory map is not a consecutive run and is the same on every drum
+program — `37 36 42 82 40 38 46 44 48 47 45 43 49 55 51 53` for pads 1–16,
+identical across all 528 drum programs in one real expansion library,
+kits and FX banks alike. So a sixteen-pad kit spans two and a half
+octaves with holes in it, and one pad sits alone up at A#5.
+
+That is faithful, and for a **melodic** kit — piano chords on pads, say —
+it is rarely what you want. mpc2emu's `chromatic_pads` option lays such a
+program out on consecutive keys instead. A real drum kit should keep the
+factory map, since its GM positions are the ones a pattern was written
+against.
+
+A drum kit converted to **KRZ** additionally fills the keys between pads
+with a copy of the neighbouring hit — a K2000 locks up on Master→Delete if
+a keymap has holes, so `krz_writer` fills them deliberately.
 
 If you indexed such a folder with an earlier version, **File → Rescan
 Library** drops the stale entries from search.
@@ -483,7 +501,7 @@ Right-click (or double-click) behavior depends on what you've selected:
 | Item | Double-click | Right-click menu |
 |---|---|---|
 | Preset/program (one or many selected) | Add to New Bank | "Add … to New Bank"; **"Import via mpc2emu…"** (E4B, KRZ, EIII or AKAI) — both work on a multi-selection |
-| `.xpm` program or `.xty` track | Import (opens the conversion dialog) | "Import …" |
+| `.xpm` program or `.xty` track | Import (opens the conversion dialog) | "Import …" — several selected at once become "Import *N* MPC programs…", one dialog for the lot |
 | `.xpj` project | Expand into its programs | "Import all programs of …" |
 | One program inside a project | Import (opens the conversion dialog) | "Import …" |
 | Bank (E4B / KRZ / EIII) | Expand into its presets | **"Add favourites from a list to New Bank…"** — paste the preset numbers you noted on the hardware |
@@ -518,6 +536,19 @@ being called empty; and anything below a subtree too large to finish
 checking. Loose WAVs are still importable as a multisample — **File →
 Import Sample Folder…** picks a folder with a file dialog and never goes
 through this tree.
+
+**Every row says what it costs a sampler.** A preset, a bank, a folder,
+a whole disc image — each carries the size of the **audio** it needs
+loaded, not the size of the file. Those differ by more than you would
+expect: a KRZ bank's file is mostly object headers, an `.xpm` names WAVs
+that sit beside it and contributes none of its own bytes, and a
+reference-style instrument (SFZ, EXS24, TAL) is a few KB of text naming
+gigabytes of samples. A folder totals what its children need, deduped
+where they share.
+
+A row showing **no audio** is a real answer, not a missing one: a preset
+whose programs reference only the sampler's own ROM genuinely needs none,
+and that is also why it cannot be converted to another machine.
 
 ### Detail Pane
 
@@ -619,8 +650,15 @@ plus the preset's own index/id, not object identity, since a preset
 reached through search is re-parsed fresh every time. **"Check for
 Duplicate Presets"** turns the check off entirely if unchecked;
 **"Prompt Before Skipping Duplicates"** switches a caught duplicate from
-silently skipped to a yes/no confirmation (only meaningful while the
-check itself is on).
+silently skipped to a prompt (only meaningful while the check itself is
+on).
+
+That prompt offers three things, not two: **Rename…** gives the copy its
+own name and keeps both, **Add Anyway** keeps both under one name, and
+**Skip** drops it. Two copies of one preset is a legitimate thing to
+want — the same sound at two program numbers, say — and before the
+rename option the only way to get it left you with two identical rows
+and nothing on the machine to tell them apart.
 
 The **size/count meter** below the name field recomputes by actually
 assembling the current selection — not an estimate — debounced a
@@ -778,12 +816,31 @@ shows as `1` there. Past 128 programs the numbers run out and the
 extras are left alone rather than wrapped.
 
 **Adding a preset that pushes you over the limit** shows a warning
-dialog with two choices: **Keep Anyway** (leave the new item in place,
-deal with it later) or **Undo Last Add** (revert to exactly the state
-before that specific add — whichever it was: a drag, "Add to New Bank",
-an XPM import, or an "Import via mpc2emu" conversion). This only fires
-once per crossing — adding still more while already over won't nag you
-again until you drop back under the limit.
+dialog with up to three choices:
+
+- **Keep Anyway** — build it anyway. This re-enables **Save as…** and
+  **Send to Image Column** for the *soft* limits, the ones that are a
+  guess about your hardware: the two RAM figures, the K2000's PRAM
+  budget and the S3000XL's object pool, all of them Settings spinboxes.
+  It deliberately does **not** clear a format's own ceiling — 1000 E4B
+  presets, 800 KRZ, 256 EIII, 510 files in an AKAI volume — because no
+  amount of installed memory makes a 1001st preset encodable and the
+  assembler refuses it regardless. The override lasts until the bank
+  fits again; a later add that goes over asks afresh.
+- **Undo Last Add** — revert to exactly the state before that specific
+  add, whichever it was: a drag, "Add to New Bank", an XPM import, or an
+  "Import via mpc2emu" conversion.
+- **Change Import Settings…** — offered when the last add was an import
+  and the complaint is about size: undoes it and reopens the Convert
+  Options dialog with what you used last time, so you can resample or
+  reduce and try again instead of undoing and starting over.
+
+It only fires once per crossing — adding still more while already over
+won't nag you again until you drop back under the limit.
+
+> Until 2026-09-14 **Keep Anyway did nothing at all**: the box closed and
+> Save stayed disabled. Settings had promised the button since it was
+> written; the code had never honoured it.
 
 Selecting an item in the list shows the same condensed Detail-pane-style
 summary described above, computed in the background so large presets
@@ -1183,6 +1240,13 @@ A preset whose programs reference only the sampler's own ROM shows **no
 audio**, which is the literal truth and the reason such a preset cannot
 be converted to another machine.
 
+**SF2 and GIG are the exception**, and they are measured the first time
+you expand one. They embed their samples, so one instrument's share is
+only knowable by reading the file — too expensive for a blind library
+scan over a shelf of them, and affordable exactly once, when you open
+that row on purpose. The answer is kept in the index, so the next time it
+comes from the same lookup as every other row.
+
 #### What the Pending queue costs
 
 Each queued bank reports the audio it needs to LOAD — deduped — and each
@@ -1298,13 +1362,6 @@ and flow on to Pending and the image builder.
 The entry appears only when this checkout can actually write AKAI, so it
 is absent rather than failing after a slow conversion has already run.
 
-SF2 and GIG are the exception to the rule above, and they are measured
-the first time you expand one. They embed their samples, so one preset's
-share is only knowable by reading the file — too expensive for a blind
-library scan over a shelf of them, and affordable exactly once, when you
-open that row on purpose. The answer is kept in the index, so the next
-time it comes from the same lookup as every other row.
-
 **What it costs.** This is a conversion between two machines that do not
 agree about anything, and it goes through mpc2emu's `Bank` model, which
 is narrower than an AKAI program file. Until recently that was a reason
@@ -1318,14 +1375,13 @@ dropping on the floor.
 So it is a lossy conversion that tells you what it lost. Expect to hear a
 difference; do not expect to be surprised by one.
 
-**On this branch the telling does not reach you yet.** The diagnostics
-wiring is on `master`, so until that is merged here the conversion runs
-and the records go nowhere — the same discarded-buffer fault the wiring
-exists to fix, in the one place it has not been applied.
-
-**Nothing here has been heard by a sampler.** The volume is written by
-mpc2emu's `write_akai_bank`; the media that carries it is hardware-
-confirmed, the programs inside it are not.
+**Volumes converted this way have been played on a real S3000XL** — the
+whole path, from an MPC program through conversion to a mounted volume
+(2026-09-18). That is not the same as every parameter being right: the
+listening turned up a release that cut notes short, a filter written as
+bypass, and samples arriving at 39 % of their length, all since fixed
+upstream. Expect that to continue — this is the youngest conversion in
+the program.
 
 #### Constant-Power Pan Compensation
 
@@ -1475,6 +1531,9 @@ itself can write:
 | K2000 FAT16 | KRZ | CD or hard disk (universally compatible) | `.hda`/`.iso` |
 | K2000 ISO 9660 | KRZ | CD, needs K2000 OS v3.87+ | `.iso` |
 | K2000 Gotek floppy | KRZ | FAT12 floppy for a Gotek/FlashFloppy | `.img` |
+| AKAI S3000 hard disk | AKAI | SCSI/ZuluSCSI hard disk, partitioned | `.img`/`.hda` |
+| AKAI CD3000 CD-ROM | AKAI | raw sampler CD — **not** ISO 9660 | `.iso`/`.img` |
+| AKAI floppy | AKAI | 1.6 MB high-density, one volume, create-only | `.img` |
 
 The dialog also takes a list of **initial banks** — **Add Files…** picks them
 from disk, **Remove Selected** takes one back out — so an image can be built
@@ -1499,7 +1558,18 @@ Right-click an entry for **Rename…**, **Delete**, or **Export…** (write
 just that one bank back out to a standalone file) — all in-place
 operations on the real image file (via a temp-copy-then-replace, never a
 from-scratch rebuild), confirmed with a dialog before anything
-destructive happens.
+destructive happens. **Delete works on an AKAI image too**, freeing that
+volume's blocks without disturbing its neighbours.
+
+**New…** opens on the kind you are standing on, so creating a second
+image of the same sort as the one already open takes no picking. An AKAI
+hard disk or CD-ROM can be created **empty** and filled later; a floppy
+of any format needs its content up front, because it cannot be appended
+to. An AKAI append that does not fit **rebuilds the image larger** and
+carries the existing volumes across — a partition table declares its own
+extent, so the file cannot simply grow — and an image created too small
+for what you are sending offers to build a bigger one rather than
+failing.
 
 ### MPC Import (XPM / XTY / XPJ)
 
@@ -1796,6 +1866,23 @@ for setups and effects, matching mpc2emu's own `--pram` default. Set
 `PRAM n K / m K` for a KRZ bank as you stage it, and warns through the
 same over-limit dialog as the size threshold. Measured on hardware
 2026-08-10; a bank that overruns PRAM does not report anything.
+
+**S3000XL resident objects** — the third limit, and the one that actually
+stops an AKAI volume loading. Programs, **keygroups** and samples share
+one pool; keygroups appear in no directory, so the 510-entry file limit
+is about five times too loose to protect you. Default **1006**, measured
+on one 32 MB machine — whether it moves with fitted memory is untested,
+and the pool is shared with whatever is already loaded, so treat it as a
+floor. New Bank's meter shows `N / 1006 objects` beside the file count.
+
+**Check loops for audible clicks** — off by default. With it on, the
+Detail pane notes any loop that steps audibly for whatever preset you
+select, without building anything. It is off because it reads the audio
+around every loop the preset touches; the on-demand version is **Check
+Loops…** in New Bank.
+
+**Autosave staged work every** — the crash-recovery interval, 60 seconds
+by default, **0** to switch it off. See [Crash recovery](#crash-recovery).
 
 **Record every mpc2emu call in the project file** — a diagnostic switch,
 **off by default**. With it on, every call into mpc2emu is recorded: the
@@ -2303,8 +2390,8 @@ source its own run when a batch mixes them.
 
 ### ⚠️ Repairing a clicking loop — EXPERIMENTAL, not hardware-confirmed
 
-**Check Loops…** can move a loop's points or cross-fade its wrap (see [Check
-Loops](#check-loops)). Detecting and *reporting* a clicking loop changes
+**Check Loops…** can move a loop's points or cross-fade its wrap (described
+under [New Bank](#new-bank)). Detecting and *reporting* a clicking loop changes
 nothing and carries no caveat; the three **repairs** do, because **no sampler
 has yet played a loop repaired this way.** Keep the original file.
 
@@ -2522,8 +2609,8 @@ libraries before a fifth publisher's disc surfaced it.
 | Converting AKAI → E4B / KRZ / EIII | ✅ via Explorer's "Import via mpc2emu…", needs an mpc2emu checkout with AKAI support |
 | Search | ✅ AKAI volumes index as banks and their programs as presets, the same shape the tree uses, so a hit resolves onto a row that exists. Only the programs are read at scan time, never sample audio — **1 835 volumes and 7 991 programs across 12.3 GB of media index in 3.6 s** |
 | Building a new AKAI volume | ✅ drag programs into New Bank and Save as… — writes a **folder** of `.P3`/`.S3` files, because an AKAI volume is a set of files and not one file. Sample files are copied verbatim; only a name that had to change is rewritten |
-| Writing AKAI **disk images** | ⚠️ **built, and unreleased**, but the claim here is narrower than it was. Hard disk, CD3000 disc and 1.6 MB floppy, plus append. Our own reader gets back byte-for-byte what our writer put in (44 files across two volumes, per medium) and `akaiutil` agrees. **Corrected 2026-09-12:** the HARD DISK layout is not unconfirmed — it is mpc2emu's `build_akai_hd_image` / `append_akai_volumes`, which we delegate to, and an S3000XL has mounted their images many times (18 volumes and 364 samples swept off one live card; programs read on the machine's own panel, which is how they found a PRGNUM collision). What is still unheard is what **we** put inside that container: the program and sample bodies `banks/akai.py` assembles, our positional program renumbering, our cross-volume name claiming, the partition breaks and the object budget. The CD3000 `--iso` and floppy paths are unconfirmed on both sides. It stays on an unmerged branch for that reason, and behind `check_akai_write_support()` — a gate that stopped being a second lock on 2026-09-07, when mpc2emu merged its AKAI work into `main`: an ordinary checkout now has the writer and the check passes, so the branch is the only thing holding it back |
-| Converting E4B / KRZ / EIII → AKAI | ⚠️ **offered since 2026-09-12, unreleased with the rest of the AKAI write path.** This row used to say "not offered", because the conversion would *silently* flatten filter and amplitude envelopes, LFO routing and modulation depths. Both halves of that have changed: mpc2emu measured and wired those parameters through August and September, and what it still cannot carry it now **reports** — `AKAI_FILTER_SHAPE_LOST`, `AKAI_KEYGROUPS_DROPPED` and a dozen more. It is still a lossy conversion between two machines that do not agree; it is no longer a silent one. **The reporting reaches the GUI only once `master` is merged into this branch** — the diagnostics wiring lives there |
+| Writing AKAI **disk images** | ✅ **merged 2026-09-13, and loaded on a real S3000XL the same day.** Hard disk, CD3000 disc and 1.6 MB floppy, plus append, delete and grow-on-full. Our own reader gets back byte-for-byte what our writer put in (44 files across two volumes, per medium) and `akaiutil` agrees. The hard-disk layout is mpc2emu's `build_akai_hd_image` / `append_akai_volumes`, which we delegate to. What is confirmed by ear is the path as a whole; what is still unverified is named where it applies — the object pool's behaviour past 1006, and the CD3000 `--iso` and floppy layouts, which no machine here has mounted |
+| Converting E4B / KRZ / EIII → AKAI | ✅ **offered since 2026-09-12, merged and heard.** This row used to say "not offered", because the conversion would *silently* flatten filter and amplitude envelopes, LFO routing and modulation depths. Both halves of that have changed: mpc2emu measured and wired those parameters through August and September, and what it still cannot carry it **reports** — `AKAI_FILTER_SHAPE_LOST`, `AKAI_ONESHOT_RELEASE_HELD`, `AKAI_RATE_SNAPPED` and a dozen more, all of which now reach the warning box. It remains a lossy conversion between two machines that do not agree; it is no longer a silent one |
 | AKAI → AKAI | ⚠️ refused on purpose. The pipeline runs through mpc2emu's `Bank` model, which carries a fraction of what an AKAI program file holds (per-keygroup filter and amplitude envelopes, LFO routing, modulation depths), so the round trip would quietly flatten them. New Bank collects AKAI programs **verbatim** instead, which is what a librarian should do |
 | An incomplete disc image | ℹ️ detected and reported on the image's own row in the Detail pane. A partition table and its volume directories sit at the front of a disc, so a half-downloaded image still lists its whole contents and can only deliver the beginning of them. Files whose data is not in the image are skipped rather than served short — a truncated sample is not a smaller sample, it is the wrong audio at a plausible length — and the image says what fraction of itself it holds and how many files went missing |
 | A program whose samples are on another volume | ℹ️ normal, not broken — AKAI libraries were routinely shipped that way. The Detail pane shows the zones regardless, and a conversion is refused with the missing names rather than silently producing a bank of nothing. The refusal also says **where** they are: the sibling volume on the same disc that holds them, or that they are not on this disc at all. On one real disc, 14 of its 66 unresolved zones name samples sitting on another of its own volumes |
@@ -2578,7 +2665,7 @@ libraries before a fifth publisher's disc surfaced it.
 | Feature | Status |
 |---|---|
 | Real hardware confirmation — E4B / EIII | ✅ **confirmed 2026-07-28** on real E-mu E4XT hardware (via ZuluSCSI): building a bank, sending it through Pending for Image, and building/appending it onto a real EMU3 disk image — including the new EIII-on-image capability — all load and play correctly, for every vintage resample profile and reduce combination in the project's own HW confirmation matrix (`tests/manual_hw_convert_matrix.py`) |
-| Real hardware confirmation — KRZ / K2000R | ⏳ **pending** — not yet tested by loading a VinSamLib-built image onto a real K2000R. Considered **very likely to work**: VinSamLib's KRZ image writing goes entirely through mpc2emu's own K2000 disk builders (no VinSamLib-specific KRZ write logic of its own), and mpc2emu's KRZ writer already carries its own separate, real K2000R/Gotek hardware confirmation (filters, envelopes, LFOs — see [mpc2emu's own DISCLAIMER.md](https://github.com/lentferj/mpc2emu/blob/main/DISCLAIMER.md)) — this row will be updated once VinSamLib's own K2000R test is actually run |
+| Real hardware confirmation — KRZ / K2000R | ✅ **confirmed 2026-09-18** — VinSamLib-assembled KRZ banks, written to a FAT16 card image and loaded on a real K2000. The listening is what found the last three defects: every conversion played **12 dB quiet** (the writer pre-attenuated and the reader added exactly as much back, so a round trip could never see it), a one-shot's release cut notes off, and releases ran 1.87x fast. All three fixed upstream and rebuilt |
 
 ---
 
@@ -2594,11 +2681,19 @@ vinsamlib/
 │   ├── krz.py                  # Byte-verbatim KRZ container reader/assembler
 │   ├── eiii.py                 # Byte-verbatim EIII/ESI container reader/assembler
 │   ├── akai.py                 # Byte-verbatim AKAI S1000/S3000 volume reader/assembler
+│   ├── loopcheck.py            # Finds loops that click, and the three repairs
 │   └── summary.py              # Zone/velocity/bit-depth/sample-rate summaries for the UI
 ├── build/
 │   ├── convert.py              # mpc2emu resample/reduce wrapper (ConversionOptions)
 │   ├── xpm_import.py           # MPC .xpm/.xty/.xpj -> E4B/KRZ/EIII, sharing convert.py's pipeline
+│   ├── foreign_import.py       # SF2/SFZ/EXS24/TAL/GIG -> the same pipeline
 │   ├── sampledir_import.py     # A folder of WAVs -> one multisampled preset
+│   ├── sample_names.py         # The naming schemes the rename dialog offers
+│   ├── favourites.py           # A pasted column of preset numbers -> presets
+│   ├── refaudio.py             # What a row costs a sampler, deduped per source bank
+│   ├── project.py              # .vslproj save/load, references vs carried bytes
+│   ├── calllog.py              # The opt-in record of every mpc2emu call
+│   ├── akai_image.py           # AKAI media: partition planning, RAM and object budgets
 │   └── images.py               # create_image()/append_banks() over mpc2emu's writers
 ├── vfs/                        # Read-side filesystem support mpc2emu itself never needed
 │   ├── base.py                 # Volume/Entry protocol every reader implements
@@ -2621,6 +2716,10 @@ vinsamlib/
     ├── bank_pane.py              # New Bank column
     ├── pending_pane.py           # Pending for Image column
     ├── image_pane.py             # Image column
+    ├── favourites_dialog.py     # Paste hardware preset numbers, preview what they resolve to
+    ├── sample_rename_dialog.py  # Rename the samples inside a staged bank
+    ├── sample_names_widget.py   # The naming-scheme row both dialogs share
+    ├── loop_repair_dialog.py    # Clicking loops, worst first, and the repair choice
     ├── convert_options_dialog.py # Shared resample/reduce dialog
     ├── format_convert_dialog.py  # + target-format picker, subclasses the above
     ├── sampledir_import_dialog.py # + octave convention and sample placement
@@ -2634,6 +2733,10 @@ vinsamlib/
 tools/
 ├── check_krz_banks.py          # Scans built KRZ banks for the two silent defects
 │                                # described under "If you built KRZ banks before…"
+├── matrix_coverage.py          # Which release-matrix cells any test actually claims
+├── matrix_grid.py              # The same, rendered as a grid
+├── suggest_coverage.py         # Cells with no test, ranked by what they would catch
+├── backup_tests.py             # Snapshots tests/, which is untracked by design
 └── make_screenshots.py         # Regenerates the README screenshots from a synthetic
                                  # demo library — no real (or commercial) content
 ```
@@ -2654,6 +2757,10 @@ library browser — the whole left half of this table is its own code.
 |---|---|---|
 | Browse loose `.e4b` / `.KRZ` / EIII banks | **no** | `banks/*.py` are self-contained readers |
 | Browse EMU3 discs & HD images, ISO 9660, FAT12/16/32 | **no** | `vfs/` reads all of them from scratch |
+| **Browse AKAI discs, CD-ROMs and floppies** | **no** | `vfs/akai.py` and `banks/akai.py` are ours |
+| **AKAI Detail and Samples panes** — keygroups, zones, loops, rates | **no** | same; the only format whose detail view needs nothing |
+| **New Bank: assemble an AKAI volume, Save as…** | **no** | writes the `.P3`/`.S3` files itself |
+| Converting **to or from** AKAI | **yes** | `check_akai_write_support`, and the shared conversion pipeline |
 | Index & search the library | **no** | |
 | New Bank: assemble E4B or KRZ, **Save as…** | **no** | |
 | Rename samples inside a bank | **no** | patched in our own container layer |
