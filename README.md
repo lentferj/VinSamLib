@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright (C) 2026  VinSamLib contributors
 
 A librarian and bank builder for vintage sampler content — E-mu E4B
 (Emulator IV / E4XT / EOS), E-mu EIII/ESI-32, Kurzweil KRZ (K2000
-series) and **Akai S1000/S3000**. Browse a whole library of banks,
+series) and Akai S1000/S3000. Browse a whole library of banks,
 discs, and floppy images at once; drag any preset or program straight
 into a new bank; queue several banks for a build; write real, loadable
 disk images. All four are read by this program's own code, and E4B, KRZ
