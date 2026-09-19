@@ -340,7 +340,13 @@ class PendingBanksPane(QWidget):
                         f"{'s' if len(dupes) != 1 else ''} used more than once")
         self._summary_label.setText(summary)
         self._build_btn.setEnabled(bool(self._pending))
-        needs_e4b_only = self._format in ("KRZ", "EIII")
+        # AKAI belongs in this list. _build_one returns early for an AKAI
+        # entry -- a volume is a folder of files, not a bank file -- and the
+        # conversion branch below it reads `if fmt == "E4B"` twice over, so
+        # options chosen for an AKAI queue were stored, reported as "will
+        # apply", and then silently dropped at build time. Offering a button
+        # that does nothing is the "Keep Anyway" defect of 2026-09-14 again.
+        needs_e4b_only = self._format in ("KRZ", "EIII", "AKAI")
         self._convert_btn.setEnabled(not needs_e4b_only)
         self._convert_btn.setToolTip(
             f"Per-bank conversion isn't offered for a {self._format} queue yet "
