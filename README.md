@@ -6,14 +6,19 @@ SPDX-FileCopyrightText: Copyright (C) 2026  VinSamLib contributors
 # VinSamLib
 
 A librarian and bank builder for vintage sampler content — E-mu E4B
-(Emulator IV / E4XT / EOS), E-mu EIII/ESI-32, and Kurzweil KRZ (K2000
-series). Browse a whole library of banks, discs, and floppy images at
-once; drag any preset or program straight into a new bank; queue
-several banks for a build; write real, loadable disk images. Where
-mpc2emu is available, you can also browse and import Akai MPC material
-directly — a `.xpm` program, or a whole `.xpj` project one program at a
-time — or run any existing preset through mpc2emu's vintage resample
-/ sample-count reduction pipeline on its way into a bank.
+(Emulator IV / E4XT / EOS), E-mu EIII/ESI-32, Kurzweil KRZ (K2000
+series) and **Akai S1000/S3000**. Browse a whole library of banks,
+discs, and floppy images at once; drag any preset or program straight
+into a new bank; queue several banks for a build; write real, loadable
+disk images. All four are read by this program's own code, and E4B, KRZ
+and AKAI banks are assembled and saved without mpc2emu at all.
+
+Where mpc2emu is available, presets convert **between** the four, and
+Akai MPC material comes in directly — a `.xpm` program, or a whole
+`.xpj` project one program at a time — along with SoundFont, SFZ,
+EXS24, TAL-Sampler and GigaSampler instruments, a folder of loose WAVs,
+and mpc2emu's vintage resample / sample-count reduction pipeline on
+anything's way into a bank.
 
 > **Legal:** [DISCLAIMER.md](DISCLAIMER.md) · [LICENSE](LICENSE)
 
@@ -97,28 +102,6 @@ Explorer at all**, converting an AKAI program, and vintage conversion.
 Settings shows exactly which of these is unavailable and why if mpc2emu
 isn't configured.
 
-### Browse an Akai S1000/S3000 library
-
-Point VinSamLib at an Akai sampler disc — a SCSI/ZuluSCSI hard disk
-(`.hda`/`.img`), a CD3000 CD-ROM (`.iso`), or an 800 KB / 1.6 MB AKAI
-floppy — and every volume on it lists as a bank, with its programs as
-presets, keygroups and velocity zones in the Detail pane, and its
-samples in the Samples pane. A folder of loose `.P3`/`.S3` files reads
-the same way. Programs convert to **E4B, KRZ or EIII** through
-Explorer's "Import via mpc2emu…", and can be dragged into New Bank to
-build a new AKAI volume.
-
-Reading needs **no mpc2emu at all** — `banks/akai.py` and `vfs/akai.py`
-are VinSamLib's own, like the E4B and KRZ readers. Converting needs an
-mpc2emu checkout that has AKAI support.
-
-**Banks and images built here have been loaded and played on a real
-S3000XL** (first on 2026-09-13); see [Known
-Limitations](#akai-s1000--s3000) for what within that is settled and what
-is not. The format was never published by Akai, so every byte of it is
-reconstructed — this project reads **real commercial library discs from a
-dozen publishers**, both S1000 and S3000, thousands of volumes.
-
 ### Browse your whole library at once
 
 Point VinSamLib at any number of folders — loose `.e4b`/`.KRZ` files,
@@ -131,12 +114,54 @@ everything into a local search database, so typing in the search box
 finds a preset by name anywhere in the whole library, instantly, without
 waiting for the tree to be expanded down to it.
 
+### The four hardware formats, and what each one needs
+
+**Every format here is read by VinSamLib's own code.** Opening a disc,
+listing its banks and expanding one into its presets never involves
+mpc2emu, for any of the four. What each format needs *beyond* that is
+where they differ — and since the differences are not the ones you would
+guess, they are a table rather than a sentence:
+
+| | Browse a disc / bank | Detail pane | Assemble a bank | Write a disk image | Played on real hardware |
+|---|---|---|---|---|---|
+| **E-mu E4B** (Emulator IV / E4XT / EOS) | ours | mpc2emu | ours | mpc2emu | ✅ 2026-07-28, E4XT |
+| **E-mu EIII / ESI-32** | ours | mpc2emu | mpc2emu's empty-bank skeleton | mpc2emu | ✅ 2026-07-28, E4XT |
+| **Kurzweil KRZ** (K2000 series) | ours | ours | ours | mpc2emu | ✅ 2026-09-18, K2000R |
+| **Akai S1000 / S3000** | ours | ours | ours | mpc2emu | ✅ 2026-09-13, S3000XL |
+
+Converting **between** them — any of the four as the source, any as the
+target — always needs mpc2emu, and is what Explorer's "Import via
+mpc2emu…" does.
+
+Two of the four carry a provenance worth stating, because neither
+format was ever published:
+
+- **Akai S1000/S3000.** An Akai sampler disc — a SCSI/ZuluSCSI hard disk
+  (`.hda`/`.img`), a CD3000 CD-ROM (`.iso`), an 800 KB / 1.6 MB floppy, or
+  a folder of loose `.P3`/`.S3` files — lists every volume as a bank, its
+  programs as presets, and its keygroups, velocity zones, loops and rates
+  in the Detail and Samples panes. Every byte of that is reconstructed
+  from Hiroyuki Ohsaki's binary analysis, cross-checked against `akaiutil`
+  and against **real commercial library discs from a dozen publishers**,
+  both generations, thousands of volumes. See [Known
+  Limitations](#akai-s1000--s3000) for what the hardware has settled and
+  what it has not.
+- **EIII / ESI-32.** No reference implementation existed anywhere, so the
+  reader and assembler are a from-scratch RE effort, corpus-verified by
+  round-tripping 600 real banks out of the author's own discs. EIII
+  content commonly shares an EMU3 disc with E4B content, and both browse
+  side by side.
+
 ### Build a new bank by dragging presets together
 
 The New Bank column accepts presets/programs dragged from anywhere in
 the library (or added via right-click), locks to whichever format the
 first one came from, and shows a live, real size/count meter — computed
-by actually assembling the selection, not an estimate. The E4XT's 128 MB /
+by actually assembling the selection, not an estimate. **The order is
+the numbering**: each row shows the number it will answer to on the
+machine — program 200 on a K2000, preset 0 in an E4B bank, MIDI program
+0 (the panel's `1`) on an S3000XL — and dragging a row, or Move Up /
+Move Down, renumbers the rest immediately. The E4XT's 128 MB /
 1000-preset and the K2000's 800-objects-per-type limits are hard,
 format-technical ceilings, always enforced; a separate, lower,
 configurable-in-Settings byte threshold (default 64 MB E4B / 32 MB KRZ)
@@ -162,10 +187,28 @@ currently-open (or about-to-be-created) disk image in one step.
 
 ### Manage disc/floppy images directly
 
-The Image column creates any of mpc2emu's own image kinds (EMU3 CD,
+The Image column creates any of mpc2emu's own image kinds — EMU3 CD,
 EMU-fs or FAT hard disk for the E4XT; FAT16 CD/hard-disk or FAT12 Gotek
-floppy for the K2000), or opens an existing one, and lets you append,
-rename, delete, and export individual bank entries in place.
+floppy for the K2000; **partitioned S3000 hard disk, CD3000 CD-ROM or
+1.6 MB floppy for the Akai** — or opens an existing one, and lets you
+append, rename, delete, and export individual bank entries in place. An
+AKAI or EMU3 image that runs out of room is rebuilt larger with its
+existing volumes carried across, rather than refusing the append.
+
+### Save an evening's work, and survive a crash
+
+**File ▸ Save Project…** writes everything staged — New Bank's presets
+and their edits, the Pending queue with its per-bank conversion options
+and partition breaks — to one `.vslproj` file. A preset still sitting in
+your library is stored as a **reference** (a project over a 16 MB bank
+is under a kilobyte); anything that came out of a conversion is
+**carried**, bytes and all, because its source no longer exists anywhere
+once the session's temp directory goes.
+
+The same thing is autosaved every 60 seconds, so a crash or a power cut
+costs a minute rather than an evening, and VinSamLib offers the recovery
+file back on the next start. See [Save Project / Load
+Project](#save-project--load-project).
 
 ### Import an Akai MPC program, or browse a whole project
 
@@ -232,6 +275,18 @@ a ceiling no size check can see, where the extra layers aren't quiet but
 stereo sample costs two voices, and the limit is per note (32 on an E4XT,
 24 on a K2000R), not global polyphony. See [Voice budget
 warning](#voice-budget-warning).
+
+### Find the loops that click
+
+A looped sample plays to its last frame and jumps back to the loop
+start; if those two frames sit at different levels, the jump is a step
+you hear as a tick on every repetition, forever. **Check Loops…** in New
+Bank scans the staged presets and lists each one, worst first, with the
+step as a percentage of the local level — and offers three repairs.
+Reporting changes nothing and is safe; the repairs are ⚠️ experimental
+and no sampler has yet played one. Finding nothing is a normal result:
+measured across this library, 2.8% of looped E4B headers click against
+13.4% of KRZ ones.
 
 ---
 
@@ -911,6 +966,24 @@ the same window beside the note, but only when a preset actually has more than
 one — repeating `v1-127` down seventy rows hides the note instead of
 qualifying it.
 
+Overlapping key ranges are normal once samples are separated by velocity —
+that is what layering *is* — so the overlap warning stays a warning.
+
+**Adjust Placement… is E4B only.** The button is disabled for the other
+three, with the reason in its tooltip, rather than opening an editor that
+cannot apply what you type: a KRZ program reaches its samples through
+keymaps, an EIII preset has no per-zone range at all (it carries an
+88-entry table mapping each key to one zone), and an AKAI keygroup is a
+different object again. Each is its own piece of work.
+
+> ⚠️ **No sampler has yet loaded a bank whose placement or velocity was
+> edited this way**, and a velocity edit additionally rebuilds the preset's
+> voices (see the link below). A moved zone
+> also has to widen its **voice's** own key window, or the instrument clamps
+> the zone back and the edit silently does nothing — that widening is applied
+> here and verified against the corpus, but not on hardware. See
+> [Known Limitations](#️-editing-where-a-sample-plays--placement-and-velocity--experimental-not-hardware-confirmed).
+
 **Check Loops…** ⚠️ *the repairs are experimental* looks for loops that
 *click*, and offers to repair them. Reporting is safe and changes nothing;
 no sampler has yet played a **repaired** loop — see [Repairing a clicking
@@ -954,23 +1027,6 @@ Settings and the Detail pane notes them for any preset you select, without
 building anything. It is off by default because it reads the audio around
 every loop a preset touches.
 
-Overlapping key ranges are normal once samples are separated by velocity —
-that is what layering *is* — so the overlap warning stays a warning.
-
-**E4B only.** The button is disabled for the other two and the tooltip says
-why, rather than opening an editor that cannot apply what you type: a KRZ
-program reaches its samples through keymaps, and an EIII preset has no
-per-zone range at all — it carries an 88-entry table mapping each key to one
-zone. Both are their own piece of work.
-
-> ⚠️ **No sampler has yet loaded a bank whose placement or velocity was
-> edited this way**, and a velocity edit additionally rebuilds the preset's
-> voices (see the link below). A moved zone
-> also has to widen its **voice's** own key window, or the instrument clamps
-> the zone back and the edit silently does nothing — that widening is applied
-> here and verified against the corpus, but not on hardware. See
-> [Known Limitations](#️-editing-where-a-sample-plays--placement-and-velocity--experimental-not-hardware-confirmed).
-
 **Save as…** writes the exact assembled bytes to a file you choose —
 except for **AKAI**, where it asks for a *folder* instead and writes the
 volume's `.P3`/`.S3` files into a subfolder named after the bank. There
@@ -980,6 +1036,31 @@ a file that loses its extension cannot be placed on media at all.
 **Send to Image Column** hands the current (bank, preset list, name)
 recipe to **Pending for Image** — the recipe stays editable there, it
 isn't a frozen copy.
+
+#### What each staged preset costs
+
+New Bank lists the audio each preset needs beside its name, the same
+figure the Explorer's preset rows show and from the same source, so the
+two panes cannot drift.
+
+**It will not add up to the meter above, and that is the point.** The
+meter reports the bank's **deduped** total — what loading it costs the
+sampler — while a row reports what that preset needs **on its own**. Two
+presets sharing a multisample each count it once, so their rows overstate
+the bank by however much they share; on one real bank measured here nine
+presets summed to three times the bank's own audio. The meter answers
+"will this fit?", the rows answer "what is this one bringing?".
+
+A preset whose programs reference only the sampler's own ROM shows **no
+audio**, which is the literal truth and the reason such a preset cannot
+be converted to another machine.
+
+**SF2 and GIG are the exception**, and they are measured the first time
+you expand one. They embed their samples, so one instrument's share is
+only knowable by reading the file — too expensive for a blind library
+scan over a shelf of them, and affordable exactly once, when you open
+that row on purpose. The answer is kept in the index, so the next time it
+comes from the same lookup as every other row.
 
 ### Favourites from a hardware list
 
@@ -1060,17 +1141,38 @@ future enhancement, not yet built; the underlying technique, assembling
 temporary single-preset banks, is proven and documented for when it's
 picked up.)
 
-The conversion button is currently disabled for a KRZ- or EIII-format
-queue (a scope decision, not a technical limitation any more — mpc2emu
-can read both now too; per-bank conversion for either just hasn't been
-wired up yet). Convert a KRZ/EIII preset individually via Explorer's
-"Import via mpc2emu…" in the meantime.
+The conversion button is disabled for a **KRZ, EIII or AKAI** queue,
+with the reason in its tooltip — a scope decision for the first two
+(mpc2emu reads both now; per-bank conversion just hasn't been wired up),
+and a structural one for AKAI, whose queue entry is a *folder* of
+`.P3`/`.S3` files rather than a bank file and never reaches the
+conversion step. Convert a preset individually via Explorer's "Import
+via mpc2emu…" in the meantime.
+
+> Until 2026-09-19 the button was **offered** on an AKAI queue: the
+> dialog opened, the options were stored, the status line said they would
+> be applied on the next Build Image, and the build dropped them. The
+> same shape as "Keep Anyway" four days earlier, and found the same way —
+> by reading the code against what the README claimed.
 
 **Build Image →** assembles every entry currently in the queue and hands
 the results to the Image column — for E4B, KRZ, or EIII (EIII banks
 build onto the exact same EMU3 CD/HD image kinds E4B does). Building
 does **not** empty the queue — the same recipe can be rebuilt as many
 times as you like (handy while iterating on conversion options).
+
+#### What the Pending queue costs
+
+Each queued bank reports the audio it needs to LOAD — deduped — and each
+row of the Contents list below reports what that preset needs on its own.
+Measured on one real bank: five presets whose rows add up to about 71 MB
+queue as **29.1 MB**, because they share a multisample and the sampler
+loads it once. The queue's figure is the one to check against a sampler's
+RAM; the rows tell you which preset to drop when it is over.
+
+Deduped per SOURCE bank, not across the queue: a queued bank can hold
+presets drawn from several different files, and a sample identity only
+means anything inside the file it came from.
 
 ### Convert Options dialog
 
@@ -1082,8 +1184,9 @@ import.
 #### Import as: (target format)
 
 The target-format picker at the very top. Only MPC import and "Import
-via mpc2emu" show it (Pending's per-bank dialog doesn't — its
-conversion button is still E4B-only, see Pending for Image above).
+via mpc2emu" show it (Pending's per-bank dialog doesn't — it converts an
+E4B queue in place, and its button is disabled for the other three; see
+Pending for Image above).
 "Import via mpc2emu" defaults this picker to the preset's own source
 format — "same format, with options" one click away — but you can
 switch it to the other format just as easily. Switching it to KRZ
@@ -1167,6 +1270,31 @@ This is useful for MPC Auto Sampler output in particular: the MPC's own
 which is gone once the sample is exported as a bare WAV — so the audible
 lead-in silence is back in anything VinSamLib imports.
 
+> ⚠️ **Trim Tail currently cuts audible audio on material that has no real
+> silence in it, and its threshold does nothing there. Open upstream as of
+> 2026-09-19 — leave it off unless your samples have dead tails.**
+>
+> mpc2emu's floor estimate is the 10th-percentile window energy, which
+> assumes the sample *contains* roughly that much silence. On a 1.2 s piano
+> hit that decays but never reaches silence within its own length, the 10th
+> percentile is **still signal** — measured at 11.4 dB below peak — so the
+> threshold you asked for never gets a look in and the cut lands where the
+> source is only 8.5 dB below its own peak. Measured across a 100 dB range
+> of thresholds, −20 dB through −120 dB, the cut point did not move by a
+> single frame.
+>
+> **The blast radius is the inverse of the feature's purpose.** An
+> autosampler capture with a long dead tail has a real floor to find and
+> works as designed. Short one-shots, already-trimmed library content and
+> sustained tones get cut into: on one real program it removed 49% of a
+> sample and 10.3 s across 15 of 16 of them, and a source note that sounds
+> 1.21 s came back at about 0.60.
+>
+> Nothing warns, and the reason is worth stating: the trim **reports what it
+> did** — *"trimmed 15/16 samples, removed ~10.3 s"* — and that reads as
+> success. It took listening to a source against a conversion to catch it.
+> **Trim Start is unaffected**; it is the tail estimate that is wrong.
+
 #### K2000 Layer Handling
 
 **KRZ only** — greyed out for E4B and EIII targets, which have no
@@ -1198,131 +1326,62 @@ This is the one place a conversion knowingly changes what the source
 says. Every change is reported afterwards in the warning box described
 under [Conversion warnings](#conversion-warnings).
 
-#### Conversion warnings
+#### Akai S3000XL Hardware
 
-After any conversion or import, anything mpc2emu changed or could not
-carry is collected and shown in one box — which preset it was about, what
-happened, and what you can do differently.
+**AKAI only** — greyed out for every other target, and cleared when you
+switch away from AKAI, since no other machine here has a second filter
+to map onto.
 
-This is newer than it sounds. mpc2emu's converter has always *printed*
-these, but VinSamLib captured its stdout and read it back **only when
-something raised**, so every warning from a *successful* conversion was
-discarded before it could reach the window. The drum-program silence
-above is exactly that: the answer was in the build log the whole time and
-no user of this program could ever see it. Since mpc2emu published
-structured diagnostics (2026-09-05) they arrive as records instead of
-text, and the box reports them.
+One checkbox: **this machine has the IB-304F second-filter board**. The
+S3000XL's second filter is an optional expansion board. Without it, a
+highpass, bandpass, band-stop or band-boost source has nowhere to go and
+collapses to a 2-pole lowpass; with it, those keep their shape on filter
+2.
 
-Warnings that mean **content was lost** are counted separately from ones
-that merely restructured something, and the drum-program case gets its own
-sentence, because "this will not sound on a normal channel" is a different
-thing to be told than "this lost a velocity band".
+**It is off by default and has to be.** Nothing in a file or on the wire
+says whether a board is fitted — `LSI2_ON` reads back 1 either way — so
+this can only ever be you telling us about your own machine. Tick it
+only if yours has one: a machine *without* the board refuses such a
+program outright with "2nd filter board IB304F not fitted!", which is
+what makes guessing worse than asking.
 
-An older mpc2emu checkout without `models/diagnostics.py` simply keeps the
-previous behaviour: the conversion runs and produces the same file, it
-just cannot say what it changed on the way.
+⚠️ **Not hardware-verified.** The corner law behind it was measured in
+lowpass mode only and the corner moves about 41% between modes, so a
+highpass or EQ corner is placed by a law measured on a different one.
 
-#### What each staged preset costs
+#### Source Handling
 
-New Bank lists the audio each preset needs beside its name, the same
-figure the Explorer's preset rows show and from the same source, so the
-two panes cannot drift.
+Three options about what the *source* means, rather than what the target
+can hold. The first and third apply to **MPC sources only**.
 
-**It will not add up to the meter above, and that is the point.** The
-meter reports the bank's **deduped** total — what loading it costs the
-sampler — while a row reports what that preset needs **on its own**. Two
-presets sharing a multisample each count it once, so their rows overstate
-the bank by however much they share; on one real bank measured here nine
-presets summed to three times the bank's own audio. The meter answers
-"will this fit?", the rows answer "what is this one bringing?".
+**Lay MPC drum pads out chromatically from C1.** An MPC drum program
+carries its own pad-to-note map, and that map is the MPC's **factory**
+layout — stamped on every drum program whatever it holds, kits and FX
+banks alike: `37 36 42 82 40 38 …` for pads 1–16, which spreads sixteen
+pads over two and a half octaves with holes in between and one stranded
+at A#5. Faithful, and right for a real kit whose GM positions a pattern
+was written against. Rarely what you want for a **melodic** program on
+pads — piano chords, say — which this lays out on consecutive keys
+instead. (This is mpc2emu's `--chromatic-pads`; the map itself is
+described under [MPC Import](#browse-and-import-an-mpc-project-needs-mpc2emu).)
 
-A preset whose programs reference only the sampler's own ROM shows **no
-audio**, which is the literal truth and the reason such a preset cannot
-be converted to another machine.
+**Split velocity layers into separate presets.** Each velocity layer
+becomes a preset of its own at full velocity — one instrument turned
+into a palette of its layers, playable one at a time. It is the opposite
+instrument to *Reduce Velocity Layers* below, which throws them away:
+this keeps every one and costs preset slots instead, so a four-layer
+preset becomes four. It runs **before** the reducers, so a reduction you
+also asked for sees the exploded preset set.
 
-**SF2 and GIG are the exception**, and they are measured the first time
-you expand one. They embed their samples, so one instrument's share is
-only knowable by reading the file — too expensive for a blind library
-scan over a shelf of them, and affordable exactly once, when you open
-that row on purpose. The answer is kept in the index, so the next time it
-comes from the same lookup as every other row.
-
-#### What the Pending queue costs
-
-Each queued bank reports the audio it needs to LOAD — deduped — and each
-row of the Contents list below reports what that preset needs on its own.
-Measured on one real bank: five presets whose rows add up to about 71 MB
-queue as **29.1 MB**, because they share a multisample and the sampler
-loads it once. The queue's figure is the one to check against a sampler's
-RAM; the rows tell you which preset to drop when it is over.
-
-Deduped per SOURCE bank, not across the queue: a queued bank can hold
-presets drawn from several different files, and a sample identity only
-means anything inside the file it came from.
-
-### Save Project / Load Project
-
-**File ▸ Save Project…** writes everything staged — New Bank's presets and
-their edits, the Pending queue with its per-bank conversion options and
-partition breaks — to a single `.vslproj` file, so an evening's work
-survives quitting. **Load Project…** puts it back.
-
-**What it carries, and what it only points at.**
-
-| Where a preset came from | In the project file |
-|---|---|
-| A library file you have not altered | A **reference**: the path plus the preset's identity inside it |
-| A conversion or an import | **Carried**, bytes and all |
-
-A reference keeps the file tiny — a project over a 16 MB bank is under a
-kilobyte — and copying that bank in to record "and this preset from it"
-would make saving cost more than the work being saved.
-
-A conversion result has no such home. Its bytes live in a session temp
-directory that is deleted when VinSamLib exits, so a reference to one
-would be dead by morning. Re-running the conversion is *not* the same
-thing either: mpc2emu's parameter laws are still being corrected week to
-week, so a rebuild months later can produce audibly different audio from
-the same source. What you staged is what gets saved.
-
-**A stale reference is reported, never guessed at.** Each one records the
-source's size and modification time. If the file has moved, changed or
-gone, those presets are named and skipped and the rest of the project
-still loads — restoring presets by position out of a file that has since
-changed is how you would get the wrong sound with nothing anywhere
-saying so. A project that refused to open because one folder moved would
-be worse than no project file at all.
-
-It also records **which image was open** and **which folders were
-unfolded** in the library tree, so reopening a project is coming back to a
-desk rather than to a fresh install. Neither can stop a load: an image
-that has since been deleted becomes a line in the problems list, not a
-refusal to restore the queue that was going to be written to it. The tree
-unfolds itself level by level as its rows arrive, because a lazy tree
-cannot be restored in one pass.
-
-The file is an ordinary zip: `project.json` plus a `blobs/` folder holding
-carried banks under content-addressed names, so two presets out of one
-converted bank store its bytes once. You can look inside it with anything.
-
-#### Crash recovery
-
-The same thing is written automatically to a recovery file every **60
-seconds** by default, off the GUI thread, so a crash or a power cut costs
-at most a minute of staging. **Settings ▸ Autosave staged work every**
-changes the interval and **0 switches it off**; it is stored in
-`config.toml`.
-
-A clean exit **deletes** that file, and that is the whole mechanism —
-nothing records a crash, because a crash is exactly the case where
-nothing gets the chance to record anything. The file still being there
-when VinSamLib starts is the signal, and you are asked whether to load
-it.
-
-Saying **no** keeps the file rather than deleting it. Answering a dialog
-that appeared during startup by reflex must not be what destroys the only
-copy of an evening's work; it is replaced by the next autosave and
-removed by the next clean exit.
+**Synced MPC LFOs assume _N_ BPM.** An MPC LFO can be locked to the
+project tempo, and the XPM does not store what that tempo was — so a
+synced rate can only be reproduced against an assumed one. Left
+unticked, mpc2emu assumes 120, the MPC's own new-project default; the
+box is what distinguishes "no tempo stated" from "120 was the tempo",
+which are different inputs. Tick it and set the tempo the material was
+actually made at, and every synced LFO lands at the rate it had. The
+setting is applied around the parse and restored afterwards, so one
+import cannot flavour the next.
 
 #### Fit Each Preset to a Memory Target
 
@@ -1344,6 +1403,16 @@ It runs **last**, after the stereo, resample and rate options, so
 reductions you already asked for count toward the target rather than
 being thinned for a second time.
 
+**A target that cannot be reached comes back with the number that can.**
+Thinning frees whole samples and never goes below one per voice, so every
+preset has a hard floor and a target under it is unreachable however far
+the search is pushed. Rather than a sentence asking you to work one out,
+the warning box offers **"Raise target to 4.0 MB and re-import"** — the
+largest floor across the affected presets, since raising to anything
+smaller clears one preset and leaves another failing. The re-import takes
+the same source and the same options, with that one value changed, and
+the presets from the failed attempt are left alone beside it.
+
 **The target is per preset, so the bank will not shrink by the same
 proportion.** Presets share samples, and a sample stays as long as any
 preset still needs it. Measured on a real 29 MB bank: "shrink by 50%"
@@ -1351,6 +1420,41 @@ came out at 26.5 MB, because each preset gave up half of what it alone
 required and most of the audio was required by something else too. Use
 "shrink to N MB per preset" when a per-preset ceiling is what you
 actually want — that same bank went to 13.7 MB at a 2 MB target.
+
+#### Vintage Resample
+
+Pick `EMU Emulator II` (8-bit µ-law companded, 27,777 Hz — the defining
+lo-fi grit) or `EMU Emax I` (12-bit linear, 27,500 Hz — cleaner).
+**Apply bandpass coloring** (on by default) simulates the output filter
+stage; unchecking it isolates the raw bit/rate reduction. **Keep
+gain-staged (hot) level** skips restoring each sample to its original
+peak level afterward, leaving the louder, gain-staged level the DSP
+works at internally.
+
+#### Limit Maximum Sample Rate
+
+An independent step (not gated behind Vintage Resample also being on):
+clean-downsamples anything above the chosen rate. Only ever
+downsamples, never up.
+
+"Clean" became considerably cleaner in mpc2emu on 2026-08-02
+(`6bccce9`): the old two-pole prefilter was far too gentle for the job
+and let content above the new Nyquist fold back audibly — a full-scale
+sweep that should have come back silent aliased at −5.3 dB, and the same
+softness dulled the passband 3 dB at 8 kHz. It is now a
+Blackman-windowed sinc: −89.4 dB and flat to 9.5 kHz. This is the
+default path for KRZ output, so it applies to more banks than the
+opt-in name suggests. Vintage Resample is untouched — its aliasing is
+the point.
+
+#### Reduce Sample Count
+
+**Reduce Key Zones by** / **Reduce Velocity Layers by**, each an
+independent percentage slider. The percentage is how much to
+**remove**, not a target to shrink *to* — 30% removes ~30%, keeping
+~70% spread evenly across the range (matches mpc2emu's own CLI
+semantics and wording exactly). With small counts, rounding means the
+actual fraction removed won't always be exact.
 
 #### Converting to AKAI
 
@@ -1430,41 +1534,6 @@ indistinguishable from a volume you set deliberately, so re-reading the
 bank cannot undo it and applying it twice to the same material drifts
 further each time.
 
-#### Vintage Resample
-
-Pick `EMU Emulator II` (8-bit µ-law companded, 27,777 Hz — the defining
-lo-fi grit) or `EMU Emax I` (12-bit linear, 27,500 Hz — cleaner).
-**Apply bandpass coloring** (on by default) simulates the output filter
-stage; unchecking it isolates the raw bit/rate reduction. **Keep
-gain-staged (hot) level** skips restoring each sample to its original
-peak level afterward, leaving the louder, gain-staged level the DSP
-works at internally.
-
-#### Limit Maximum Sample Rate
-
-An independent step (not gated behind Vintage Resample also being on):
-clean-downsamples anything above the chosen rate. Only ever
-downsamples, never up.
-
-"Clean" became considerably cleaner in mpc2emu on 2026-08-02
-(`6bccce9`): the old two-pole prefilter was far too gentle for the job
-and let content above the new Nyquist fold back audibly — a full-scale
-sweep that should have come back silent aliased at −5.3 dB, and the same
-softness dulled the passband 3 dB at 8 kHz. It is now a
-Blackman-windowed sinc: −89.4 dB and flat to 9.5 kHz. This is the
-default path for KRZ output, so it applies to more banks than the
-opt-in name suggests. Vintage Resample is untouched — its aliasing is
-the point.
-
-#### Reduce Sample Count
-
-**Reduce Key Zones by** / **Reduce Velocity Layers by**, each an
-independent percentage slider. The percentage is how much to
-**remove**, not a target to shrink *to* — 30% removes ~30%, keeping
-~70% spread evenly across the range (matches mpc2emu's own CLI
-semantics and wording exactly). With small counts, rounding means the
-actual fraction removed won't always be exact.
-
 #### Behavior shared by every section
 
 The dialog grows as you check more sections, and the title/wording adapts
@@ -1478,6 +1547,40 @@ Leaving every section untouched is recognised as a genuine no-op, and
 when the source and target formats also match, the mpc2emu round trip is
 skipped entirely rather than needlessly re-encoding the bank through
 mpc2emu's model.
+
+#### Conversion warnings
+
+After any conversion or import, anything mpc2emu changed or could not
+carry is collected and shown in one box — which preset it was about, what
+happened, and what you can do differently.
+
+This is newer than it sounds. mpc2emu's converter has always *printed*
+these, but VinSamLib captured its stdout and read it back **only when
+something raised**, so every warning from a *successful* conversion was
+discarded before it could reach the window. The drum-program silence
+above is exactly that: the answer was in the build log the whole time and
+no user of this program could ever see it. Since mpc2emu published
+structured diagnostics (2026-09-05) they arrive as records instead of
+text, and the box reports them.
+
+Warnings that mean **content was lost** are counted separately from ones
+that merely restructured something, and the drum-program case gets its own
+sentence, because "this will not sound on a normal channel" is a different
+thing to be told than "this lost a velocity band".
+
+**One finding is said once, with a count.** mpc2emu emits per preset and
+per keygroup, so a bank whose presets all overrun the same limit produced
+the identical paragraph once per preset — ten paragraphs carrying two
+facts, in a dialog taller than the screen. Identical findings are
+collapsed with a multiplier in first-seen order (`5 × DECAY1 needs
+100.5…`), the box shows at most eight distinct ones with a line saying
+how many others there are and that they are no worse, and a line naming
+one preset and one key sorts after the general ones because it is the
+more specific answer.
+
+An older mpc2emu checkout without `models/diagnostics.py` simply keeps the
+previous behaviour: the conversion runs and produces the same file, it
+just cannot say what it changed on the way.
 
 #### Voice budget warning
 
@@ -1515,6 +1618,70 @@ mpc2emu leaves it out of its limit table rather than warn on a guess.
 VinSamLib doesn't keep a list of which formats have a ceiling — it checks
 whatever mpc2emu has measured, so EIII starts being covered the day that
 number exists.
+
+### Save Project / Load Project
+
+**File ▸ Save Project…** writes everything staged — New Bank's presets and
+their edits, the Pending queue with its per-bank conversion options and
+partition breaks — to a single `.vslproj` file, so an evening's work
+survives quitting. **Load Project…** puts it back.
+
+**What it carries, and what it only points at.**
+
+| Where a preset came from | In the project file |
+|---|---|
+| A library file you have not altered | A **reference**: the path plus the preset's identity inside it |
+| A conversion or an import | **Carried**, bytes and all |
+
+A reference keeps the file tiny — a project over a 16 MB bank is under a
+kilobyte — and copying that bank in to record "and this preset from it"
+would make saving cost more than the work being saved.
+
+A conversion result has no such home. Its bytes live in a session temp
+directory that is deleted when VinSamLib exits, so a reference to one
+would be dead by morning. Re-running the conversion is *not* the same
+thing either: mpc2emu's parameter laws are still being corrected week to
+week, so a rebuild months later can produce audibly different audio from
+the same source. What you staged is what gets saved.
+
+**A stale reference is reported, never guessed at.** Each one records the
+source's size and modification time. If the file has moved, changed or
+gone, those presets are named and skipped and the rest of the project
+still loads — restoring presets by position out of a file that has since
+changed is how you would get the wrong sound with nothing anywhere
+saying so. A project that refused to open because one folder moved would
+be worse than no project file at all.
+
+It also records **which image was open** and **which folders were
+unfolded** in the library tree, so reopening a project is coming back to a
+desk rather than to a fresh install. Neither can stop a load: an image
+that has since been deleted becomes a line in the problems list, not a
+refusal to restore the queue that was going to be written to it. The tree
+unfolds itself level by level as its rows arrive, because a lazy tree
+cannot be restored in one pass.
+
+The file is an ordinary zip: `project.json` plus a `blobs/` folder holding
+carried banks under content-addressed names, so two presets out of one
+converted bank store its bytes once. You can look inside it with anything.
+
+#### Crash recovery
+
+The same thing is written automatically to a recovery file every **60
+seconds** by default, off the GUI thread, so a crash or a power cut costs
+at most a minute of staging. **Settings ▸ Autosave staged work every**
+changes the interval and **0 switches it off**; it is stored in
+`config.toml`.
+
+A clean exit **deletes** that file, and that is the whole mechanism —
+nothing records a crash, because a crash is exactly the case where
+nothing gets the chance to record anything. The file still being there
+when VinSamLib starts is the signal, and you are asked whether to load
+it.
+
+Saying **no** keeps the file rather than deleting it. Answering a dialog
+that appeared during startup by reflex must not be what destroys the only
+copy of an evening's work; it is replaced by the next autosave and
+removed by the next clean exit.
 
 ### Image Column
 
@@ -1927,6 +2094,49 @@ material with a current mpc2emu and VinSamLib.
 
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
+
+### If you CONVERTED anything before 2026-09-19, reconvert it — a week of hardware listening found nine more
+
+Between 13 and 19 September the converted banks were played on the real
+machines against the sources they came from — an E4XT, a K2000R and an
+S3000XL, each beside an MPC playing the same program. **Every defect
+below was found by ear, and none of them had a diagnostic.** They are
+all fixed upstream; the files you already built are not.
+
+**Which of your files:** anything that went through a *conversion* — the
+Convert Options dialog, "Import via mpc2emu…", MPC import, sample-folder
+import, a soft-sampler source, or a per-bank conversion in Pending. A
+bank you assembled in New Bank out of existing presets is untouched,
+for the same reason as the 2026-08-22 entry below: that path copies
+object bytes verbatim and never re-authors an envelope.
+
+| What was wrong | Target | What you heard | Fixed |
+|---|---|---|---|
+| Every sample was written **12 dB pre-attenuated**, into a program the K2000 considers normal | KRZ | every conversion played 12 dB quiet — and the reader added exactly as much back, so a round trip could never see it | `8612590`, 09-18 |
+| Releases ran **1.87× fast** — an 80/20 split where both legs aim at silence, plus a factor derived from an unmeasured span | KRZ | notes cut short against the source | `f5d1477`, 09-18 |
+| **The decay ran ~4× fast at sustain 0**, where the writer did no span conversion at all. The MPC's decay accelerates; the K2000's is dB-linear | KRZ | a source falling 30 dB in 1.53 s fell in 0.80 | `1c3c909`, 09-19 |
+| A one-shot's `VolumeRelease` is ignored **by the MPC**, so reading it literally gates the note off at note-off | KRZ | a one-shot piano cut off instead of playing its sample out. The third writer with this bug — E4B and AKAI were fixed weeks earlier | `708a6e7`, 09-18 |
+| The **two release segments shared one time**, and the reader read segment 1 as crossing the whole span | E4B | releases the wrong length in both directions | `64ebeac` / `f0e91ad`, 09-18 |
+| **LFO→pan depth was never calibrated** — the model's 0–1 fraction went into the cord as-is | all three | a pan sweep 8.3× too wide: 39.2 dB peak-to-peak where the source gave 5.1 | `0ebdd73` / `a1b6255` / `dc7ba89`, 09-17…18 |
+| A velocity-filter floor that **could not be satisfied** pinned FILFRQ at 99, which the machine reads as **bypass** | AKAI | "quite a bit brighter, more high-freq brizzle" — the filter gone entirely. Two of five real programs with any velocity→filter | `c964d96`, 09-18 |
+| A release span computed **from the sustain level** returned the default byte at sustain 0, discarding the source's release | AKAI | "like a stick hit" — audible only on short notes; at 2 s the fault is inaudible | `05d7ceb`, 09-18 |
+| A `SliceEnd` trim **threw away 58% of a program's audio** where the MPC's own panel showed the whole sample | any, from an MPC source | 60 of 64 samples cut from 4.600 s to exactly 1.800 | `05d7ceb`, 09-18 |
+
+**Two more from the same week are documented where they apply**, because
+they are not conversion-wide: MPC **drum kits landed on the wrong keys**
+until 2026-09-14 (the `<PadNoteMap>` was believed absent — see [MPC
+Import](#browse-and-import-an-mpc-project-needs-mpc2emu)), and an AKAI
+volume written before 2026-09-13 could carry **audio at a rate the
+sampler cannot play**, shipping +802 cents sharp (see [Akai S1000 /
+S3000](#akai-s1000--s3000)).
+
+**And one is still open**, so it is a caution rather than a rebuild:
+**Trim Tail** cuts audible audio on material without real silence in it
+— see the warning under [Trim Silence](#trim-silence).
+
+**What to do:** reconvert with a current mpc2emu. mpc2emu's own README
+and TODO carry the measured tables behind every row above; this table is
+the "which of my files" half.
 
 ### If you CONVERTED a bank to KRZ before 2026-08-22, rebuild it — three defects in mpc2emu's KRZ writer
 
@@ -2578,7 +2788,6 @@ unchanged, the same way an EMU3 image has always behaved — the file
 itself cannot grow, because a partition table declares its own extent
 and bytes past it are unaddressable.
 
-
 **Banks and images written here have been built and loaded on a real
 S3000XL** — by hand, on 2026-09-13, and that is where the findings about
 images, volumes and partitions in this section come from rather than
@@ -2605,7 +2814,7 @@ libraries before a fifth publisher's disc surfaced it.
 | Feature | Status |
 |---|---|
 | Reading AKAI media | ✅ hard disk (`.hda`/`.img`), CD3000 CD-ROM (`.iso`) and 800 KB / 1.6 MB floppy, all sniffed by content since those extensions are shared with other formats. Verified across **2 989 volumes and 86 842 files** in the latest full sweep, every one byte-identical to what mpc2emu's independent reader gets from the same image. One library ships a plain ISO 9660 PC disc in the same box as its sampler discs, and that one is correctly handed to the ISO 9660 reader instead — the AKAI test is tried first (an AKAI disc has no 55/AA signature and an AKAI floppy is not DOS-formatted, so neither could fall through), which is only safe because it does not over-match |
-| Reading AKAI programs and samples | ✅ keygroups, velocity zones, key ranges, root notes, loops and rates, all in the Detail and Samples panes with no mpc2emu needed. Around 99.8 % of zone names resolve to a sample on the same volume. A zone is treated as switched off when its **top velocity is 0**, which is how real programs disable one — they leave whatever was in the name field, often a ROM waveform like `SAWTOOTH` or the publisher's own branding, neither of which is a file. Measured over 57 179 named zones on eleven discs: a zone topping out at 0 names a real sample 5.5 % of the time, one topping out higher **97.0 %**. Publishers spell it two ways, `(0, 0)` and `(1, 0)`, so testing for an inverted range alone would read half of them as live. The audio is checked too, not just the file bytes: **13 235 samples decoded and compared frame-for-frame** against mpc2emu's own reader, since the block length that decides where PCM starts differs by generation and getting it wrong is silent |
+| Reading AKAI programs and samples | ✅ keygroups, velocity zones, key ranges, root notes, loops and rates, all in the Detail and Samples panes with no mpc2emu needed. **The root note shown is the one the machine will PLAY**, not the byte in the file: an AKAI sample carries its own coarse/fine tuning beside the root, so a sample stored at root 29 with −1200 cents sounds as root 41, and showing the stored byte would describe a pitch nothing produces. Agreed with mpc2emu's reader on 235 of 235 samples once the field's scale was corrected — our header map had it as *cents* × 256 where it is 256 per **semitone**, a factor of a hundred that went unnoticed for as long as nothing read the field. Around 99.8 % of zone names resolve to a sample on the same volume. A zone is treated as switched off when its **top velocity is 0**, which is how real programs disable one — they leave whatever was in the name field, often a ROM waveform like `SAWTOOTH` or the publisher's own branding, neither of which is a file. Measured over 57 179 named zones on eleven discs: a zone topping out at 0 names a real sample 5.5 % of the time, one topping out higher **97.0 %**. Publishers spell it two ways, `(0, 0)` and `(1, 0)`, so testing for an inverted range alone would read half of them as live. The audio is checked too, not just the file bytes: **13 235 samples decoded and compared frame-for-frame** against mpc2emu's own reader, since the block length that decides where PCM starts differs by generation and getting it wrong is silent |
 | Converting AKAI → E4B / KRZ / EIII | ✅ via Explorer's "Import via mpc2emu…", needs an mpc2emu checkout with AKAI support |
 | Search | ✅ AKAI volumes index as banks and their programs as presets, the same shape the tree uses, so a hit resolves onto a row that exists. Only the programs are read at scan time, never sample audio — **1 835 volumes and 7 991 programs across 12.3 GB of media index in 3.6 s** |
 | Building a new AKAI volume | ✅ drag programs into New Bank and Save as… — writes a **folder** of `.P3`/`.S3` files, because an AKAI volume is a set of files and not one file. Sample files are copied verbatim; only a name that had to change is rewritten |
@@ -2634,7 +2843,7 @@ libraries before a fifth publisher's disc surfaced it.
 | Multisample KRZ banks built before 2026-08-02 are wrong | ⚠️ **fixed upstream, but existing files must be rebuilt.** The K2000 sounds keymap entry `i` at MIDI key `i + 12`, and mpc2emu wrote each zone into `entry[key]` instead of `entry[key - 12]`, so a multisampled program played **one sample key-tracked across the whole keyboard** instead of the right sample per key. A four-tone test bank measured 440/466/494/524 where it should have given 440/550/660/880 — indistinguishable from a single stretched sample, which is what it was. Fixed in mpc2emu `791364a` (hardware-confirmed against a commercial bank whose entries begin at 48 and which sounds from key 60 up). **Any multisampled KRZ bank you built before that is affected and cannot be repaired — rebuild it.** Nothing warns about old files: the `.KRZ` looks correct and re-reads correctly, because the reader carried the matching error. Single-sample programs are unaffected, as are E4B and EIII |
 | MPC programs converted before 2026-08-04 can be missing samples | ⚠️ **fixed upstream (mpc2emu `cbe6f10`), but existing files must be re-imported** — a shortened sample name could be handed out twice, and since a zone finds its audio by name alone, the second sample became unreachable and its zones sound the first one. 140 of 5890 programs in a real MPC backup were affected, 5766 samples orphaned. Nothing warns, and no scanner can tell an affected bank from an ordinary one. See [**Fixed defects**](#if-you-imported-mpc-programs-before-2026-08-04-re-import-the-big-ones) for the mechanism, the measurements, and what to re-import |
 | KRZ zones cannot reach keys 0–11 | ⚠️ a consequence of the same `i + 12` rule: with `basePitch` 0 a keymap's 128 entries cover keys 12–139, so the bottom octave of the keyboard cannot be addressed at all and a zone asked for from key 0 starts at 12. Relevant when using **Sample Placement** to set an explicit low key for a KRZ target |
-| Per-bank KRZ/EIII conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for both now; the whole-bank "Process before building…" button in Pending is still E4B-only — a scope decision, not a technical limitation, since it hasn't been wired up for KRZ/EIII queues yet |
+| Per-bank KRZ/EIII/AKAI conversion in Pending for Image | ⚠️ per-preset conversion via Explorer works for all of them; the whole-bank "Process before building…" button in Pending is E4B-only and greyed out with its reason elsewhere. KRZ and EIII are a scope decision — not wired up yet. **AKAI is structural**: a queued AKAI entry is a folder of `.P3`/`.S3` files rather than a bank file, and the build hands those straight to the image writer without a conversion step to hang options on |
 | Per-preset conversion granularity | ⚠️ conversion options are per-*bank* in Pending for Image; mixing converted/unconverted presets within one bank is a documented, not-yet-built enhancement |
 | Some coverage-remapped KRZ presets can't be re-processed | ⚠️ a real mpc2emu bug (`writers/krz_writer.py`, tracked in mpc2emu's own TODO): a preset needing the octave-slice-stack "coverage remap" rebuild can crash on write when reprocessed; most real content is unaffected — VinSamLib surfaces the real error if it happens rather than silently failing |
 
@@ -2665,7 +2874,7 @@ libraries before a fifth publisher's disc surfaced it.
 | Feature | Status |
 |---|---|
 | Real hardware confirmation — E4B / EIII | ✅ **confirmed 2026-07-28** on real E-mu E4XT hardware (via ZuluSCSI): building a bank, sending it through Pending for Image, and building/appending it onto a real EMU3 disk image — including the new EIII-on-image capability — all load and play correctly, for every vintage resample profile and reduce combination in the project's own HW confirmation matrix (`tests/manual_hw_convert_matrix.py`) |
-| Real hardware confirmation — KRZ / K2000R | ✅ **confirmed 2026-09-18** — VinSamLib-assembled KRZ banks, written to a FAT16 card image and loaded on a real K2000. The listening is what found the last three defects: every conversion played **12 dB quiet** (the writer pre-attenuated and the reader added exactly as much back, so a round trip could never see it), a one-shot's release cut notes off, and releases ran 1.87x fast. All three fixed upstream and rebuilt |
+| Real hardware confirmation — KRZ / K2000R | ✅ **confirmed 2026-09-18** — VinSamLib-assembled KRZ banks, written to a FAT16 card image and loaded on a real K2000. The listening is what found four defects: every conversion played **12 dB quiet** (the writer pre-attenuated and the reader added exactly as much back, so a round trip could never see it), a one-shot's release cut notes off, releases ran 1.87x fast, and — a day later, by eye on a demo plot — the **decay** ran ~4x fast at sustain 0, the one stage three separate release investigations that same evening all missed, because every one of them measures the fall *after* note-off. All four fixed upstream and rebuilt |
 
 ---
 
@@ -2676,6 +2885,10 @@ vinsamlib/
 ├── app.py                      # Entry point
 ├── config.py                   # Config load/save, mpc2emu path checks
 ├── mpc2emu_bridge.py            # Lazy sys.path proxies onto an external mpc2emu checkout
+├── filenames.py                 # Sanitising names for real filesystems and 8.3 media
+├── foreign_names.py             # Naming the presets a soft-sampler import produces
+├── notes.py                     # MIDI number <-> note name, outside the UI layer
+├── tempdirs.py                  # Session-scoped temp dirs, removed on exit
 ├── banks/
 │   ├── e4b.py                  # Byte-verbatim E4B container reader/assembler
 │   ├── krz.py                  # Byte-verbatim KRZ container reader/assembler
