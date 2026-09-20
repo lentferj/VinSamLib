@@ -299,7 +299,7 @@ upstream finding lands in the log instead of freezing an unattended run.
 Worth remembering as a class: **any diagnostic they add can block an
 automated consumer of ours that has a modal on the same path.**
 
-# OPEN — S1000 playback rate: neither side knows, and both of us answer anyway (2026-09-20)
+# CLOSED — S1000 playback rate: measured the same evening (2026-09-20)
 
 The `manual_akai_real_discs` divergence resolved to a real question, not a
 units mismatch. **All 30 divergent samples are S1000** (`is_s3000=False`),
@@ -325,7 +325,31 @@ check can never fire on S1000 material. The Detail pane's "N sample(s)
 declare a rate this sampler cannot play" is structurally silent for a whole
 generation, which is exactly the class of thing that warning exists to catch.
 
-Not fixed tonight: the honest answer is "unknown for S1000", and choosing
-between "report the declared rate", "report 44100 like they do" and "report
-unknown and say so" is a hardware question. Asked of them and of s3ked, who
-has the instrument. Until it is answered the test stays red on those 30.
+**ANSWERED WITH AN INSTRUMENT, hours later.** mpc2emu had already taken the
+deciding measurement that evening without realising it was the deciding
+case: one `.S1` bass sample declaring SSRATE 30000, loaded on the
+S3000XL and played --
+
+    AKAI note 79, measured              48.93 Hz
+    predicted if it plays at 44100      48.94 Hz   (0.4 cents)
+    predicted if it honours the 30000   33.30 Hz
+
+So "report the declared rate" is the option the machine rules out. Our
+`sample_rate` now resolves an `.S1` sample with an IMPOSSIBLE declared rate
+to 44100, and only that case -- a playable-but-mismatched declared rate
+still returns the declared figure, because the index carries no information
+on that generation and nothing has measured which real rate wins.
+
+Limits recorded in the code rather than smoothed over: the mechanism is
+undetermined (on `.S1` the index reads 1 everywhere, so "index wins" and
+"default to 44100 when impossible" predict the same number and the
+measurement cannot separate them); "clamp to the nearest playable" IS
+excluded, since it would have given 22050 for 30000; one file, one declared
+rate, on an S3000XL rather than an S1000.
+
+Both consequences verified on real discs: the two readers agree again
+(`manual_akai_real_discs` passes, was 30 of 483 divergent), and the
+structurally-blind guard fires -- `manual_akai_rate_snap` asserts it on 24
+of 24 `.S1` samples declaring an impossible rate. That test exists because
+an expression test would have PASSED: the guard's second clause was
+unsatisfiable while the reader underneath returned the declared rate.

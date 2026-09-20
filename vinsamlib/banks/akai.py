@@ -400,11 +400,38 @@ class AkaiSample:
         read rates on an inference drawn from the other generation's machine.
         ConvertWithMoss has seen it vary on machine-recorded S1000 material,
         which bounds the corpus rather than the machine.
+
+        S1000 AND AN IMPOSSIBLE DECLARED RATE IS THE ONE S1000 CASE THAT IS
+        MEASURED, and it is not the declared rate. mpc2emu loaded an `.S1`
+        file declaring SSRATE 30000 -- a rate no AKAI produces -- on the
+        S3000XL and played it (2026-09-20):
+
+            AKAI note 79, measured              48.93 Hz
+            predicted if it plays at 44100      48.94 Hz    0.4 cents
+            predicted if it honours the 30000   33.30 Hz
+
+        So returning the declared rate there is wrong on the machine, not
+        merely cautious. Narrow on purpose: ONLY an unplayable declared rate
+        resolves, because that is the only `.S1` case with a measurement
+        behind it. A playable-but-mismatched declared rate still returns the
+        declared figure, since the index byte carries no information on this
+        generation and nothing has measured which of the two real rates wins.
+
+        THE MECHANISM IS UNDETERMINED AND THAT IS RECORDED RATHER THAN
+        GUESSED: on `.S1` the index reads 1 in every header, so "the index
+        wins" and "default to 44100 when the declared rate is impossible"
+        predict the SAME number and the measurement cannot separate them.
+        One alternative IS excluded: "clamp to the nearest playable" would
+        have given 22050 for the measured 30000, and it gave 44100. One
+        file, one declared rate, on an S3000XL -- what a real S1000 does
+        with its own file remains untested and, for this rig, untestable.
         """
         if len(self.body) < 0x8C:
             return 44100
         declared = _u16(self.body, 0x8A) or 44100
         if not self.is_s3000:
+            if declared not in self._PLAYBACK_RATES:
+                return 44100
             return declared
         return self._PLAYBACK_RATES[1 if self.body[0x01] else 0]
 
