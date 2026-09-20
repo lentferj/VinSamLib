@@ -298,3 +298,34 @@ half-guarded, which looks covered. It now routes every modal through
 upstream finding lands in the log instead of freezing an unattended run.
 Worth remembering as a class: **any diagnostic they add can block an
 automated consumer of ours that has a modal on the same path.**
+
+# OPEN — S1000 playback rate: neither side knows, and both of us answer anyway (2026-09-20)
+
+The `manual_akai_real_discs` divergence resolved to a real question, not a
+units mismatch. **All 30 divergent samples are S1000** (`is_s3000=False`),
+declaring 40000 Hz:
+
+    a drum sample  declared 40000  ours "played" 40000  theirs resolved 44100
+
+`AkaiSample.sample_rate` means "the rate the sampler plays at", measured by
+s3ked on an **S3000** (the index byte at 0x01 wins over the declared field,
+in both directions, so it is not a default). We exclude S1000 deliberately:
+byte 0x01 reads 1 in all 35 990 `.S1` headers of that corpus, so it carries
+no information there, and using it would be an inference from the other
+generation's machine. So for S1000 we fall back to the DECLARED rate.
+
+**Which means we report 40000 as the rate the machine plays, and no S1000
+machine can produce 40000.** mpc2emu now resolves it to 44100 -- also an
+inference from the S3000 rule. Two answers, neither measured on an S1000.
+
+Second-order, and the reason this is worth an entry rather than a shrug:
+`rate_is_unplayable` is `declared not in PLAYBACK_RATES and declared !=
+sample_rate`, and for S1000 our sample_rate IS the declared rate -- so the
+check can never fire on S1000 material. The Detail pane's "N sample(s)
+declare a rate this sampler cannot play" is structurally silent for a whole
+generation, which is exactly the class of thing that warning exists to catch.
+
+Not fixed tonight: the honest answer is "unknown for S1000", and choosing
+between "report the declared rate", "report 44100 like they do" and "report
+unknown and say so" is a hardware question. Asked of them and of s3ked, who
+has the instrument. Until it is answered the test stays red on those 30.
