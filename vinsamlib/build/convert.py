@@ -593,6 +593,34 @@ def collect_diagnostics_into(risks_out: Optional[list]):
         risks_out.extend(_diagnostic_risks(records))
 
 
+def _content_lost(record, out: list) -> bool:
+    """`record.content_lost`, or False WITH A COMPLAINT filed in `out`.
+
+    Never raises: this runs after the bank is written, so refusing here
+    would throw away a finished conversion over a missing boolean. It does
+    not read a silent False either -- a checkout emitting diagnostics
+    without the field under-reports loss everywhere, and the status bar's
+    "N findings losing content" would quietly become a lie.
+    """
+    try:
+        return bool(record.content_lost)
+    except AttributeError:
+        if not any(r.get("code") == "VINSAMLIB_DIAGNOSTICS_INCOMPLETE"
+                   for r in out):
+            out.append({
+                "message": "this mpc2emu checkout's diagnostics carry no "
+                           "`content_lost` field",
+                "body": "Findings are still shown, but the count of those "
+                        "that LOSE CONTENT cannot be trusted -- it will read "
+                        "zero however much was dropped. Update mpc2emu; the "
+                        "field has been required on their side since "
+                        "2026-09-05.",
+                "subject": "", "code": "VINSAMLIB_DIAGNOSTICS_INCOMPLETE",
+                "content_lost": False, "detail": {},
+            })
+        return False
+
+
 def _diagnostic_risks(records) -> list[dict]:
     """mpc2emu Diagnostic records as risk dicts for the existing warning box.
 
@@ -653,10 +681,16 @@ def _diagnostic_risks(records) -> list[dict]:
             "body": body,
             "subject": subject,
             "code": getattr(d, "code", ""),
-            # A required field on their side since 2026-09-05, so it is read
-            # as an attribute and not with a .get() that would quietly read
-            # False on a checkout that does not have it.
-            "content_lost": bool(getattr(d, "content_lost", False)),
+            # A required field on their side since 2026-09-05. The comment
+            # here used to say it was read "as an attribute and not with a
+            # .get() that would quietly read False" -- while the code was
+            # `getattr(d, "content_lost", False)`, which is exactly that
+            # quiet False. An external review caught the contradiction
+            # (2026-09-20, ER-2). Absence now produces a visible record of
+            # its own rather than a silent no-loss reading, because this
+            # field feeds the one number whose value is that it counts what
+            # the user cannot get back.
+            "content_lost": _content_lost(d, out),
             "detail": detail,
         })
     return out
@@ -671,15 +705,34 @@ def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
     a keyword it has never heard of. An older checkout keeps its own
     behaviour, which was faithful output.
     """
+    ASKED = {"faithful_layers": opts.krz_faithful_layers,
+             "drum_program": opts.krz_drum_program}
     try:
         names = krz_writer.write_krz.__code__.co_varnames
-    except Exception:
-        return {}
+    except AttributeError:
+        # NARROWED FROM `except Exception: return {}`, which swallowed any
+        # failure of the probe and silently dropped the user's layer choice
+        # -- so "keep every layer, as a drum program" could come back fused
+        # and silent on a normal channel with nothing said (external review
+        # 2026-09-20, ER-3). AttributeError is the one honest outcome here:
+        # a callable with no `__code__`, which is what a C function or a
+        # stand-in would be.
+        names = ()
+    missing = [k for k, wanted in ASKED.items() if wanted and k not in names]
+    if missing:
+        # The same rule as `chromatic_pads` in xpm_import: an option the user
+        # ticked, that this checkout cannot honour, is an error and not a
+        # silent default. Raised BEFORE the write, so nothing half-built is
+        # left behind.
+        raise ConvertOpError(
+            f"this mpc2emu checkout's KRZ writer does not take "
+            f"{' or '.join('`' + m + '`' for m in missing)} -- update "
+            f"mpc2emu, or choose 'Fit to three layers' (its own behaviour) "
+            f"in K2000 Layer Handling.")
     kw = {}
-    if "faithful_layers" in names:
-        kw["faithful_layers"] = opts.krz_faithful_layers
-    if "drum_program" in names:
-        kw["drum_program"] = opts.krz_drum_program
+    for k, wanted in ASKED.items():
+        if k in names:
+            kw[k] = wanted
     return kw
 
 

@@ -121,7 +121,8 @@ bank_splitter = _Lazy("writers.bank_splitter")
 # AKAI support at all -- as its main branch does not. Config.check_akai_*
 # gate every use of these.
 akai_parser = _Lazy("parsers.akai_s3000_parser")
-akai_writer = _Lazy("writers.akai_s3000_writer")
+# (akai_writer is bound above; a second identical _Lazy stood here until
+# 2026-09-20, silently overwriting the first with an equal object.)
 akai_image = _Lazy("writers.akai_s3000_image")
 
 

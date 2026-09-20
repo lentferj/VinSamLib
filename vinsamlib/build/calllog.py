@@ -166,6 +166,12 @@ def _brief(value: Any, depth: int = 0) -> Any:
         try:
             return {k: _brief(v, depth + 1) for k, v in asdict(value).items()}
         except Exception:
+            # asdict() recurses and deep-copies, so any field of any depth can
+            # raise -- an unpicklable handle, a __getattr__ that throws, a
+            # cycle. This is a DIAGNOSTIC describing a call that already
+            # happened: falling through to the generic repr below loses
+            # detail, and raising would lose the log entry and the call with
+            # it. Detail is the thing to sacrifice here.
             pass
     if isinstance(value, dict):
         if depth >= 2:

@@ -399,6 +399,10 @@ class ProjectSummary:
     total_sample_bytes: int = 0
 
 
+#: Absence, told apart from a legitimate `None`. See parse_mpc.
+_MISSING = object()
+
+
 def parse_mpc(path: str, wav_dir: Optional[str] = None,
               chromatic_pads: bool = False, lfo_sync_bpm=None):
     """Parse any MPC container mpc2emu accepts (program, track or project)
@@ -426,13 +430,32 @@ def parse_mpc(path: str, wav_dir: Optional[str] = None,
                 "(no `chromatic_pads` in its XPM reader) -- update mpc2emu, or "
                 "turn the option off to keep the program's own pad map.")
         kw["chromatic_pads"] = True
-    prev = getattr(xpm_parser, "SYNC_BPM", None)
+    # A SENTINEL, NOT `is not None`. This read `prev is not None` and then
+    # only set the tempo when the global was already there -- so a checkout
+    # that renamed or dropped SYNC_BPM would have taken the user's tempo,
+    # ignored it, and converted every synced LFO at the 120 BPM assumption
+    # with nothing said. `None` is also a value the global could legitimately
+    # take, which the old test could not tell from absence. Found by an
+    # external review, 2026-09-20 (ER-1); today theirs is `SYNC_BPM = 120.0`,
+    # so the old form happened to work.
+    #
+    # Raising rather than warning, to match `chromatic_pads` four lines up:
+    # both are "you asked for something this checkout cannot do", and an
+    # option that silently does nothing is the defect this project keeps
+    # finding in other people's code.
+    prev = getattr(xpm_parser, "SYNC_BPM", _MISSING)
+    if lfo_sync_bpm is not None and prev is _MISSING:
+        raise ValueError(
+            "this mpc2emu checkout cannot be told the project tempo for "
+            "synced LFOs (no `SYNC_BPM` in its XPM reader) -- update "
+            "mpc2emu, or turn the tempo option off to accept its own "
+            "assumption of 120 BPM.")
     try:
-        if lfo_sync_bpm is not None and prev is not None:
+        if lfo_sync_bpm is not None:
             xpm_parser.SYNC_BPM = float(lfo_sync_bpm)
         return _run_captured(xpm_parser.parse_xpm, path, wav_dir, **kw)
     finally:
-        if prev is not None:
+        if prev is not _MISSING:
             xpm_parser.SYNC_BPM = prev
 
 

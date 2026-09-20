@@ -651,6 +651,11 @@ def _krz_rom_only(node: TreeNode) -> bool:
                 if bank.samples.get(sid) is not None:
                     return False
     except Exception:
+        # "Is this bank empty of anything playable?" asked to decide whether
+        # to GREY a row. A bank we cannot walk is not evidence of emptiness,
+        # and the safe answer is the one that keeps the row live and lets the
+        # user open it and see the real error -- hiding content because a
+        # parse hiccuped is the failure mode this tree is built to avoid.
         return False
     return True
 

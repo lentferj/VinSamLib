@@ -827,6 +827,11 @@ class BankPane(QWidget):
             from ..banks import summary
             value = summary.summarize_preset(bank, preset).total_sample_bytes
         except Exception:
+            # None means "unknown", which the row renders as no figure at
+            # all -- distinct from 0, which means a preset that genuinely
+            # needs no audio (ROM-only) and is rendered as such. A summary
+            # that raises must not take the whole list with it: the point of
+            # the column is to annotate rows, not to gate them.
             value = None
         self._audio_memo[key] = value
         return value
@@ -1606,6 +1611,14 @@ class BankPane(QWidget):
                 pram_budget = krz.pram_budget_bytes(self._config.krz_pram_kb)
                 rom_refs = krz.rom_keymap_refs(built)
             except Exception:
+                # The KRZ extras only: PRAM and ROM references. The byte
+                # meter above is already computed and correct; these three
+                # numbers are a second opinion on the same assembled bytes,
+                # and an assembler that produced a bank we cannot re-read is
+                # a real fault worth seeing -- but it belongs in the SAVE
+                # path's own verification, which raises, not in a meter that
+                # repaints every 250 ms. pram_budget stays 0, which reads as
+                # "not known" below rather than as "fits".
                 pass
             over_pram = bool(pram_budget) and pram_used > pram_budget
             meter = f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}"

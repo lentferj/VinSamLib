@@ -558,11 +558,22 @@ class Fat16Volume(WritableVolume):
             self._write_dir(f, r["folder"], data)
 
     def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
-        """Delegates to mpc2emu's proven allocator rather than
-        reimplementing cluster/slot allocation here -- see vfs/emu3.py's
-        append() for the same reasoning. Unused by any caller in this
-        codebase today (build/images.py calls mpc2emu's writers directly);
-        kept only so isinstance(vol, WritableVolume) holds."""
+        """NOT IMPLEMENTED, on purpose -- and the class still satisfies
+        `isinstance(vol, WritableVolume)`, which is all any caller here
+        needs (image_pane gates Rename and Delete on it, never append).
+
+        It used to delegate to mpc2emu's allocator, unused by anything:
+        `build/images.py` appends through mpc2emu's writers directly. An
+        external review (2026-09-20, ER-5) pointed out that those three dead
+        methods were the ONLY code on the browsing path that would have
+        needed mpc2emu, contradicting this module's own first promise --
+        "FAT12/16/32 is read from scratch here, browsing never needs
+        mpc2emu". Now it is true by construction rather than by nobody
+        calling it. The delegation is in git history if a caller ever wants
+        it, and it would want a test first: it never had one."""
+        raise NotImplementedError(
+            "FAT volumes are appended to through build/images.py, which "
+            "calls mpc2emu's writers. vfs/ is the read side.")
         from ..mpc2emu_bridge import fat16 as _fat16_mod
         fs = _fat16_mod.Fat16(self.path)
         try:
@@ -698,7 +709,12 @@ class Fat32Volume(WritableVolume):
             self._write_dir(f, r["folder"], data)
 
     def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
-        """See Fat16Volume.append()'s docstring -- same reasoning."""
+        """See Fat16Volume.append() -- not implemented, same reasoning."""
+        raise NotImplementedError(
+            "FAT volumes are appended to through build/images.py, which "
+            "calls mpc2emu's writers. vfs/ is the read side.")
+        # unreachable; the delegation below is kept out of the way
+        # rather than deleted, so the shape is visible in one place.
         from ..mpc2emu_bridge import fat32 as _fat32_mod
         fs = _fat32_mod.Fat32(self.path)
         try:
@@ -803,7 +819,12 @@ class Fat12Volume(WritableVolume):
             self._write_dir(f, data)
 
     def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
-        """See Fat16Volume.append()'s docstring -- same reasoning."""
+        """See Fat16Volume.append() -- not implemented, same reasoning."""
+        raise NotImplementedError(
+            "FAT volumes are appended to through build/images.py, which "
+            "calls mpc2emu's writers. vfs/ is the read side.")
+        # unreachable; the delegation below is kept out of the way
+        # rather than deleted, so the shape is visible in one place.
         if folder is not None:
             raise ValueError("FAT12 floppies are flat (root directory only)")
         from ..mpc2emu_bridge import fat12 as _fat12_mod
