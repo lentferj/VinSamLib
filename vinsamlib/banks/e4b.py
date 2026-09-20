@@ -74,6 +74,22 @@ ZONE_LO_KEY, ZONE_HI_KEY, ZONE_ROOT_KEY = 2, 5, 14
 #: takes `max(voice_lo, zone_lo)` / `min(voice_hi, zone_hi)`. So a zone moved
 #: outside its voice's window is silently clamped back -- widening the voice
 #: is not optional bookkeeping, it is what makes the edit take effect.
+#: INDEPENDENTLY IDENTIFIED, 2026-09-20, and it did not used to be. These
+#: were verified against mpc2emu's parser -- which reads the same two
+#: offsets, so the agreement was one reading and not two. Prompted from here
+#: after their cord-slot bug showed what a fixed offset into someone else's
+#: structure is worth, they ran the check that removes both implementations
+#: from the loop: 2530 voices across 49 banks, none written by either
+#: project.
+#:
+#: ORDERING IDENTIFIES NOTHING -- 476 offset pairs in the 284-byte voice
+#: block satisfy "always <=127, lo <= hi everywhere, both ends exercised".
+#: RICHNESS identifies it: only eight offsets take 50 or more distinct
+#: values, and (14, 17) is the single ordered pair among them. Both ends
+#: take 86 distinct values, with 18.5% of voices starting at key 0 and
+#: 15.7% ending at 127. Our own sweep of 23 third-party banks here agrees
+#: from the other side: 174 distinct (lo, hi) pairs over 680 voices, against
+#: the 40-voice bank this comment used to rest on.
 VOICE_LO_KEY, VOICE_HI_KEY = 14, 17
 
 #: A voice's VELOCITY window, same stride as the key window above. This is
@@ -82,10 +98,23 @@ VOICE_LO_KEY, VOICE_HI_KEY = 14, 17
 #: zone said 0.4% of presets are velocity-layered; reading the voice says
 #: 36.4% of 1604, up to nine windows in one preset.
 #:
-#: Confirmed against mpc2emu's parser over 40 voices of a bank where hi_vel
-#: actually VARIES (65 vs 127). That detail is the whole verification: in a
-#: bank where every hi_vel is 127, nine different offsets "match" it, and
-#: picking one of those would have been a coin toss dressed as a measurement.
+#: EVIDENCE, STATED HONESTLY AND WEAKER THAN THE LINE ABOVE: "agrees with
+#: mpc2emu, weakly supported by a third-party corpus". Confirmed against
+#: their parser over 40 voices of a bank where hi_vel actually VARIES (65 vs
+#: 127) -- and their parser reads these same two offsets, so that is one
+#: reading rather than two. The corpus cannot make up the difference the way
+#: it does for the key window: across 2530 third-party voices only 141
+#: exercise the window at all and v[21] takes THREE distinct values; our own
+#: 23-bank sweep here found 6 non-default voices, (0,63) and (64,127). That
+#: is below the threshold where a corpus separates one offset from its
+#: neighbours.
+#:
+#: The reason to keep the offsets anyway: nothing contradicts them, no voice
+#: in either corpus has an inverted window, and mpc2emu's dead-zone guard
+#: discards 0 of 10 142 zones. What is weak is the EVIDENCE, not the
+#: behaviour -- and saying so is the point. In a bank where every hi_vel is
+#: 127, nine different offsets "match", and picking one of those would have
+#: been a coin toss dressed as a measurement.
 VOICE_LO_VEL, VOICE_HI_VEL = 18, 21
 
 # Bank limits from writers/bank_splitter.py (_MAX_SAMPLES_PER_BANK / _MAX_PRESETS_PER_BANK)
