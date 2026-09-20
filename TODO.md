@@ -252,3 +252,36 @@ callable shape, and the `models.diagnostics` `code`/`content_lost`
 attributes. The `_Lazy` bridge, the copy-then-swap image mutation, the
 verification-not-correction write-back check, and the diagnostics-keyed-on-
 `code` contract are all sound designs worth keeping exactly as they are.
+
+---
+
+# OPEN — `manual_akai_real_discs` is RED on purpose (2026-09-20)
+
+Not a regression here, and not to be "fixed" by loosening the assertion.
+
+mpc2emu has **uncommitted** changes in `parsers/akai_s3000_parser.py` that
+change what a sample's RATE means. On 30 of 483 samples across the real
+discs the two readers now differ:
+
+    a drum sample:  40000/61 here (stored 60, tune -169c)  vs  44100/61 theirs
+
+-169 cents is exactly `1200·log2(40000/44100)`, so this is not a wrong value
+on either side: ours reports **what the file declares**, theirs now reports
+**what the machine will play** after resolving a declared rate the S3000XL
+cannot produce. Two quantities, one name -- the same shape as "zones vs
+keygroups" and "objects vs audio" earlier the same day.
+
+`manual_akai_real_discs` asserts frame-for-frame agreement between the two
+readers, so it fails until we agree what the comparison asserts. Proposed to
+them: compare against their declared-rate accessor if one exists, or skip
+the rate field with a written reason. Their answer decides the test.
+
+**The other failure from that run is fixed**: `manual_hw_convert_matrix`
+timed out at 300 s with no output because their new E4B playback-rate-ceiling
+diagnostic reached `pending_pane._on_build_assembled`, which pops a modal
+`QMessageBox.warning`. That test stubbed `.question` and not `.warning` --
+half-guarded, which looks covered. It now routes every modal through
+`_harness.stub_message_boxes()` and prints what was captured, so a new
+upstream finding lands in the log instead of freezing an unattended run.
+Worth remembering as a class: **any diagnostic they add can block an
+automated consumer of ours that has a modal on the same path.**
