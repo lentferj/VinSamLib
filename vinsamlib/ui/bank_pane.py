@@ -1668,22 +1668,37 @@ class BankPane(QWidget):
         # volume loading -- keygroups are counted by the sampler and appear in
         # no directory, so a volume can sit well inside 510 entries and still
         # be refused. See build/akai_image.volume_objects.
-        objs = akai_image.volume_objects(files)
+        # SPLIT, not just a total: the machine's own load screen shows progs
+        # and samps and hides keygroups, which is the term that actually
+        # binds -- a volume can read 13P + 271S on the LCD and still be
+        # refused on 205 keygroups nobody was shown (2026-09-20, a real
+        # refusal on Jan's S3000XL). A single number here repeats that
+        # mistake one level up.
+        cost = akai_image.volume_object_breakdown(files)
+        objs = cost["total"]
         budget = self._config.akai_max_objects
         self._meter_label.setText(
             f"{n} program(s), {len(files)} file(s) — "
             f"{_human(total)} / {_human(limit_bytes)} — "
-            f"{objs} / {budget} objects")
+            f"{objs} / {budget} objects "
+            f"({cost['programs']}P/{cost['keygroups']}K/{cost['samples']}S)")
         # The 510-entry directory is the only hard one here: it is the
         # volume's own structure. The byte figure and the object budget are
         # both Settings spinboxes about one 32 MB machine -- and the object
         # budget's own message says what the machine does past it is NOT
         # verified, which is a reason to let someone try, not to stop them.
+        # The OS's own per-type counters, which no amount of fitted memory
+        # clears -- see build/akai_image.resident_ceiling_problems. NOT hard:
+        # the volume is valid media and its programs load individually, so
+        # someone building a library container may legitimately want it. Over
+        # the line, with the reason, and Keep Anyway still available.
+        ceilings = akai_image.resident_ceiling_problems(files)
         hard = len(files) > _AKAI_MAX_FILES
-        over = (total > limit_bytes or hard or objs > budget)
+        over = (total > limit_bytes or hard or objs > budget or bool(ceilings))
         detail = (f"{len(files)} files exceed the {_AKAI_MAX_FILES}-entry AKAI "
                   f"volume directory (samples and programs share it)."
                   if len(files) > _AKAI_MAX_FILES else
+                  ceilings[0] if ceilings else
                   f"{objs} resident objects (programs + keygroups + samples) "
                   f"exceed the {budget} an S3000XL holds at once — even "
                   f"though this is inside "

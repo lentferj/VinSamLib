@@ -170,6 +170,58 @@ def volume_ram_words(files: Sequence[tuple[str, bytes]]) -> int:
 #: from a file alone is a floor.
 RESIDENT_OBJECTS_DEFAULT = 1006
 
+#: PER-TYPE CEILINGS, AND THEY BIND BEFORE THE POOL DOES.
+#:
+#: Read out of the S3000XL's OS v2.0 image by s3ked and relayed 2026-09-20,
+#: after Jan's machine REFUSED a volume that our pool arithmetic passed:
+#: 13 programs + 205 keygroups + 271 samples = 489 against 533 free, and
+#: "!! TOO MANY PROGS./KEYGROUPS/SAMPLES !!" anyway. The pool was never the
+#: problem -- 271 samples was.
+#:
+#:   samples   counter at 0x72F6, compared against 0xFF at six sites
+#:   programs  counter at 0x72F4, compared against 0xFE at four sites
+#:
+#: The resident table itself is 1006 entries of 192 bytes at linear 0x90000,
+#: byte 0 of each being the type (1 program, 2 keygroup, 3 sample, 0 free) --
+#: which is where our measured 1006 default comes from, now with a primary
+#: source rather than one machine's LCD.
+#:
+#: KEYGROUPS HAVE NO GLOBAL COUNTER, so nothing caps them separately. That is
+#: also why counting keygroups (205) rather than zones (395) mattered: with
+#: the zone figure the pool check fires too and the experiment cannot
+#: discriminate.
+#:
+#: CAVEAT, KEPT LOUD at s3ked's request: `cmp byte [0x72F6],0xFF` tests the
+#: LOW BYTE of a word counter, which is sound only while nothing can reach
+#: 256. That holds if those six sites are the only type-3 creation paths, and
+#: it is NOT proven. If some path reached 256 the low byte wraps and the
+#: guard reopens until 511. A shape to know about, not a claimed defect.
+MAX_RESIDENT_SAMPLES = 255
+MAX_RESIDENT_PROGRAMS = 254
+
+
+def resident_ceiling_problems(files: Sequence[tuple[str, bytes]]) -> list[str]:
+    """Which per-type ceiling this volume crosses, as sentences. Empty is good.
+
+    Separate from the pool budget in Settings because these are not a
+    property of how much memory is fitted: they are counters in the OS, so no
+    machine clears them and raising the Settings figure cannot help.
+    """
+    b = volume_object_breakdown(files)
+    out = []
+    if b["samples"] > MAX_RESIDENT_SAMPLES:
+        out.append(
+            f"{b['samples']} samples exceed the {MAX_RESIDENT_SAMPLES} an "
+            f"S3000XL can hold resident at once — the machine refuses the "
+            f"load with \"TOO MANY PROGS./KEYGROUPS/SAMPLES\" however much "
+            f"memory is free (measured on hardware 2026-09-20). Individual "
+            f"programs still load; the whole volume does not.")
+    if b["programs"] > MAX_RESIDENT_PROGRAMS:
+        out.append(
+            f"{b['programs']} programs exceed the {MAX_RESIDENT_PROGRAMS} an "
+            f"S3000XL can hold resident at once, and the same applies.")
+    return out
+
 
 def volume_objects(files: Sequence[tuple[str, bytes]]) -> int:
     """Resident objects a volume costs: programs + KEYGROUPS + samples.
@@ -190,23 +242,47 @@ def volume_objects(files: Sequence[tuple[str, bytes]]) -> int:
     Like `volume_ram_words`, a FIGURE and not a limit — see that docstring for
     why an assembler must not refuse what a user may have a plan for.
     """
-    total = 0
+    b = volume_object_breakdown(files)
+    return b["total"]
+
+
+def volume_object_breakdown(files: Sequence[tuple[str, bytes]]) -> dict:
+    """The same count, split into programs / keygroups / samples.
+
+    REPORTED SEPARATELY BECAUSE THE MACHINE'S OWN DISPLAY DOES NOT. The
+    S3000XL's load screen prints `progs` and `samps` and omits keygroups,
+    which is exactly the term that binds: on one real 13-program volume
+    (2026-09-20) it was 13 programs and 271 samples -- 284, comfortably
+    inside every limit on screen -- against 205 keygroups nobody could see,
+    and the machine refused the load. A single total hides the same thing one
+    step later, so every place that reports this prints the split.
+
+    The keygroup count is byte 0x2a of the program file, which is also the
+    byte the OS v2.0 firmware reads when it decides (mpc2emu, disassembly,
+    2026-09-20). Worth knowing that a KEYGROUP is not a ZONE: a keygroup
+    carries up to four velocity zones, so a 17-keygroup program can hold 34
+    zones, and counting zones overstates this by as much as 4x.
+    """
+    programs = keygroups = samples = 0
     for name, data in files:
         upper = name.upper()
         if upper.endswith((".S3", ".S1")):
-            total += 1                                   # the sample itself
+            samples += 1
         elif upper.endswith((".P3", ".P1")):
-            # 1 for the program, plus one per keygroup. A program too short to
-            # carry the field is counted as itself alone rather than guessed
-            # at: an unreadable program is not evidence of zero keygroups.
-            total += 1 + (data[0x2a] if len(data) > 0x2a else 0)
-    return total
+            # A program too short to carry the field is counted as itself
+            # alone rather than guessed at: an unreadable program is not
+            # evidence of zero keygroups.
+            programs += 1
+            keygroups += data[0x2a] if len(data) > 0x2a else 0
+    return {"programs": programs, "keygroups": keygroups, "samples": samples,
+            "total": programs + keygroups + samples}
 
 
 def describe_object_cost(name: str, files: Sequence[tuple[str, bytes]],
                          budget: int = RESIDENT_OBJECTS_DEFAULT) -> str:
     """One line per volume: objects needed against the resident pool."""
-    n = volume_objects(files)
+    b = volume_object_breakdown(files)
+    n = b["total"]
     # NOT "will not load". Nobody has verified what the machine does when the
     # object pool is exceeded, and the one ceiling that IS measured -- sample
     # RAM -- does not refuse, it HALF-loads: one warning, then normal
@@ -217,7 +293,10 @@ def describe_object_cost(name: str, files: Sequence[tuple[str, bytes]],
     note = (f" — exceeds the {budget}-object pool; what the machine does then "
             f"is unverified (the RAM ceiling half-loads rather than refusing)"
             if n > budget else "")
-    return f"  {name}: about {n:,} resident objects (P/K/S){note}"
+    for problem in resident_ceiling_problems(files):
+        note += f" — {problem}"
+    return (f"  {name}: about {n:,} resident objects — "
+            f"{b['programs']}P / {b['keygroups']}K / {b['samples']}S{note}")
 
 
 def describe_ram_cost(name: str, files: Sequence[tuple[str, bytes]]) -> str:
