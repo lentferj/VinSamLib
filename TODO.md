@@ -48,6 +48,19 @@ like the pads path does).
 Cross-ref: mpc2emu TODO ER-5 — the real fix is a `parse_xpm(sync_bpm=)`
 parameter on their side; when it lands, delete the global mutation here.
 
+**LANDED the same evening, and taken.** mpc2emu shipped
+`parse_xpm(xpm_path, wav_dir=None, chromatic_pads=False, sync_bpm=None)`
+(verified at the site: `parsers/xpm_parser.py:1561`, with `_mpc_sync_hz`
+falling back to the global when it is None, so every existing caller is
+unchanged). `parse_mpc` now passes the tempo as a PARAMETER when the probe
+sees one -- no mutation, no restore, nothing to leak into the next import,
+nothing to go silently wrong if the global is renamed. Verified with a
+stand-in of their signature: the tempo arrives as `sync_bpm=138.0` and
+`xpm_parser.SYNC_BPM` reads 120.0 during and after the call.
+
+The global path stays for a checkout that predates the parameter, sentinel
+and all, and raises when neither exists.
+
 ## ER-2 — diagnostics: the comment and the code disagree about `content_lost`
 
 **CONFIRMED and FIXED** (`build/convert.py`). The comment promised an

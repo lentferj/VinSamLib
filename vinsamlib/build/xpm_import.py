@@ -419,37 +419,38 @@ def parse_mpc(path: str, wav_dir: Optional[str] = None,
     # afterwards, because a GUI parses many programs in one session and a
     # tempo chosen for one import must not leak into the next.
     kw = {}
+    try:
+        names = xpm_parser.parse_xpm.__code__.co_varnames
+    except AttributeError:
+        names = ()
     if chromatic_pads:
-        try:
-            names = xpm_parser.parse_xpm.__code__.co_varnames
-        except Exception:
-            names = ()
         if "chromatic_pads" not in names:
             raise ValueError(
                 "this mpc2emu checkout cannot lay drum pads out chromatically "
                 "(no `chromatic_pads` in its XPM reader) -- update mpc2emu, or "
                 "turn the option off to keep the program's own pad map.")
         kw["chromatic_pads"] = True
-    # A SENTINEL, NOT `is not None`. This read `prev is not None` and then
-    # only set the tempo when the global was already there -- so a checkout
-    # that renamed or dropped SYNC_BPM would have taken the user's tempo,
-    # ignored it, and converted every synced LFO at the 120 BPM assumption
-    # with nothing said. `None` is also a value the global could legitimately
-    # take, which the old test could not tell from absence. Found by an
-    # external review, 2026-09-20 (ER-1); today theirs is `SYNC_BPM = 120.0`,
-    # so the old form happened to work.
+
+    # THE PARAMETER FIRST, THE GLOBAL ONLY IF THERE IS NO PARAMETER.
+    # mpc2emu added `parse_xpm(..., sync_bpm=)` on 2026-09-20 (their ER-5,
+    # asked for from here), which removes the whole process-global dance:
+    # no mutation, no restore, nothing to leak into the next import, and
+    # nothing to go silently wrong if the global is ever renamed.
     #
-    # Raising rather than warning, to match `chromatic_pads` four lines up:
-    # both are "you asked for something this checkout cannot do", and an
-    # option that silently does nothing is the defect this project keeps
-    # finding in other people's code.
+    # The old path stays for a checkout that predates it, and it keeps the
+    # sentinel: `prev is not None` was the original bug -- absence read as a
+    # legitimate value, so a user's tempo was dropped without a word.
+    if lfo_sync_bpm is not None and "sync_bpm" in names:
+        kw["sync_bpm"] = float(lfo_sync_bpm)
+        return _run_captured(xpm_parser.parse_xpm, path, wav_dir, **kw)
+
     prev = getattr(xpm_parser, "SYNC_BPM", _MISSING)
     if lfo_sync_bpm is not None and prev is _MISSING:
         raise ValueError(
             "this mpc2emu checkout cannot be told the project tempo for "
-            "synced LFOs (no `SYNC_BPM` in its XPM reader) -- update "
-            "mpc2emu, or turn the tempo option off to accept its own "
-            "assumption of 120 BPM.")
+            "synced LFOs (neither a `sync_bpm` parameter nor a `SYNC_BPM` "
+            "global in its XPM reader) -- update mpc2emu, or turn the tempo "
+            "option off to accept its own assumption of 120 BPM.")
     try:
         if lfo_sync_bpm is not None:
             xpm_parser.SYNC_BPM = float(lfo_sync_bpm)
