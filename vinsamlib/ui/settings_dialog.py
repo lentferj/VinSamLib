@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                              QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                             QPushButton, QSpinBox, QVBoxLayout)
+                             QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from ..build import calllog
 from ..config import Config
@@ -30,7 +30,20 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(480)
 
-        layout = QVBoxLayout(self)
+        # The whole page lives in a scroll area, for the same reason Convert
+        # Options keeps one (see CLAUDE.md): fully expanded, the sections
+        # exceed a small screen's height, and with nowhere to go Qt takes the
+        # shortfall out of the form rows BELOW their minimumSizeHint, so they
+        # render overlapping instead of merely cramped. The Audition section
+        # pushed this dialog well past that line; assertions cannot see it.
+        outer = QVBoxLayout(self)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+
+        outer_scroll = QScrollArea(self)
+        outer_scroll.setWidgetResizable(True)
+        outer_scroll.setWidget(container)
+        outer.addWidget(outer_scroll, 1)
 
         layout.addWidget(QLabel("mpc2emu checkout:"))
         path_row = QHBoxLayout()
@@ -220,7 +233,7 @@ class SettingsDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer.addWidget(buttons)
 
         self._update_status(str(config.mpc2emu_path))
 
@@ -232,6 +245,10 @@ class SettingsDialog(QDialog):
             self._path_edit.setText(path)
 
     def _update_status(self, text: str) -> None:
+        # Decided BEFORE text is reassigned to the status string below: the
+        # "restart" hint used to fire on every valid path, because it compared
+        # the decorated status text to the config instead of the input text.
+        path_changed = bool(text) and Path(text) != self._config.mpc2emu_path
         probe = Config(mpc2emu_path=Path(text) if text else Path())
         ok, reason = probe.check_mpc2emu_path()
         if ok:
@@ -249,9 +266,8 @@ class SettingsDialog(QDialog):
             self._status_label.setText(text)
         else:
             self._status_label.setText(f"✗ {reason}")
-        changed = Path(text) != self._config.mpc2emu_path if text else False
         self._restart_label.setText(
-            "Restart VinSamLib to apply the new path." if changed else "")
+            "Restart VinSamLib to apply the new path." if path_changed else "")
         self._update_audition_status(probe)
         self._validate_notes(self._audition_notes_edit.text())
 
