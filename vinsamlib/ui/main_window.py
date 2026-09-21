@@ -115,7 +115,12 @@ class MainWindow(QMainWindow):
         # right-click during a render cannot deliver the first one's audio.
         self._audition_worker: workers.Worker | None = None
         self._audition_gen: int = 0
+        #: The most recent dialog (kept for tests and for the common case) and
+        #: every live one. A non-modal dialog is parented to this window, but
+        #: its Python wrapper still has to stay alive or its QAudioSink's
+        #: finished handler can fire into a collected object.
         self._audition_dialog = None
+        self._audition_dialogs: list = []
         # The convert-first import queue: soundfont-style sources and MPC
         # containers, whichever route they arrived by.
         self._import_worker: workers.Worker | None = None
@@ -530,9 +535,20 @@ class MainWindow(QMainWindow):
         from .audition_dialog import AuditionDialog
         dialog = AuditionDialog(rendering, title=f"Audition — {node.label}",
                                 parent=self)
-        # Held so the QAudioSink and its QBuffer are not collected mid-note.
+        # Held so the QAudioSink and its QBuffer are not collected mid-note,
+        # and held in a LIST so a second audition cannot drop the first
+        # dialog's Python wrapper while its audio is still playing.
         self._audition_dialog = dialog
+        self._audition_dialogs.append(dialog)
+        dialog.finished.connect(
+            lambda *_, d=dialog: self._forget_audition_dialog(d))
         dialog.show()
+
+    def _forget_audition_dialog(self, dialog) -> None:
+        try:
+            self._audition_dialogs.remove(dialog)
+        except ValueError:
+            pass
 
     def _on_audition_error(self, gen: int, message: str) -> None:
         if gen != self._audition_gen:
