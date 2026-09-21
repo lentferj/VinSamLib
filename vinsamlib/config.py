@@ -164,6 +164,20 @@ class Config:
     #: one, and most users are not auditing loops. Nothing is ever modified —
     #: see banks/loopcheck.py for why this reports and never repairs.
     loop_click_check: bool = False
+    #: Notes the Audition action plays, in order. Comma-separated; names use the
+    #: C3 = 60 convention this project shows everywhere, and bare MIDI numbers
+    #: work too. Three notes across two octaves is enough to hear a keymap seam
+    #: without making the user wait.
+    audition_notes: str = "C3,G3,C4"
+    #: Velocity every auditioned note is played at. One value rather than a
+    #: list: the velocity LAYER a preset picks is the thing being auditioned,
+    #: and varying it per note would make two variables move at once.
+    audition_velocity: int = 100
+    #: Note-on to note-off, seconds. Long enough for a decay to settle, short
+    #: enough that a four-note audition is not a wait.
+    audition_hold_seconds: float = 1.5
+    #: Silence between notes, seconds.
+    audition_gap_seconds: float = 0.3
     # Main-window size, remembered on close. None until the first quit, so a
     # fresh install still gets the built-in default rather than a 0x0 window.
     # Size only, deliberately not position: a window restored onto a monitor
@@ -200,6 +214,12 @@ class Config:
         debug_mpc2emu_log = bool(data.get("debug_mpc2emu_log",
                                           defaults.debug_mpc2emu_log))
         loop_click_check = bool(data.get("loop_click_check", defaults.loop_click_check))
+        audition_notes = str(data.get("audition_notes", defaults.audition_notes))
+        audition_velocity = int(data.get("audition_velocity", defaults.audition_velocity))
+        audition_hold_seconds = float(data.get("audition_hold_seconds",
+                                               defaults.audition_hold_seconds))
+        audition_gap_seconds = float(data.get("audition_gap_seconds",
+                                              defaults.audition_gap_seconds))
         return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
                     last_image_dir=last_image_dir, last_library_dir=last_library_dir,
                     last_sample_dir=last_sample_dir, last_program_dir=last_program_dir,
@@ -209,6 +229,10 @@ class Config:
                     autosave_seconds=autosave_seconds,
                     debug_mpc2emu_log=debug_mpc2emu_log,
                     loop_click_check=loop_click_check,
+                    audition_notes=audition_notes,
+                    audition_velocity=audition_velocity,
+                    audition_hold_seconds=audition_hold_seconds,
+                    audition_gap_seconds=audition_gap_seconds,
                     window_width=data.get("window_width"),
                     window_height=data.get("window_height"))
 
@@ -254,6 +278,10 @@ class Config:
         lines.append(f"autosave_seconds = {self.autosave_seconds}")
         lines.append(f"debug_mpc2emu_log = {str(bool(self.debug_mpc2emu_log)).lower()}")
         lines.append(f"loop_click_check = {str(self.loop_click_check).lower()}")
+        lines.append(f'audition_notes = "{self.audition_notes}"')
+        lines.append(f"audition_velocity = {int(self.audition_velocity)}")
+        lines.append(f"audition_hold_seconds = {float(self.audition_hold_seconds)}")
+        lines.append(f"audition_gap_seconds = {float(self.audition_gap_seconds)}")
         if self.window_width and self.window_height:
             lines.append(f"window_width = {int(self.window_width)}")
             lines.append(f"window_height = {int(self.window_height)}")
@@ -451,3 +479,28 @@ class Config:
                            f"parsers (missing {', '.join(missing)}) — they are "
                            f"on its fw-only-imports branch")
         return True, "Ensoniq EPS and Roland S-7xx disc import is available"
+
+    def check_audition_support(self) -> tuple[bool, str]:
+        """Audition's mpc2emu side: the model, the two processors it reuses,
+        and the parsers for the formats it can play.
+
+        **It does not check numpy** (an accelerator, never a gate, spec §7.2)
+        and it **cannot** check the audio device -- that needs Qt and lives in
+        ``ui/audition_player.check_audio_output()``, returning this same
+        ``(bool, str)`` shape.
+        """
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        required = [
+            Path("models") / "common.py",
+            Path("processors") / "resampler.py",
+            Path("processors") / "loop_renderer.py",
+            Path("parsers") / "e4b_parser.py",
+            Path("parsers") / "krz_parser.py",
+            Path("parsers") / "eiii_parser.py",
+        ]
+        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        if missing:
+            return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
+        return True, "Audition is available"

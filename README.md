@@ -115,6 +115,47 @@ everything into a local search database, so typing in the search box
 finds a preset by name anywhere in the whole library, instantly, without
 waiting for the tree to be expanded down to it.
 
+### Audition a preset before you carry it
+
+Every defect found by ear this month needed media carried to a machine: a
+KRZ conversion 12 dB quiet, a KRZ release 1.87× fast, an AKAI velocity
+filter that read as bypass, an MPC drum kit on the wrong keys. The only way
+to notice was to load it and hear it — which is how it went unnoticed in the
+first place.
+
+**Audition** gives a first pass. Right-click a preset in the Explorer (or a
+staged preset in New Bank) and choose **Audition**: VinSamLib renders the
+preset's notes and plays them, so *does this bank sound remotely like the
+source?* can be asked before a 300 MB image is written and carried across the
+room. The notes, velocity, hold and gap are set in Settings (default
+`C3,G3,C4` at velocity 100).
+
+> **This is a model of the preset's parameters. It is not a model of the
+> sampler, and it will not sound like the hardware.**
+
+That line is shown above every audition, and the report underneath says which
+parts are measured on hardware, which are fitted, which were never measured,
+and which are not modelled at all — appended at the point each approximation
+is applied, never from a per-format table. What *is* modelled: layering (every
+overlapping zone, not the first), per-zone level and pan, tuning, the amp
+envelope (including velocity-to-volume and the two curve laws), and the
+resonant filter with its envelope, keytracking and velocity modulation. What
+is not: the machines' own converters, output stages, anti-alias filters, LFOs,
+chorus, delay, and polyphony limits.
+
+It renders from **mpc2emu's parsed model**, never from VinSamLib's own
+readers, so any format mpc2emu can read — including the Roland and Ensoniq
+formats it adds as media formats — auditions with no work here. **Audition
+needs mpc2emu**; without a configured checkout the menu action is offered
+disabled, with that reason. It needs no audio device to render: **Save as
+WAV…** writes the audio and a `.txt` sidecar of the report, which is the path
+that works headless.
+
+Audition covers E4B, KRZ, EIII, AKAI and MPC (XPM) sources today. One known
+finding is recorded rather than papered over: a plain 4-pole cascade does not
+reproduce the K2000's documented −3 dB point, and the test that measures it is
+excused in `tests/expected_failures.txt` with that reason.
+
 ### The four hardware formats, and what each one needs
 
 **Every format here is read by VinSamLib's own code.** Opening a disc,
@@ -2777,6 +2818,7 @@ library browser — the whole left half of this table is its own code.
 | MPC import — `.xpm`, `.xty`, `.xpj` | **yes** | `check_xpm_import_support` |
 | Import Sample Folder… | **yes** | `check_sample_dir_import_support` |
 | **SF2 / SFZ / EXS24 / TAL / GIG** — browse, index, search, import | **yes** | `check_foreign_import_support` — without it these rows are absent from the Explorer entirely, rather than present and broken |
+| **Audition** a preset (render + play) | **yes** | `check_audition_support` — the model, parsers and processors; the audio device is probed separately and only gates playback, not rendering |
 
 Two entries are easy to misread, so they are spelled out:
 

@@ -49,6 +49,7 @@ PREFIXES = (
     "vinsamlib_rebuild_",
     "vinsamlib_samples_",
     "vinsamlib_preview_",
+    "vinsamlib_audition_",
 )
 
 #: Session directories awaiting cleanup_session().

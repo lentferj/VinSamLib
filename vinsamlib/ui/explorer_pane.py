@@ -99,6 +99,7 @@ class ExplorerPane(QWidget):
     # one handler.
     importForeignRequested = Signal(list)
     removeLibraryRootRequested = Signal(object)   # Path of a root "directory" node
+    auditionRequested = Signal(object)   # a single TreeNode to audition
 
     def __init__(self, model: LibraryTreeModel, index_db: Optional[IndexDB] = None, parent=None):
         super().__init__(parent)
@@ -480,6 +481,7 @@ class ExplorerPane(QWidget):
         convert_action = None
         import_action = None
         remove_action = None
+        audition_action = None
         # Only the presets New Bank would actually ACCEPT. It locks to the
         # first format put in it and refuses any other, so offering "Add" for
         # an E4B preset while New Bank is holding AKAI produced an action
@@ -520,6 +522,27 @@ class ExplorerPane(QWidget):
             label = "Import via mpc2emu…" if len(convertible) == 1 \
                 else f"Import {len(convertible)} presets via mpc2emu…"
             convert_action = menu.addAction(label)
+        # Audition: offered for exactly one playable node. Refusals are NAMED,
+        # disabled actions -- the ROM-only precedent below -- so "why can I
+        # not audition this" is answered where the question is asked rather
+        # than by a silent absence.
+        auditionable = [n for n in nodes if n is not None
+                        and n.kind in ("preset", "xpm", "mpc_program",
+                                       "foreign_preset")
+                        and not n.empty_reason]
+        if len(auditionable) == 1:
+            node = auditionable[0]
+            from .audition_player import check_audio_output
+            from .. import audition as audition_mod
+            model_ok, model_why = audition_mod.available(None)
+            dev_ok, dev_why = check_audio_output()
+            rom_only_node = node.kind == "preset" and _krz_rom_only(node)
+            label, enabled, tooltip = _audition_decision(
+                node, model_ok, model_why, dev_ok, dev_why, rom_only_node)
+            audition_action = menu.addAction(label)
+            audition_action.setEnabled(enabled)
+            if tooltip:
+                audition_action.setToolTip(tooltip)
         if rom_only:
             # Named rather than simply absent: "why can I not convert this
             # one" is the question the row otherwise leaves behind, and the
@@ -585,6 +608,8 @@ class ExplorerPane(QWidget):
             self.addToBankRequested.emit(addable)
         elif convert_action is not None and chosen == convert_action:
             self.convertPresetRequested.emit(convertible)
+        elif audition_action is not None and chosen == audition_action:
+            self.auditionRequested.emit(auditionable[0])
         elif import_action is not None and chosen == import_action:
             if xpms:
                 self.importXpmRequested.emit(str(xpms[0].payload), None)
@@ -658,6 +683,26 @@ def _krz_rom_only(node: TreeNode) -> bool:
         # parse hiccuped is the failure mode this tree is built to avoid.
         return False
     return True
+
+
+def _audition_decision(node, model_ok: bool, model_why: str, dev_ok: bool,
+                       dev_why: str, rom_only: bool) -> tuple:
+    """``(label, enabled, tooltip)`` for the Audition menu entry.
+
+    A refusal is a NAMED, disabled action rather than a silent absence, so
+    "why can I not audition this" is answered where the question is asked.
+    Module-level so it can be checked without opening a modal QMenu.
+    """
+    if not model_ok:
+        return ("Audition — needs an mpc2emu checkout (Settings…)",
+                False, model_why)
+    if not dev_ok:
+        return (f"Audition — {dev_why}", False, dev_why)
+    if rom_only:
+        return ("Audition — this program references only ROM samples", False,
+                "the bank file holds no audio for this program; its samples "
+                "live in the sampler's ROM")
+    return (f'Audition "{node.label}"', True, "")
 
 
 def _no_action_reason(banks, xpms, programs, projects, roots, presets,

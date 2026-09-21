@@ -148,6 +148,10 @@ class BankPane(QWidget):
     #: bank is too big; only MainWindow knows what the last import WAS and how
     #: to run it again, so the pane asks and gets out of the way.
     redoLastImportRequested = Signal()
+    #: Audition the preset AS STAGED -- renames, placement edits and loop
+    #: repairs applied. New Bank rows are not TreeNodes, so this carries the
+    #: ``(bank, preset_obj, name)`` tuple the list already stores.
+    auditionStagedRequested = Signal(object, object, str)
 
     def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
@@ -718,6 +722,11 @@ class BankPane(QWidget):
         if not self._list.selectedIndexes():
             return
         menu = QMenu(self)
+        selected = self._list.selectedIndexes()
+        audition_action = None
+        if len(selected) == 1:
+            audition_action = menu.addAction("Audition")
+            menu.addSeparator()
         label = "Remove Selected" if len(self._list.selectedIndexes()) > 1 else "Remove"
         remove_action = menu.addAction(label)
         # Same action as the button, not a second implementation: the
@@ -755,6 +764,12 @@ class BankPane(QWidget):
             down_action.setToolTip(f"Move later — {hint}")
 
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+        if audition_action is not None and chosen == audition_action:
+            item = selected[0].data(Qt.ItemDataRole.UserRole)
+            if item is not None:
+                bank, preset_obj, name = item
+                self.auditionStagedRequested.emit(bank, preset_obj, name)
+            return
         if chosen is up_action:
             self._move_rows(-1)
             return

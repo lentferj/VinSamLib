@@ -870,3 +870,40 @@ rows are absent on `master`.
 the hardware actually writes. That needs the bank loaded on an E4XT or a
 K2000R and diffed against the machine's own import — which is the entire
 point of the mode, and the one thing no test here can do.
+
+---
+
+## Matrix K — Audition: does it make a sound, and does it say what it is
+
+Audition renders a preset's **parameters** through mpc2emu's parsed model —
+layering, level, pan, tuning, amp and filter envelopes, a resonant filter —
+and is explicitly **not** a model of the sampler. The matrix's job is to keep
+both halves true: that it sounds, and that it never claims to be the hardware.
+
+| # | Cell | Test |
+|---|---|---|
+| AUD1 | every overlapping key/velocity zone sounds, not the first match; a missing sample is reported | `manual_audition_zone_selection` |
+| AUD2 | envelope shapes match the model's curves (linear, MPC convex, rate release, whole-sample) | `manual_audition_envelope_shapes` |
+| AUD3 | filter response against the K2000's documented numbers; KRZ resonance law | `manual_audition_filter_response` |
+| AUD4 | one preset per format renders non-silent, in range, with a non-empty report | `manual_audition_renders_corpus_presets` |
+| AUD5 | every caveat is reachable and appears in the text the dialog renders | `manual_audition_caveats_reach_the_user` |
+| AUD6 | with no audio device: named refusal, and Save-as-WAV still works | `manual_audition_no_audio_device` |
+| AUD7 | a superseded render is discarded by the generation guard | `manual_audition_worker_generation` |
+| AUD8 | the four settings round-trip through the file and the dialog | `manual_audition_settings_roundtrip` |
+| AUD9 | numpy is a pure accelerator: byte-identical output, never a gate | `manual_audition_acceleration` |
+
+**AUD3 is expected to fail, and the failure is the finding.** A plain
+two-section cascade puts the 4-pole −3 dB point at 0.803·f₀ against the
+K2000's documented 0.774, and −6.02 dB at f₀ against 6.11. Recorded in
+`tests/expected_failures.txt` rather than hidden behind a tolerance: either
+the K2000 figures describe a different topology or the plain cascade is not
+it. It passes if a topology is found that reproduces them, or if mpc2emu
+settles the conversion upstream.
+
+**Audio output confirmed by ear on the desktop: NOT YET.** The development
+sandbox has no audio device at all — offscreen `QMediaDevices.audioOutputs()`
+is empty — so every playback assertion here goes through the WAV path. This
+row is deliberately left uncovered rather than claimed: the suite cannot hear
+anything, and a green run is no evidence that `QAudioSink` was ever exercised.
+It wants a desktop run of the same presets AUD4 reaches, stated as such, the
+way the K2000R and S3000XL rows above are.

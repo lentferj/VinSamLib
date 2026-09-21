@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                             QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
-                             QVBoxLayout)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+                             QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+                             QPushButton, QSpinBox, QVBoxLayout)
 
 from ..build import calllog
 from ..config import Config
@@ -171,6 +171,51 @@ class SettingsDialog(QDialog):
         loop_hint.setWordWrap(True)
         layout.addWidget(loop_hint)
 
+        # ── Audition ────────────────────────────────────────────────────────
+        # Settings is where someone decides what this feature IS, so the hint
+        # carries the honesty line as well as the syntax.
+        layout.addSpacing(12)
+        layout.addWidget(QLabel("Audition:"))
+        aud_form = QFormLayout()
+        self._audition_notes_edit = QLineEdit(config.audition_notes)
+        self._audition_notes_edit.setPlaceholderText("C3,G3,C4")
+        self._audition_notes_edit.textChanged.connect(self._validate_notes)
+        aud_form.addRow("Notes:", self._audition_notes_edit)
+        self._audition_velocity_spin = QSpinBox()
+        self._audition_velocity_spin.setRange(1, 127)
+        self._audition_velocity_spin.setValue(int(config.audition_velocity))
+        aud_form.addRow("Velocity:", self._audition_velocity_spin)
+        self._audition_hold_spin = QDoubleSpinBox()
+        self._audition_hold_spin.setRange(0.1, 10.0)
+        self._audition_hold_spin.setSingleStep(0.1)
+        self._audition_hold_spin.setSuffix(" s")
+        self._audition_hold_spin.setValue(float(config.audition_hold_seconds))
+        aud_form.addRow("Hold (note-on to note-off):", self._audition_hold_spin)
+        self._audition_gap_spin = QDoubleSpinBox()
+        self._audition_gap_spin.setRange(0.0, 5.0)
+        self._audition_gap_spin.setSingleStep(0.1)
+        self._audition_gap_spin.setSuffix(" s")
+        self._audition_gap_spin.setValue(float(config.audition_gap_seconds))
+        aud_form.addRow("Gap between notes:", self._audition_gap_spin)
+        layout.addLayout(aud_form)
+        self._audition_notes_status = QLabel("")
+        layout.addWidget(self._audition_notes_status)
+        audition_hint = QLabel(
+            "Right-click a preset and choose Audition to hear these notes. "
+            "C3 = MIDI 60; bare numbers work too. This plays the preset's "
+            "parameters, not the sampler — layering, level, pan, tuning, the "
+            "amp and filter envelopes and a resonant filter are modelled from "
+            "what each format was measured to do; the machines' own "
+            "converters, output stages and effects are not modelled at all, "
+            "and some parameters are fitted rather than measured. Every "
+            "audition says which is which.")
+        audition_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        audition_hint.setWordWrap(True)
+        layout.addWidget(audition_hint)
+        self._audition_status_label = QLabel("")
+        self._audition_status_label.setWordWrap(True)
+        layout.addWidget(self._audition_status_label)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -207,6 +252,41 @@ class SettingsDialog(QDialog):
         changed = Path(text) != self._config.mpc2emu_path if text else False
         self._restart_label.setText(
             "Restart VinSamLib to apply the new path." if changed else "")
+        self._update_audition_status(probe)
+        self._validate_notes(self._audition_notes_edit.text())
+
+    def _validate_notes(self, text: str) -> None:
+        """Live validation through the renderer's own parser, so the field
+        cannot accept what the renderer rejects."""
+        from ..audition import parse_notes
+        try:
+            notes = parse_notes(text)
+        except ValueError as ex:
+            self._audition_notes_status.setText(f"✗ {ex}")
+            self._audition_notes_status.setStyleSheet("color: #c0392b;")
+            return
+        self._audition_notes_status.setText(
+            f"✓ {len(notes)} note(s): " + ", ".join(str(n) for n in notes))
+        self._audition_notes_status.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;")
+
+    def _update_audition_status(self, probe: Config) -> None:
+        """A live ✓ / ✗ line for the mpc2emu side and the audio device, like
+        the mpc2emu probes above. numpy is deliberately not shown as a gate:
+        it is an accelerator, never a requirement."""
+        ok, reason = probe.check_audition_support()
+        if not ok:
+            self._audition_status_label.setText(f"✗ Audition: {reason}")
+            return
+        from .audition_player import check_audio_output
+        dev_ok, dev_reason = check_audio_output()
+        line = f"✓ {reason}"
+        if dev_ok:
+            line += f"\n✓ Audio output: {dev_reason}"
+        else:
+            line += (f"\n✗ No audio output ({dev_reason}) — Audition can "
+                     f"still render and Save as WAV")
+        self._audition_status_label.setText(line)
 
     def accept(self) -> None:
         new_path = Path(self._path_edit.text())
@@ -220,6 +300,13 @@ class SettingsDialog(QDialog):
                               != bool(getattr(self._config, "debug_mpc2emu_log", False))
                            or self._loop_click_box.isChecked()
                               != self._config.loop_click_check)
+        audition_changed = (
+            self._audition_notes_edit.text() != self._config.audition_notes
+            or self._audition_velocity_spin.value() != self._config.audition_velocity
+            or abs(self._audition_hold_spin.value()
+                   - self._config.audition_hold_seconds) > 1e-9
+            or abs(self._audition_gap_spin.value()
+                   - self._config.audition_gap_seconds) > 1e-9)
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
@@ -234,7 +321,12 @@ class SettingsDialog(QDialog):
             # Applied immediately, not at the next restart: someone ticking
             # this box is about to reproduce something.
             calllog.set_enabled(self._config.debug_mpc2emu_log)
-        if path_changed or limits_changed:
+        if audition_changed:
+            self._config.audition_notes = self._audition_notes_edit.text()
+            self._config.audition_velocity = self._audition_velocity_spin.value()
+            self._config.audition_hold_seconds = self._audition_hold_spin.value()
+            self._config.audition_gap_seconds = self._audition_gap_spin.value()
+        if path_changed or limits_changed or audition_changed:
             self._config.save()
         super().accept()
 

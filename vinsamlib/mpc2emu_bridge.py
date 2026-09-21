@@ -89,6 +89,9 @@ eiii_parser = _Lazy("parsers.eiii_parser")
 eiii_writer = _Lazy("writers.eiii_writer")
 akai_writer = _Lazy("writers.akai_s3000_writer")
 resampler = _Lazy("processors.resampler")
+# Ping-pong -> forward loop baking, for audition (spec §5.2). One call:
+# `bake_alternating_loop(sample) -> SampleData`.
+loop_renderer = _Lazy("processors.loop_renderer")
 zone_reducer = _Lazy("processors.zone_reducer")
 # Per-preset thinning aimed at a memory target (mpc2emu 5aa8cf7). It
 # SEARCHES the key/velocity combinations rather than walking a fixed

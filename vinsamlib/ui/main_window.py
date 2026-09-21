@@ -65,6 +65,19 @@ def _via_mpc2emu(name: str) -> str:
     return name if name.endswith(_VIA_MPC2EMU.strip()) else f"{name}{_VIA_MPC2EMU}"
 
 
+class _NamedNode:
+    """The one thing the audition dialog needs from a selection: a label.
+
+    New Bank rows are not TreeNodes, so this lets both routes land in the same
+    ``_on_audition_ready`` without the dialog knowing where the row came from.
+    """
+
+    __slots__ = ("label",)
+
+    def __init__(self, label: str):
+        self.label = label
+
+
 class MainWindow(QMainWindow):
     def __init__(self, config: Config):
         super().__init__()
@@ -98,6 +111,11 @@ class MainWindow(QMainWindow):
         # converting 20 presets at once must not mean 20 modal warnings.
         self._preset_convert_risks: list = []
         self._favourites_worker: workers.Worker | None = None
+        # Audition: one worker at a time, and a generation counter so a second
+        # right-click during a render cannot deliver the first one's audio.
+        self._audition_worker: workers.Worker | None = None
+        self._audition_gen: int = 0
+        self._audition_dialog = None
         # The convert-first import queue: soundfont-style sources and MPC
         # containers, whichever route they arrived by.
         self._import_worker: workers.Worker | None = None
@@ -135,7 +153,9 @@ class MainWindow(QMainWindow):
         self._explorer.convertPresetRequested.connect(self._convert_preset_via_mpc2emu)
         self._explorer.importForeignRequested.connect(self._import_requests)
         self._bank_pane.importRequested.connect(self._import_requests)
+        self._bank_pane.auditionStagedRequested.connect(self._audition_staged)
         self._explorer.removeLibraryRootRequested.connect(self._remove_library_root)
+        self._explorer.auditionRequested.connect(self._audition_node)
 
         self._pending_pane = PendingBanksPane()
         self._pending_pane.statusMessage.connect(lambda msg: self.statusBar().showMessage(msg, 6000))
@@ -428,6 +448,97 @@ class MainWindow(QMainWindow):
         if dialog.path_changed:
                 self.statusBar().showMessage(
                     "mpc2emu path updated — restart VinSamLib to apply", 8000)
+
+    # -- audition -----------------------------------------------------------------
+
+    def _audition_options(self):
+        """Config + the negotiated device rate -> ``AuditionOptions``.
+
+        The render rate is decided HERE and passed into the renderer, so
+        render rate and sink rate are never decided in two places.
+        """
+        from ..audition import AuditionOptions, parse_notes
+        from .audition_player import negotiate_format
+        notes = parse_notes(self._config.audition_notes)
+        got = negotiate_format()
+        rate, channels = got if got else (44100, 2)
+        return AuditionOptions(
+            notes=tuple(notes),
+            velocity=max(1, min(127, int(self._config.audition_velocity))),
+            hold_seconds=max(0.05, float(self._config.audition_hold_seconds)),
+            gap_seconds=max(0.0, float(self._config.audition_gap_seconds)),
+            render_rate=int(rate), channels=int(channels))
+
+    def _audition_node(self, node) -> None:
+        """Explorer node -> a background render, then the dialog."""
+        from ..audition import render_node
+        try:
+            opts = self._audition_options()
+        except ValueError as ex:
+            # Near-unreachable: Settings validates the note list live through
+            # this same parser. A status message rather than a modal keeps a
+            # new modal raise-site out of the tree for a case that is already
+            # guarded at the field.
+            self.statusBar().showMessage(f"Audition settings: {ex}", 10000)
+            return
+        self._audition_gen += 1
+        gen = self._audition_gen
+        self.statusBar().showMessage(
+            f"Rendering audition of {node.label}…", 0)
+        w = workers.Worker(render_node, node.payload, node.kind, opts)
+        w.signals.finished.connect(
+            lambda r, g=gen, n=node: self._on_audition_ready(g, r, n))
+        w.signals.error.connect(
+            lambda msg, g=gen: self._on_audition_error(g, msg))
+        w.signals.finished.connect(lambda *_: self._audition_worker_done(w))
+        w.signals.error.connect(lambda *_: self._audition_worker_done(w))
+        self._audition_worker = w
+        workers.run(w)
+
+    def _audition_staged(self, bank, preset_obj, name: str) -> None:
+        """New Bank row -> a background render of the preset AS STAGED."""
+        from ..audition import render_staged
+        try:
+            opts = self._audition_options()
+        except ValueError as ex:
+            self.statusBar().showMessage(f"Audition settings: {ex}", 10000)
+            return
+        self._audition_gen += 1
+        gen = self._audition_gen
+        self.statusBar().showMessage(f"Rendering audition of {name}…", 0)
+        w = workers.Worker(render_staged, bank, preset_obj, opts, name)
+        w.signals.finished.connect(
+            lambda r, g=gen, n=name: self._on_audition_ready(
+                g, r, _NamedNode(n)))
+        w.signals.error.connect(
+            lambda msg, g=gen: self._on_audition_error(g, msg))
+        w.signals.finished.connect(lambda *_: self._audition_worker_done(w))
+        w.signals.error.connect(lambda *_: self._audition_worker_done(w))
+        self._audition_worker = w
+        workers.run(w)
+
+    def _audition_worker_done(self, w) -> None:
+        if self._audition_worker is w:
+            self._audition_worker = None
+
+    def _on_audition_ready(self, gen: int, rendering, node) -> None:
+        if gen != self._audition_gen:
+            # A later request superseded this one; delivering it would play
+            # the wrong preset with no sign that it had.
+            return
+        self.statusBar().clearMessage()
+        from .audition_dialog import AuditionDialog
+        dialog = AuditionDialog(rendering, title=f"Audition — {node.label}",
+                                parent=self)
+        # Held so the QAudioSink and its QBuffer are not collected mid-note.
+        self._audition_dialog = dialog
+        dialog.show()
+
+    def _on_audition_error(self, gen: int, message: str) -> None:
+        if gen != self._audition_gen:
+            return
+        self.statusBar().clearMessage()
+        QMessageBox.warning(self, "Audition", workers.last_error_line(message))
 
     # -- XPM import ---------------------------------------------------------------
 
