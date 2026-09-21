@@ -232,9 +232,9 @@ def snap_to_zero(pcm: bytes, loop_start: int, loop_end: int,
     """Both points to the nearest same-slope zero crossing. Points only."""
     if loop_end - loop_start < MIN_LOOP_FRAMES:
         return None
-    rising = _slope(pcm, loop_start) >= 0
-    starts = _zero_crossings(pcm, loop_start, rising)
-    ends = _zero_crossings(pcm, loop_end, rising)
+    rising = _slope(pcm, loop_start, big_endian) >= 0
+    starts = _zero_crossings(pcm, loop_start, rising, big_endian)
+    ends = _zero_crossings(pcm, loop_end, rising, big_endian)
     if not starts or not ends:
         return None
     s, e = starts[0], ends[0]
@@ -256,7 +256,7 @@ def nudge_to_match(pcm: bytes, loop_start: int, loop_end: int,
     tgt = _frames(pcm, loop_start, 1, big_endian)
     if not tgt:
         return None
-    tgt_v, tgt_s = tgt[0], _slope(pcm, loop_start)
+    tgt_v, tgt_s = tgt[0], _slope(pcm, loop_start, big_endian)
     lo = max(loop_start + MIN_LOOP_FRAMES, loop_end - SEARCH_FRAMES)
     best, best_at = None, None
     for w in range(lo, loop_end + SEARCH_FRAMES):
