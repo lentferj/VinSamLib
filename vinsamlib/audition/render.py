@@ -89,6 +89,12 @@ def _decode(sample) -> _Source:
             channels = [flat]
     loop_start = int(getattr(sample, "loop_start", 0) or 0)
     loop_end = int(getattr(sample, "loop_end", 0) or 0)
+    n_frames = len(channels[0]) if channels else 0
+    # A malformed loop point must be clamped, not indexed: mpc2emu gives real
+    # ones, but loop_end out of range is a crash the report should carry as a
+    # read, not as an exception.
+    loop_end = min(max(0, loop_end), max(0, n_frames - 1))
+    loop_start = min(max(0, loop_start), loop_end)
     loop_type = int(getattr(sample, "loop_type", 0) or 0)
     return _Source(channels, int(sample.sample_rate), loop_start, loop_end,
                    loop_type)

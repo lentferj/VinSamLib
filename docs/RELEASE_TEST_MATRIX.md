@@ -891,6 +891,7 @@ both halves true: that it sounds, and that it never claims to be the hardware.
 | AUD7 | a superseded render is discarded by the generation guard | `manual_audition_worker_generation` |
 | AUD8 | the four settings round-trip through the file and the dialog | `manual_audition_settings_roundtrip` |
 | AUD9 | numpy is a pure accelerator: byte-identical output, never a gate | `manual_audition_acceleration` |
+| AUD10 | the dialog renders as a readable layout, not only without raising | `manual_audition_dialog_render` |
 
 **AUD3 is expected to fail, and the failure is the finding.** A plain
 two-section cascade puts the 4-pole −3 dB point at 0.803·f₀ against the
