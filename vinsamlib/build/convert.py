@@ -711,6 +711,30 @@ def _diagnostic_risks(records) -> list[dict]:
     return out
 
 
+def _akai_parse_kwargs(opts: ConversionOptions) -> dict:
+    """``firmware_sim`` for the AKAI program parser, if it takes one.
+
+    Asked rather than assumed, like ``_krz_writer_kwargs``: the parameter
+    arrived upstream on 2026-09-22 and an earlier checkout raises TypeError
+    on a keyword it has never heard of.
+
+    **Both halves or neither.** For E4B the simulation rides entirely on the
+    neutral voices this parser builds -- ``write_e4b`` has no flag at all --
+    so a writer set to simulate with a normally-parsed source, or the
+    reverse, is the hybrid mpc2emu's e4b_writer warns is "neither our
+    conversion nor the device's, and whose diff against hardware would mean
+    nothing". If the parser cannot take the flag, the option must not be
+    offered at all; build/firmware_sim.py is what refuses it.
+    """
+    if not opts.match_device_import:
+        return {}
+    try:
+        names = akai_parser.parse_akai_program.__code__.co_varnames
+    except AttributeError:
+        return {}
+    return {"firmware_sim": True} if "firmware_sim" in names else {}
+
+
 def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
     """The layer-handling arguments this mpc2emu's write_krz actually takes.
 
@@ -721,7 +745,13 @@ def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
     behaviour, which was faithful output.
     """
     ASKED = {"faithful_layers": opts.krz_faithful_layers,
-             "drum_program": opts.krz_drum_program}
+             "drum_program": opts.krz_drum_program,
+             # The K2000 simulation is writer-side BY NATURE: the device
+             # imports by cloning template Program 199 and writing five
+             # fields, so this makes the writer ignore voice parameters
+             # entirely. It is only correct alongside a neutrally-parsed
+             # source -- both halves are set from the same option below.
+             "firmware_sim": opts.match_device_import}
     try:
         names = krz_writer.write_krz.__code__.co_varnames
     except AttributeError:
@@ -1455,7 +1485,8 @@ def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
     program_path.write_bytes(program_files[0][1])
 
     parsed = _run_captured(akai_parser.parse_akai_program,
-                            str(program_path), str(samples_dir))
+                            str(program_path), str(samples_dir),
+                            **_akai_parse_kwargs(opts))
     return _apply_and_write(parsed, opts, _sanitize_stem(name), risks_out)
 
 

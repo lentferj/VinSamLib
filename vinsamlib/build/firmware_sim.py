@@ -44,6 +44,12 @@ from typing import Optional
 #: an out-of-date table identifies itself instead of being believed.
 PROVISIONAL_AS_OF = "2026-09-22"
 
+#: The input shape VinSamLib actually hands mpc2emu. We assemble a program
+#: file and convert that; we never hand over a disk image. A path
+#: implemented only for images is therefore unusable here however green the
+#: contract's `status` reads -- measured the hard way on 2026-09-22.
+REQUIRED_INPUT_SHAPE = "program_file"
+
 
 @dataclass(frozen=True)
 class PathStatus:
@@ -67,13 +73,16 @@ _PROVISIONAL = {
 }
 
 #: Upstream having a path working is necessary but NOT sufficient: we also
-#: need something to call. mpc2emu is planning a single CLI flag plus the
-#: generated contract, and neither exists yet, so nothing is selectable here
-#: however green their side goes. Flipping this to True is the whole of the
-#: wiring change once the flag lands -- and it is deliberately separate from
-#: the per-path table, so "they can do it" and "we can ask for it" can never
-#: be confused for each other.
-INVOCABLE_HERE = False
+#: need something to call. True since 2026-09-22, when their parser took
+#: `firmware_sim` and their KRZ writer already did -- convert.py threads both
+#: from `match_device_import`, and BOTH halves or neither, since a simulating
+#: writer over a normally-parsed source is a meaningless hybrid.
+#:
+#: Kept separate from the per-path table on purpose: "they can do it" and "we
+#: can ask for it" are different facts, and conflating them is how the AKAI
+#: arm nearly shipped hollow.
+INVOCABLE_HERE = True
+INVOCABLE_HERE = True
 
 _contract: Optional[dict] = None
 _contract_tried = False
@@ -167,26 +176,20 @@ def status(source_format: str, target_format: str) -> PathStatus:
     entry = _entry(source_format, target_format)
     if entry is not None:
         if entry.get("status") == "implemented":
-            if source_format.upper() == "AKAI":
-                # MEASURED 2026-09-22, not read: `--firmware-sim` on an AKAI
-                # PROGRAM FILE produces output byte-identical to a normal
-                # conversion (355054 bytes, cmp clean), exits 0 and warns
-                # nothing. mpc2emu's registry lambdas for .a3p/.s3p/.p3/.p1
-                # drop **kw, and their akai_s3000_parser has no simulation at
-                # all; only the disc-IMAGE path carries it. Our conversion
-                # calls parse_akai_program, i.e. the hollow shape.
-                #
-                # The contract says "implemented" for (akai, e4b) and does not
-                # distinguish the two input shapes, so believing it here would
-                # ship ordinary output under a device-fidelity promise -- the
-                # one failure this whole module exists to prevent. Reported;
-                # remove this branch when they answer, not before.
+            # **Honour input_shapes.** mpc2emu added it on 2026-09-22 after
+            # this exact trap: `status: implemented` was true of the disc
+            # image and false of the program file, and believing the status
+            # alone would have shipped an ordinary conversion under a
+            # device-fidelity promise. VinSamLib converts PROGRAM FILES --
+            # bank_pane assembles one and convert.py parses it -- so that is
+            # the shape to require, and requiring it by name means a future
+            # path implemented for discs only refuses here by itself.
+            shapes = entry.get("input_shapes")
+            if shapes is not None and REQUIRED_INPUT_SHAPE not in shapes:
                 return PathStatus(
-                    False, "not usable from here yet: upstream's AKAI "
-                           "simulation works on a disc image, but on a "
-                           "program file — the shape VinSamLib converts — "
-                           "the flag is silently ignored and produces an "
-                           "ordinary conversion (measured 2026-09-22)")
+                    False, f"upstream implements this path for "
+                           f"{', '.join(shapes) or 'another input shape'}, "
+                           f"but VinSamLib converts a {REQUIRED_INPUT_SHAPE}")
             if not INVOCABLE_HERE:
                 return PathStatus(
                     False, "implemented upstream, but VinSamLib has no way to "

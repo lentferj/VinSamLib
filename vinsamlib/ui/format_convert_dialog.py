@@ -280,9 +280,18 @@ class FormatConvertDialog(ConvertOptionsDialog):
         radio = getattr(self, "_device_radio", None)
         if radio is None:
             return
-        st = firmware_sim.status(self._source_format, self._current_target_format())
+        target = self._current_target_format()
+        st = firmware_sim.status(self._source_format, target)
         radio.setEnabled(st.available)
-        self._device_note.setText("" if st.available else f"Unavailable: {st.reason}")
+        if st.available:
+            # What this path does NOT reproduce, in mpc2emu's own words plus
+            # the coverage ratio. Shown on the row rather than saved for a
+            # post-import risk, because it is a reason to choose the other
+            # arm -- after the conversion it is too late to be a choice.
+            self._device_note.setText(
+                firmware_sim.fidelity(self._source_format, target))
+        else:
+            self._device_note.setText(f"Unavailable: {st.reason}")
         radio.setToolTip(
             "Writes what the sampler's own disk importer would have written, "
             "byte for byte. This is deliberately LOWER fidelity than a normal "
