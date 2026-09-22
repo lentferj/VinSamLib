@@ -26,8 +26,10 @@ it is never phrased as a quality setting and never sits beside one.
 
 **The table below is PROVISIONAL and exists to be deleted.** mpc2emu is
 generating a JSON contract from their code and asserting it in their test
-suite, precisely so this cannot drift. ``load_contract()`` is where that
-file gets read the day it lands; until then these statuses come from their
+suite, precisely so this cannot drift. ``_contract_data()`` reads it from the
+configured checkout; ``load_contract()`` is the test-only setter. The
+provisional statuses below are the fallback for a checkout without the file,
+and they are deliberately more conservative than the contract -- they come from
 2026-09-22 message and are dated so a stale entry is visible rather than
 silently authoritative. **The fidelity counts are deliberately absent** --
 they asked us not to hardcode them because they move as work continues.
@@ -58,11 +60,19 @@ class PathStatus:
 
 
 #: Keyed (source format, target format), using our own format labels.
+# **A FALLBACK, AND DELIBERATELY PESSIMISTIC.** These fire only when the
+# generated contract cannot be read at all. They no longer try to track what
+# mpc2emu has built -- the 2026-09-22 entries here said AKAI->E4B was still
+# being wired hours after it shipped -- because a second table that drifts is
+# exactly what the generated file exists to replace. Without the contract we
+# cannot confirm a path, so we offer none.
 _PROVISIONAL = {
-    ("AKAI", "KRZ"): PathStatus(True, "implemented and wired upstream"),
+    ("AKAI", "KRZ"): PathStatus(
+        False, "this mpc2emu checkout carries no firmware-simulation "
+               "contract, so no path can be confirmed"),
     ("AKAI", "E4B"): PathStatus(
-        False, "the laws are complete upstream but the wiring is still in "
-               "progress"),
+        False, "this mpc2emu checkout carries no firmware-simulation "
+               "contract, so no path can be confirmed"),
     ("Roland", "E4B"): PathStatus(False, "not started upstream (considered feasible)"),
     ("Roland", "KRZ"): PathStatus(False, "not started upstream (considered feasible)"),
     ("EPS", "KRZ"): PathStatus(
@@ -81,7 +91,6 @@ _PROVISIONAL = {
 #: Kept separate from the per-path table on purpose: "they can do it" and "we
 #: can ask for it" are different facts, and conflating them is how the AKAI
 #: arm nearly shipped hollow.
-INVOCABLE_HERE = True
 INVOCABLE_HERE = True
 
 _contract: Optional[dict] = None
@@ -110,6 +119,12 @@ def _contract_data() -> Optional[dict]:
     checkout without the file is the normal case for anyone not on their
     branch -- and the fallback is strictly more conservative than the
     contract, never less.
+
+    **A failed read is cached for the life of the process.** Pointing
+    Settings at a checkout that has the file will not take effect until a
+    restart -- which is the model Settings already states for the mpc2emu
+    path itself, so this does not add a new surprise, but it is the reason
+    a freshly-configured checkout still shows every path unavailable.
     """
     global _contract, _contract_tried
     if _contract_tried:
@@ -202,6 +217,33 @@ def offers_a_choice(source_format: str) -> bool:
     return False
 
 
+def _entry_for_source(source_format: str) -> Optional[dict]:
+    """Any contract path with this source, regardless of target."""
+    data = _contract_data()
+    if not data:
+        return None
+    for entry in data.get("paths", []):
+        if _norm(entry.get("source")) == _norm(source_format):
+            return entry
+    return None
+
+
+def target_has_any_simulation(target_format: str) -> bool:
+    """Is there ANY implemented simulation writing this target format?
+
+    The source-free half of the question, for the runtime guard in
+    convert.py: a caller that sets device matching with an EIII or AKAI
+    target is asking for something no path can deliver, and that must be
+    refused where the conversion runs rather than only in the dialog.
+    """
+    data = _contract_data()
+    if not data:
+        return target_format.upper() in ("E4B", "KRZ")
+    return any(_norm(e.get("target")) == _norm(target_format)
+               and e.get("status") == "implemented"
+               for e in data.get("paths", []))
+
+
 def _entry(source_format: str, target_format: str) -> Optional[dict]:
     data = _contract_data()
     if not data:
@@ -251,6 +293,14 @@ def status(source_format: str, target_format: str) -> PathStatus:
         # claims, and inventing a sentence would paper over that.
         return PathStatus(False, str(entry.get("reason")
                                      or entry.get("status") or "unavailable"))
+    if _entry_for_source(source_format) is not None:
+        # The source IS one a sampler imports -- there is simply no
+        # simulation for this target. Saying "AKAI is not a format any of
+        # these samplers can import" was flatly wrong and rendered verbatim
+        # in the dialog on every target change.
+        return PathStatus(
+            False, f"there is no firmware simulation that writes "
+                   f"{target_format} from {source_format}")
     got = _PROVISIONAL.get((source_format, target_format))
     if got is not None and got.available and not INVOCABLE_HERE:
         return PathStatus(

@@ -279,16 +279,34 @@ def image_content_format(path) -> Optional[str]:
         from ..vfs.detect import sniff
         if sniff(str(path)) is not None:
             return None
-    except Exception:
+    except Exception as exc:
+        _note_disc_failure(path, "vfs.detect.sniff", exc)
         return None
     try:
         if mpc2emu_bridge.eps_parser.is_eps_image(str(path)):
             return EPS_FORMAT
         if mpc2emu_bridge.roland_parser.is_roland_image(str(path)):
             return ROLAND_FORMAT
-    except Exception:
+    except Exception as exc:
+        _note_disc_failure(path, "content test", exc)
         return None
     return None
+
+
+def _note_disc_failure(path, stage: str, exc: BaseException) -> None:
+    """Record a disc that was dropped because something raised.
+
+    Returning None here is right -- a listing must not stop for one odd file
+    -- but it makes "this is not one of ours" and "mpc2emu's parser threw"
+    the same outcome on screen, and the second one is a disc the user
+    expected to see. The call log is where that distinction survives; it is
+    off by default and costs nothing when it is.
+    """
+    try:
+        convert_mod.calllog.note("disc-detect-failed", source=str(path),
+                                 stage=stage, error=f"{type(exc).__name__}: {exc}")
+    except Exception:
+        pass
 
 
 def inspect(path) -> Optional[FileVerdict]:
@@ -439,7 +457,8 @@ def _list_disc_presets(path) -> Optional[list]:
         parts = mpc2emu_bridge.roland_parser.read_roland_partials(str(path))
         return [foreign_names.ListedPreset(name=part.get("name", ""), program=i)
                 for i, part in enumerate(parts)]
-    except Exception:
+    except Exception as exc:
+        _note_disc_failure(path, "directory listing", exc)
         return None
 
 

@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import calllog
+from . import firmware_sim
 
 from .. import tempdirs
 from ..filenames import safe_filename
@@ -723,16 +724,35 @@ def _akai_parse_kwargs(opts: ConversionOptions) -> dict:
     so a writer set to simulate with a normally-parsed source, or the
     reverse, is the hybrid mpc2emu's e4b_writer warns is "neither our
     conversion nor the device's, and whose diff against hardware would mean
-    nothing". If the parser cannot take the flag, the option must not be
-    offered at all; build/firmware_sim.py is what refuses it.
+    nothing".
+
+    So if the parser cannot take the flag this RAISES. The docstring used to
+    say build/firmware_sim.py refuses that case, and it does not: it reads
+    the generated contract and ``INVOCABLE_HERE`` and never probes the
+    parser. Nothing refused it, and the conversion quietly came out ordinary
+    under a name that promised the device.
     """
     if not opts.match_device_import:
         return {}
     try:
         names = akai_parser.parse_akai_program.__code__.co_varnames
     except AttributeError:
-        return {}
-    return {"firmware_sim": True} if "firmware_sim" in names else {}
+        names = ()
+    if "firmware_sim" not in names:
+        # RAISE, DO NOT RETURN {}. For AKAI->E4B the parser is the ONLY
+        # simulating half -- write_e4b has no flag and rides entirely on the
+        # neutral voices this builds -- so returning {} here produced an
+        # ordinary conversion, with this project's processing stripped,
+        # labelled "convert as the firmware would". Silent degradation is the
+        # one outcome this whole feature was built to make impossible, and
+        # the KRZ half already refuses the same way.
+        raise ConvertOpError(
+            "This mpc2emu checkout's AKAI parser cannot simulate the "
+            "firmware: parse_akai_program takes no `firmware_sim`. "
+            "Converting as the firmware would is unavailable here; convert "
+            "as good as possible instead, or point Settings at a checkout "
+            "that carries it.")
+    return {"firmware_sim": True}
 
 
 def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
@@ -809,8 +829,29 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
 _PROCESSING_FIELDS = (
     "resample_profile", "no_bandpass", "resample_keep_gain",
     "max_sample_rate", "reduce_key_zones_pct", "reduce_velocity_layers_pct",
-    "mono", "trim_start", "trim_tail",
+    "mono",
+    # `trim_start`/`trim_tail` stood here and ARE NOT FIELDS. The loop's
+    # `hasattr` guard -- added to tolerate an older options object -- skipped
+    # both silently, so a trim survived into a conversion labelled "convert
+    # as the firmware would": the exact hybrid this function exists to stop,
+    # and one nobody here could hear. The guard is gone below; a name that is
+    # not a field is now an error, because the only way it gets into this
+    # tuple is a typo.
+    "trim_start_db", "trim_start_fade_ms", "trim_start_keep_loops",
+    "trim_tail_db", "trim_tail_fade_ms", "trim_tail_keep_loops",
+    # Also executed by the pipeline and also missing before.
+    "split_velocity_layers", "shrink_to_bytes", "shrink_by_pct",
 )
+
+#: Deliberately NOT stripped, with the reason, so the next person does not
+#: have to re-derive the split:
+#:   target_format, match_device_import  -- the request itself
+#:   pan_law, krz_*, akai_ib304f         -- shape the OUTPUT FILE, which is
+#:                                          the writer's business and is what
+#:                                          the simulation is replacing anyway
+#:   chromatic_pads, lfo_sync_bpm        -- XPM parse-time assumptions,
+#:                                          consumed only in xpm_import; no
+#:                                          XPM source offers device matching
 
 
 def _strip_processing_for_device_match(
@@ -831,23 +872,41 @@ def _strip_processing_for_device_match(
     """
     if not getattr(opts, "match_device_import", False):
         return opts
+    # THE DIALOG IS NOT THE GUARANTEE. A restored session, a matrix test or
+    # any direct caller can set this with a target no simulation writes, and
+    # the parser-side neutral voices would then flow into an ordinary writer
+    # -- a bank that is neither conversion, under a name that claims one.
+    # mpc2emu refuses a mismatched pair at its CLI; refuse it here too.
+    if not firmware_sim.target_has_any_simulation(opts.target_format):
+        raise ConvertOpError(
+            f"Converting as the firmware would is not available for "
+            f"{opts.target_format}: no sampler's import routine writes that "
+            f"format. Convert as good as possible instead.")
     blank = ConversionOptions()
     changed = {}
     for field in _PROCESSING_FIELDS:
-        if not hasattr(opts, field):
-            continue
+        # No hasattr guard. It was written to tolerate an older options
+        # object and instead hid two misspelled names for a day.
         current, default = getattr(opts, field), getattr(blank, field)
         if current != default:
             changed[field] = default
     if not changed:
         return opts
     if risks_out is not None:
-        risks_out.append(
-            "Matching the device's own import ignores this project's "
-            "processing: "
-            + ", ".join(sorted(changed))
-            + " were set and have been skipped, because applying them would "
-              "produce something the device would not.")
+        # A DICT, because every consumer of this list calls .get() on its
+        # entries -- polyphony_risk_lines, main_window._warn_polyphony,
+        # pending_pane -- and a bare string here was an AttributeError on the
+        # AKAI import path, which is exactly the path that sets this option.
+        names = ", ".join(sorted(changed))
+        risks_out.append({
+            "code": "DEVICE_MATCH_PROCESSING_SKIPPED",
+            "message": (
+                f"Converting as the firmware would: this project's own "
+                f"processing was skipped ({names})."),
+            "body": (
+                "Applying it would produce something the device would not, "
+                "while the conversion claimed to reproduce the device."),
+        })
     return dataclasses.replace(opts, **changed)
 
 

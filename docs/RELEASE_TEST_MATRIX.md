@@ -14,6 +14,13 @@ decision rather than an oversight.
 `tests/` is gitignored (local paths, real libraries), so the test names below
 name files that exist only on a development machine.
 
+**This file is shared by more than one branch.** The AKAI section at the end
+belongs to `feat/akai-s3000xl`; rows **FW1–FW4** below belong to
+`firmware-importers` (Ensoniq EPS and Roland S-7xx disc import, and
+converting as the firmware would). On `master` neither set applies. The note
+that follows was written when AKAI was the only such section and is kept
+because its reasoning is the reason for both.
+
 **AKAI lives in its own section at the end of this file**, because this is
 the `feat/akai-s3000xl` branch. On `master` those rows are absent and this
 note says where they are; here they are present and kept together rather than
@@ -64,6 +71,8 @@ without ever reaching it. It belongs wherever releases are cut.
 | P7 | Per-bank Convert Options in Pending for Image |
 | P8 | Soft-sampler import: right-click "Import…", **and** drag onto New Bank (both routes, same file) |
 | P9 | MPC import by **drag** onto New Bank — must land identically to P5's context-menu route |
+| P10 | Hardware disc import: an Ensoniq EPS/ASR or Roland S-7xx CD image, browsed and imported by row |
+| P11 | …with **convert as the firmware would** selected (AKAI source only; the disc formats offer no second mode) |
 
 **Output** — where it ends up:
 
@@ -842,3 +851,22 @@ with AKAI-sourced material, which is ordinary E4B/KRZ/EIII by then and so
 testing. `manual_akai_end_to_end` exists for exactly that row.
 
 **Matrix D** — AKAI pan widening: `manual_akai_convert`.
+
+---
+
+## Firmware importers (branch `firmware-importers`)
+
+Ensoniq EPS/ASR and Roland S-7xx discs, and the two conversion modes. These
+rows are absent on `master`.
+
+| # | Cell | Covered by |
+|---|---|---|
+| FW1 | An EPS and a Roland disc are **recognised by content**, list without decoding audio, and one row imports to E4B and to KRZ. Includes: an AKAI disc keeps the `.iso` extension; the EPS row→preset mapping partitions the whole disc; the variant suffixes still match mpc2emu's | `manual_firmware_import.py` |
+| FW2 | **Convert as the firmware would**, AKAI source, into E4B and KRZ: the output must differ from an ordinary conversion of the same program (byte comparison, one flag apart) | `manual_firmware_import.py` step 8 |
+| FW3 | The mode chooser appears **only** where a second mode exists — AKAI into E4B/KRZ — and never for a disc format or for a target no simulation writes | `manual_render_import_dialog.py` |
+| FW4 | Device matching **strips this project's processing** and says so, refuses a target with no simulation, and refuses a checkout whose parser cannot simulate rather than degrading silently | `manual_firmware_import.py` |
+
+**Not covered, and deliberately so:** whether a simulated bank matches what
+the hardware actually writes. That needs the bank loaded on an E4XT or a
+K2000R and diffed against the machine's own import — which is the entire
+point of the mode, and the one thing no test here can do.

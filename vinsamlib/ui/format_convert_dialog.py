@@ -29,7 +29,9 @@ while E4XT has no such ceiling. This mirrors that default in spirit with
 a flat Hz value rather than convert.py's fancier per-sample "headroom-
 aware" auto-downsample (that one is inline main()-only logic upstream,
 not a reusable function -- reproducing it faithfully is deferred, see
-docs/mpc2emu_conversion_integration_plan.md).
+the TODO in build/foreign_import.py's `_akai_route`, which is where
+that deferral actually lives; the plan document this used to cite was
+never written).
 
 locked_format: when New Bank already has a format lock (BankPane.format
 is not None), callers pass it here so the picker shows and defaults to
@@ -302,6 +304,16 @@ class FormatConvertDialog(ConvertOptionsDialog):
         if radio is None:
             return
         target = self._current_target_format()
+        # THE CHOICE IS PER PATH, NOT PER SOURCE. AKAI offers both modes into
+        # E4B and KRZ and neither into EIII or AKAI, so a row decided once at
+        # construction shows a disabled radio with a false reason the moment
+        # the picker moves. Hide the whole row where no second mode exists,
+        # for the same reason it is never drawn for Roland or Ensoniq: the
+        # user is not being denied anything.
+        row = getattr(self, "_method_row", None)
+        if row is not None:
+            row.setVisible(len(firmware_sim.modes_offered(
+                self._source_format, target)) > 1)
         st = firmware_sim.status(self._source_format, target)
         radio.setEnabled(st.available)
         if st.available:
