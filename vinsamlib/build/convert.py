@@ -72,13 +72,20 @@ class ConvertOpError(RuntimeError):
 @dataclass(frozen=True)
 class ConversionOptions:
     target_format: str = "E4B"                    # "E4B" | "KRZ" | "EIII" | "AKAI" -- the OUTPUT format
-    # Reproduce the TARGET sampler's own firmware import rather than
-    # converting with this project's laws. Only meaningful for a source the
-    # firmware itself can import (Ensoniq EPS, Roland S-7xx, AKAI), and for
-    # EPS/Roland it is the only law that exists -- there is no instrument
-    # here to measure a better one against. See mpc2emu's
-    # docs/FIRMWARE_IMPORT_ROUTINES.md and foreign_import.EXPERIMENTAL_FORMATS.
-    firmware_import: bool = False
+    # Write what the TARGET sampler's own disk importer would have written,
+    # byte for byte, instead of converting with this project's laws.
+    #
+    # **Deliberately WORSE output than a normal conversion**, and named so
+    # that nobody reads it as a quality setting. Its value is that the result
+    # can be diffed against a real device import: any difference is a defect
+    # in the reading of the firmware, which is the only way to check that
+    # reading without owning every machine.
+    #
+    # NOT the same thing as importing an Ensoniq or Roland disc. Those use a
+    # firmware-DERIVED reader because no documented layout exists, and are
+    # then written normally -- an ordinary conversion with an unusual parser.
+    # See build/firmware_sim.py, which exists to keep the two apart.
+    match_device_import: bool = False
     resample_profile: Optional[str] = None        # "emulator2" | "emax1" | None (off)
     no_bandpass: bool = False
     resample_keep_gain: bool = False
@@ -759,7 +766,7 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
     # was handed, but only this shows the whole set as it stood after
     # defaults were applied -- which is the thing nobody can reconstruct
     # afterwards from the output.
-    opts = _strip_processing_for_firmware(opts, risks_out)
+    opts = _strip_processing_for_device_match(opts, risks_out)
     calllog.note("conversion", source=getattr(bank, "path", ""),
                  out_stem=out_stem, options=opts)
     with collect_diagnostics_into(risks_out):
@@ -776,14 +783,15 @@ _PROCESSING_FIELDS = (
 )
 
 
-def _strip_processing_for_firmware(opts: ConversionOptions,
-                                   risks_out: Optional[list] = None) -> ConversionOptions:
-    """Under ``firmware_import``, drop this project's own processing steps.
+def _strip_processing_for_device_match(
+        opts: ConversionOptions,
+        risks_out: Optional[list] = None) -> ConversionOptions:
+    """Under ``match_device_import``, drop this project's own processing.
 
     The dialog greys these out, but a greyed widget is not a guarantee: the
     options object is also built by the matrix tests, by a restored session
     and by any caller that constructs one directly. If a resample survived
-    into a run labelled "simulate firmware import", the output would be
+    into a run labelled "match the device's own import", the output would be
     something the device would never produce while the UI said otherwise --
     and that is the one failure this whole feature cannot afford, because
     nobody here has the instrument to notice it by ear.
@@ -791,7 +799,7 @@ def _strip_processing_for_firmware(opts: ConversionOptions,
     Silently dropping them would be its own lie, so anything actually
     dropped is reported as a risk.
     """
-    if not getattr(opts, "firmware_import", False):
+    if not getattr(opts, "match_device_import", False):
         return opts
     blank = ConversionOptions()
     changed = {}
@@ -805,7 +813,8 @@ def _strip_processing_for_firmware(opts: ConversionOptions,
         return opts
     if risks_out is not None:
         risks_out.append(
-            "Firmware simulation ignores this project's own processing: "
+            "Matching the device's own import ignores this project's "
+            "processing: "
             + ", ".join(sorted(changed))
             + " were set and have been skipped, because applying them would "
               "produce something the device would not.")

@@ -244,339 +244,56 @@ Instruments that cannot be converted still appear, greyed, with the
 reason — most often a TAL-Sampler preset whose samples are encrypted
 `.talwav` files, which nothing outside TAL-Sampler can decode.
 
-### Simulate a firmware import: Ensoniq EPS/ASR and Roland S-7xx discs
+### Ensoniq EPS/ASR and Roland S-7xx sampler discs
 
 **Experimental.** An Ensoniq EPS/ASR or Roland S-7xx CD image is recognised
 by its content — not its extension, since `.iso` is shared with AKAI media
 and with the EMU3 filesystem — and expands like a bank, one row per
-instrument on the disc. Importing a row writes an ordinary E4B or KRZ.
+instrument on the disc. Importing a row writes an ordinary E4B or KRZ, with
+all the usual conversion options.
 
-What makes this different from every other import here is **whose rules it
-follows**. There is no Ensoniq or Roland on the bench, so there is nothing
-to measure a better conversion against. Instead the conversion reproduces
-what the *target* sampler's own firmware does when it imports such a disc —
-read out of the E-MU EOS 4.7 and Kurzweil K2000 v3.87J ROMs. Matching the
-device is not a compromise here; with the source instrument absent it is the
-only available definition of correct.
-
-So the import dialog offers **Import method**, and for these two formats
-"Simulate firmware import" is the only live choice — the other arm is shown
-disabled and says why. The conversion options are greyed out while it is
-selected: resampling or reducing the result would produce something the
-device would never produce, while the dialog claimed otherwise. Anything
-that *is* set gets dropped and reported rather than silently applied.
+What is unusual is the **reader**, not the conversion. Neither disc format
+has a documented layout, so mpc2emu's parsers are derived from the sampler's
+own firmware — the position and volume tables, key maps and pan laws read
+out of the E-MU EOS 4.7 and Kurzweil K2000 v3.87J ROMs. There is no second
+way to read such a disc, which is why the import dialog shows the method and
+names it rather than offering a choice that does not exist.
 
 Two consequences worth knowing before you trust the output:
 
-* An EPS **instrument** becomes up to four presets — the layer-mask
-  variants the firmware itself writes, suffixed `00`, `0*`, `*0`, `**`.
-  One row imports the whole group, because the variants are the instrument.
-* The Roland path is **coarser than the device**: the machine groups
-  partials into one program and splits keys from the patch, while this makes
-  one preset per partial.
-
-For AKAI the choice is the other way round. An S3000XL *is* on the bench, so
-mpc2emu deliberately keeps its own hardware-measured laws, and the firmware
-arm is the one that does not exist — it appears named and disabled rather
-than silently missing.
+* An EPS **instrument** becomes up to four presets — the layer-mask variants
+  the firmware itself writes, suffixed `00`, `0*`, `*0`, `**`. One row
+  imports the whole group, because the variants are the instrument.
+* The Roland path is **coarser than the device**: the machine groups partials
+  into one program and splits keys from the patch, while this makes one
+  preset per partial.
 
 These parsers live on an mpc2emu branch rather than its main line, so a
 checkout without them simply shows no such discs; Settings reports it the
 same way it reports the other capabilities.
 
-### Run an existing preset through mpc2emu's vintage pipeline
+### Match the sampler's own import
 
-Right-click any real preset or program in Explorer — E4B, KRZ or EIII —
-for a second option, "Import via mpc2emu…", offering the exact same
-resample/reduce dialog XPM import uses: apply the EMU Emulator II or
-Emax I character, thin out an overly dense multisample, or convert to
-another format entirely, without leaving VinSamLib. The dialog
-defaults its target format to the preset's own source format, so
-"same format, with options" (apply processing without converting) is
-one click away — the same "Add" a plain drag would do, plus optional
-processing.
+A separate, stricter thing, and **not yet available on any path**.
 
-### Turn a folder of WAVs into a multisampled preset
+mpc2emu is building a mode that writes what a sampler's own disk importer
+would have written, byte for byte. It is **deliberately lower fidelity than
+a normal conversion** — its value is that the result can be diffed against a
+real device import, so any difference is a defect in the reading of the
+firmware rather than a matter of taste. It is not a quality setting and it
+will never make a bank sound better.
 
-Also when mpc2emu is available: **File > Import Sample Folder…** takes a
-folder of loose WAVs whose filenames carry their root notes
-(`Piano C3.wav`, `Cello-A#2.wav`, `Pad_60.wav`) and auto-maps each one to
-the keys nearest its root, producing a single playable multisample in New
-Bank. Pick which octave convention the filenames use, or let it detect
-that from the names themselves, and override any sample's key range or
-root by hand — against an 88-key piano — when the automatic split isn't
-what you wanted.
+The import dialog offers it for every source a sampler can actually import —
+Ensoniq, Roland and AKAI — and **disables it with the reason** wherever the
+path is not ready, rather than leaving it out. That is deliberate: someone
+who asks to match the device and silently receives an ordinary conversion
+has no way to tell the difference.
 
-### Catch presets that will lose layers before the hardware does
+For AKAI the situation is the reverse of the disc formats above. An S3000XL
+is on the bench, so mpc2emu deliberately keeps its own hardware-measured
+laws as the better conversion, and matching the device is the option that is
+still being built.
 
-Every E4B or KRZ conversion that runs through mpc2emu is checked for
-presets that stack more voices on one *note* than the machine can sound —
-a ceiling no size check can see, where the extra layers aren't quiet but
-**stolen**. Both numbers behind it were measured on real hardware: a
-stereo sample costs two voices, and the limit is per note (32 on an E4XT,
-24 on a K2000R), not global polyphony. See [Voice budget
-warning](#voice-budget-warning).
-
-### Find the loops that click
-
-A looped sample plays to its last frame and jumps back to the loop
-start; if those two frames sit at different levels, the jump is a step
-you hear as a tick on every repetition, forever. **Check Loops…** in New
-Bank scans the staged presets and lists each one, worst first, with the
-step as a percentage of the local level — and offers three repairs.
-Reporting changes nothing and is safe; the repairs are ⚠️ experimental
-and no sampler has yet played one. Finding nothing is a normal result:
-measured across this library, 2.8% of looped E4B headers click against
-13.4% of KRZ ones.
-
----
-
-## Requirements
-
-- Python 3.11 or later
-- [PySide6](https://pypi.org/project/PySide6/) `6.11.1` (the only
-  mandatory dependency — see `pyproject.toml`)
-- A local checkout of [mpc2emu](https://github.com/lentferj/mpc2emu),
-  for XPM import and vintage conversion. Without it, VinSamLib still
-  runs as a browser/bank-builder; Settings will show exactly what's
-  missing.
-
----
-
-## Installation
-
-### Installing VinSamLib
-
-```bash
-git clone <this repo's URL> vinsamlib
-cd vinsamlib
-pip install -e .
-```
-
-### Pointing it at an mpc2emu checkout
-
-Then, if you want XPM import and vintage conversion: clone
-[mpc2emu](https://github.com/lentferj/mpc2emu) somewhere on the same
-machine, launch VinSamLib
-(`vinsamlib` or `python -m vinsamlib.app`), open **File → Settings…**,
-and point the "mpc2emu checkout" field at that directory. The status
-line updates live as you type — it tells you separately whether the
-path itself is a usable mpc2emu checkout, and whether the specific
-modules the conversion feature needs are present. Changing the path
-takes effect on the next restart (Python's own module cache holds
-whichever mpc2emu modules were already imported from the old location).
-
----
-
-![VinSamLib: library tree and Detail pane showing a multisampled preset](docs/screenshots/01_overview.png)
-
-*Explorer (left) with a bank expanded and a preset selected; the Detail
-pane (below it) shows its condensed key-zone/velocity-layer/bit-depth
-summary. (Screenshots throughout this manual use a small synthetic demo
-library, not real commercial content.)*
-
-## Quick Start
-
-### Browse and build your first bank
-
-1. **File → Add Library Folder…** and pick a folder containing E4B/KRZ/
-   EIII banks, disc images, or floppy images (the file dialog remembers where
-   you last added a folder from).
-2. Expand it in the Explorer tree — banks and discs open lazily, so a
-   large library doesn't stall on first click. Presets/programs inside a
-   bank show a 🎹 icon.
-3. Drag a preset into the **New Bank** column (or right-click it →
-   "Add… to New Bank"). Drag a few more — from anywhere in the library,
-   any format, as long as they all match the first one's format.
-4. Give the bank a name in the **Name:** field — that's the filename a
-   real E4XT or K2000 will show as the bank's own name.
-5. Either **Save as…** to write the assembled bytes straight to a file,
-   or **Send to Image Column** to queue it in **Pending for Image**.
-6. In **Pending for Image**, click **Build Image →**. If no image is
-   open yet, a "New Image" dialog asks what kind to create (matching
-   your target hardware) and how big; otherwise it appends to whatever's
-   already open in the **Image** column.
-7. The **Image** column now shows your new bank as an entry on the disk
-   image — copy that `.hda`/`.iso`/`.img` file to your ZuluSCSI/Gotek
-   media the same way you would one built by mpc2emu's own CLI.
-
-### Import an Akai MPC program (needs mpc2emu)
-
-1. Add a library folder containing `.xpm` files, or use
-   **File → Import MPC Program…** to pick one directly (it accepts
-   `.xpm` programs, `.xty` tracks and `.xpj` projects).
-2. Double-click the `.xpm` (or right-click it → **Import…**). A dialog
-   asks for the target format (E4B, KRZ or EIII) and, optionally,
-   vintage resample/reduce options.
-3. The imported preset lands directly in **New Bank** — a `.xpm` or
-   `.xty` always holds exactly one program, so there's nothing to
-   choose between.
-
-### Browse and import an MPC project (needs mpc2emu)
-
-An MPC project (`.xpj`) carries one program per track, which makes it
-the MPC's own equivalent of an E4B bank — so it is browsed like one
-rather than being a single all-or-nothing import.
-
-1. Add a library folder containing `.xpj` files. Each shows up as an
-   expandable 🗂 row.
-2. Expand it. Every program that carries sampled material — **keygroup
-   and drum** — gets its own row, named after its track; selecting one
-   shows the same key-zone / velocity-layer / sample-rate summary a real
-   preset gets. MIDI, plugin, audio, CV and clip tracks reference no
-   sample data at all and are not listed, and neither is a kit that was
-   created but never filled.
-3. Double-click a program (or right-click it → **Import…**) to bring
-   just that one into **New Bank**, or right-click the project itself →
-   **Import all programs of "…"…** to bring in every program at once,
-   each named after its own track.
-4. Expanding a project reads every sample it references, so the first
-   expansion of a large one takes a moment; after that, clicking through
-   its programs is instant. A background scan still never parses one.
-5. **Search finds programs inside an MPC 3 project by name.** Those
-   programs exist nowhere else on disk, so nothing else could make them
-   findable; an MPC 2.x project keeps each program as its own `.xpm`,
-   already indexed as a file. Reading the names costs the scan about 5
-   seconds per full pass over this library (26s → 31s) and no samples:
-   only the program objects are decoded, not the ~22 MB of JSON around
-   them. A hit opens the program's own row.
-
-![Explorer showing an expanded .xpj project with one row per program — drum kits and keygroups alike — alongside a .xpm program and a .xty track, with the Detail pane summarising the selected drum kit: 13 samples across 16 key zones](docs/screenshots/10_mpc_project.png)
-
-A project that can't produce anything is marked **(nothing to import)**
-and greyed, with the reason in its tooltip, rather than expanding into
-nothing. That covers both ways it happens: the project holds no keygroup
-or drum program at all (the reason names the track kinds it does hold),
-or every program it holds is an empty kit — 5 projects in the reference
-backup are that second case.
-
-That wording is deliberate, and distinct from **(failed to open)**,
-which means the file is damaged or is not an MPC document. mpc2emu
-raises the same exception type for both, so the two are told apart by
-whether the container still reads as an MPC project — of the 181
-projects in the reference backup, 168 list programs, 13 have nothing to
-import, and none is broken. Both MPC 2.x projects (whose
-programs live in a `<name>_[ProjectData]` folder next to the `.xpj`) and
-MPC 3 ones are read the same way, and since mpc2emu `9a2c78b` both
-generations gather drum programs as well as keygroup ones.
-
-Program rows show the **whole** program name, which is often longer than
-the name the import can keep: an E4B preset field holds 16 ASCII
-characters, so `Poly Brass 193-Auto sampled` browses under that name and
-arrives in New Bank as `Poly Brass 193-A`. For an MPC 2.x project the
-full names come from the program files themselves, and only while each
-preset can be matched to exactly one of them. Two programs whose names
-truncate to the same 16 characters are unresolvable if either was
-skipped, and then every row in that project falls back to the (short)
-preset name — never a guess at which program a row shows. That costs
-1 of the 90 projects here its full names.
-
-**A project's data folder is mostly not sample content.** It holds one
-`.xpm` per track, and only two kinds of program carry samples at all.
-Measured on a real 571-file MPC One backup:
-
-| kind | there | zones | samples | listed |
-|---|---|---|---|---|
-| Keygroup | 82 | 970 | 957 | yes — pitched, multisampled |
-| Drum | 90 | 956 | 907 | yes — one-shot hits, one per key |
-| MIDI / Plugin / Audio / CV / Clip | 399 | 0 | 0 | no, like a loose WAV |
-
-**Drum kits convert** (mpc2emu `27ff6a4`): each pad becomes a one-key zone
-whose root *is* its key, so every hit sounds at its native pitch instead of
-key-tracking. Note the numbers above — in that backup the drum programs
-carry roughly as much sampled material as the keygroup ones, and more per
-file (a median of 12 samples against 5).
-
-The remaining 399 reference no sample data whatsoever; mpc2emu refuses them
-with a written-out reason, and VinSamLib doesn't list them. A file whose
-kind can't be read from its header (an MPC 3 program, or anything unusual)
-is always listed — the rule only acts on what declares itself otherwise.
-
-**Drum kits land on the keys the file asks for.** An MPC program carries
-a `<PadNoteMap>` giving each pad its note, and both 2.x and MPC 3 files are
-read the same way.
-
-> ⚠️ **This was wrong until 2026-09-14, and kits imported before then are
-> on the wrong keys.** The map was believed absent: mpc2emu's reader looked
-> at the `<PadNote>` element's own body, where the value is in a nested
-> `<Note>` child, so it read a clean zero — and "MPC 2.x does not store
-> one" was written down as a property of the format. Pads were laid out on
-> consecutive keys from 36 instead. **Confirmed on an E4XT:** of the
-> nineteen notes a converted kit puts sound on, exactly one was right, and
-> a key the source leaves silent spoke. Re-import anything that matters.
-
-The factory map is not a consecutive run and is the same on every drum
-program — `37 36 42 82 40 38 46 44 48 47 45 43 49 55 51 53` for pads 1–16,
-identical across all 528 drum programs in one real expansion library,
-kits and FX banks alike. So a sixteen-pad kit spans two and a half
-octaves with holes in it, and one pad sits alone up at A#5.
-
-That is faithful, and for a **melodic** kit — piano chords on pads, say —
-it is rarely what you want. mpc2emu's `chromatic_pads` option lays such a
-program out on consecutive keys instead. A real drum kit should keep the
-factory map, since its GM positions are the ones a pattern was written
-against.
-
-A drum kit converted to **KRZ** additionally fills the keys between pads
-with a copy of the neighbouring hit — a K2000 locks up on Master→Delete if
-a keymap has holes, so `krz_writer` fills them deliberately.
-
-If you indexed such a folder with an earlier version, **File → Rescan
-Library** drops the stale entries from search.
-
-### Run an existing preset through mpc2emu (needs mpc2emu)
-
-1. Find a real E4B, KRZ or EIII preset/program anywhere in your library.
-2. Right-click it → **Import via mpc2emu…** — the same dialog as XPM
-   import. The target-format picker defaults to the preset's own
-   format, so applying options without changing format is one click.
-3. Pick your options (say, the Emulator II profile with a 30% key-zone
-   reduction) and confirm; the converted result lands in New Bank
-   alongside anything already there, labeled `"<name> (mpc2emu)"`.
-
-### Import a folder of WAVs as a multisample (needs mpc2emu)
-
-1. **File → Import Sample Folder…** and pick a folder whose WAV
-   filenames carry their root notes (`Piano C3.wav`, `Pad_60.wav`).
-2. Set **Middle C is:** to the convention those names use — `C3` for
-   K2000-era material, `C4` for general MIDI — or leave it on
-   **Auto-detect**. Choose a target format and any conversion options.
-3. Optionally hit **Adjust Sample Placement…** to check the automatic
-   key split against an 88-key piano and correct any sample's range or
-   root by hand.
-4. Confirm; the whole folder lands in **New Bank** as one multisampled
-   preset named after the folder.
-
-**One folder, several instruments?** Use **File → Import Samples…**
-instead and select just the files that belong together — everything
-above works the same, and the preset is named after whatever the chosen
-filenames have in common (`Rhodes C2.wav`, `Rhodes F3.wav` → `Rhodes`).
-Both dialogs reopen where you last imported from.
-
----
-
-## The Manual
-
-### Library & Search
-
-**File → Add Library Folder…** registers a folder as a library root;
-VinSamLib remembers all your roots across restarts and lists them
-alphabetically by path in the Explorer tree (not by the order you added
-them). **File → Remove Library Folder…** picks one from a list to
-un-register (right-click a root directly in Explorer for the same
-action without the picker) — this only stops VinSamLib from tracking
-it; no files on disk are touched. **File → Rescan Library** re-runs the
-background indexer over every current root, useful after you've added
-new banks to a folder outside the app.
-
-Every root is scanned in the background into a local SQLite index
-(`index.db` in your user data directory) so the **search box** above the
-Explorer tree can find a preset/program by name anywhere in the whole
-library — including inside banks you've never expanded — the instant
-you type. Search is **word-prefix matching**: each space-separated word
-you type must *start* a word somewhere in the item's name, and multiple
-words are AND-ed together (so `bass str` matches "Bassoon Strings" but
-not "Bassoon Trumpet"). The format dropdown next to the search box
 (`All`/`E4B`/`KRZ`/`EIII`/`AKAI`/`MPC`, plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`/`EPS`/`Roland`
 when mpc2emu is available) filters both the live tree and search results
 to just that format. `MPC` covers all three Akai containers at once —

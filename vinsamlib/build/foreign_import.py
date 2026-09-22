@@ -539,9 +539,18 @@ def parse_foreign(path, wav_dir: Optional[str] = None,
     parser = parser_registry.PARSERS.get(ext)
     if parser is None:
         raise ValueError(f"{p.name}: no parser for {ext} files.")
-    kw = {"max_samples": _MAX_SAMPLES}
-    if max_presets:
-        kw["max_presets"] = max_presets
+    if ext in IMAGE_CONTENT_EXTS:
+        # The disc parsers take (path, wav_dir, quiet, limit) and NEITHER
+        # max_samples nor max_presets. Until 2026-09-22 mpc2emu's `.iso`
+        # entry swallowed every keyword, so passing them was invisible; they
+        # fixed that on our report, and forwarding now raises TypeError --
+        # correctly. `limit` is deliberately not passed either: for EPS it
+        # would be a PRESET ceiling applied to a count of INSTRUMENTS.
+        kw: dict = {}
+    else:
+        kw = {"max_samples": _MAX_SAMPLES}
+        if max_presets:
+            kw["max_presets"] = max_presets
     if ext == ".talsmpl" and wav_dir is None:
         staged = _stage_tal_samples(p)
         if staged is not None:

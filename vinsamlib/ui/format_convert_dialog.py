@@ -51,24 +51,23 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel,
                                 QWidget)
 
 from .convert_options_dialog import ConvertOptionsDialog
-from ..build import foreign_import
+from ..build import firmware_sim, foreign_import
 from ..build.convert import ConversionOptions
 
 _KRZ_SANE_MAX_RATE_HZ = 24000
 
 
-#: Shown instead of _DEFAULT_WARNING while firmware simulation is selected.
+#: Shown instead of _DEFAULT_WARNING while device matching is selected.
 #: The default says the import "goes through mpc2emu's own model, same as any
 #: other conversion here", which is precisely what this arm does NOT do --
 #: leaving it up would have the dialog contradict the radio button above it.
-_FIRMWARE_WARNING = (
-    "This reproduces what the target sampler's own firmware does when it "
-    "imports this disc — traced from the E-MU EOS 4.7 and Kurzweil K2000 "
-    "v3.87J ROMs, not measured against the original instrument, because "
-    "none is here to measure. Experimental: what it produces is the "
-    "device's behaviour as far as it has been read, including what the "
-    "device itself drops. The options below are this project's own "
-    "processing and are skipped.")
+_DEVICE_MATCH_WARNING = (
+    "This writes what the sampler's own disk importer would have written, "
+    "byte for byte — traced from the E-MU EOS 4.7 and Kurzweil K2000 v3.87J "
+    "ROMs. It is deliberately LOWER fidelity than a normal conversion, "
+    "including whatever the device itself discards; its purpose is that the "
+    "result can be diffed against a real device import. The options below "
+    "are this project's own processing and are skipped.")
 
 _DEFAULT_WARNING = (
     "Importing goes through mpc2emu's own model, same as any other "
@@ -204,25 +203,30 @@ class FormatConvertDialog(ConvertOptionsDialog):
 
     def _build_method_row(self, source_format: str,
                           initial: Optional[ConversionOptions]):
-        """The firmware-vs-mpc2emu choice, or None when it does not apply.
+        """The import-method choice, or None when there is nothing to choose.
 
-        Only three source formats can be imported by a target sampler's own
-        firmware -- Ensoniq EPS/ASR, Roland S-7xx and AKAI -- so for anything
-        else this row is absent rather than present-and-disabled. An always
-        disabled row on every SF2 import would be noise about a choice that
-        does not exist for that file.
+        **Two different things are called "firmware" here and the row exists
+        to keep them apart** (see build/firmware_sim.py):
 
-        **The two arms are not symmetrical, and the asymmetry is the point.**
-        For EPS and Roland the firmware trace is the ONLY law: no Ensoniq or
-        Roland instrument is on the bench here, so there is nothing to
-        measure a better conversion against, and "the device's behaviour" is
-        the specification rather than a fallback. For AKAI the opposite
-        holds -- an S3000XL is on the bench, mpc2emu deliberately keeps its
-        own hardware-measured laws, and the firmware arm is the one that
-        does not exist yet.
+        * Importing an Ensoniq or Roland disc uses a firmware-DERIVED
+          reader, because those discs have no documented layout. What comes
+          out is then written normally. That is an ordinary conversion with
+          an unusual parser, and all the options below still apply to it.
+        * Matching the sampler's own import writes what the device's disk
+          importer would have written, byte for byte. It is deliberately
+          WORSE output whose value is that it can be diffed against a real
+          device import. It takes no options, because any of them would make
+          the result something the device would not produce.
+
+        The second arm is shown for every source a sampler can actually
+        import and **disabled with the reason** when the path is not
+        available -- mpc2emu asked for that specifically: a user who picks
+        "match the device" and silently receives our normal output would
+        have no way to know.
         """
-        fw_formats = (foreign_import.EPS_FORMAT, foreign_import.ROLAND_FORMAT)
-        if source_format not in fw_formats + ("AKAI",):
+        importable = (foreign_import.EPS_FORMAT, foreign_import.ROLAND_FORMAT,
+                      "AKAI")
+        if source_format not in importable:
             return None
 
         row = QWidget()
@@ -230,75 +234,87 @@ class FormatConvertDialog(ConvertOptionsDialog):
         box.setContentsMargins(0, 0, 0, 6)
         box.addWidget(QLabel("Import method:"))
 
-        self._fw_radio = QRadioButton("Simulate firmware import (experimental)")
         self._mpc_radio = QRadioButton("mpc2emu import")
-        for rb in (self._fw_radio, self._mpc_radio):
-            box.addWidget(rb)
+        self._device_radio = QRadioButton(
+            "Match the sampler's own import (experimental)")
+        box.addWidget(self._mpc_radio)
+        box.addWidget(self._device_radio)
 
-        if source_format in fw_formats:
-            # The firmware arm is the only one. mpc2emu's EPS and Roland
-            # parsers ARE the firmware trace, so "mpc2emu import" is not a
-            # second law being withheld -- it is not a thing that exists.
-            self._fw_radio.setChecked(True)
-            self._mpc_radio.setEnabled(False)
+        if source_format in (foreign_import.EPS_FORMAT,
+                             foreign_import.ROLAND_FORMAT):
             self._mpc_radio.setText(
-                "mpc2emu import — no independent law exists for "
-                f"{source_format}")
+                f"mpc2emu import — the only way to read "
+                f"{'an' if source_format[0] in 'AEIOU' else 'a'} "
+                f"{source_format} disc")
             self._mpc_radio.setToolTip(
-                f"There is no {source_format} instrument here to measure a "
-                f"conversion against, so reproducing what the target "
-                f"sampler's firmware does with this disc is the only "
-                f"definition of correct available.")
-            self._fw_radio.setToolTip(
-                "Reproduces what the target sampler's own firmware does when "
-                "it imports this disc, traced from the E-MU EOS 4.7 and "
-                "Kurzweil K2000 v3.87J ROMs.")
-        else:
-            # AKAI: the firmware arm is named and disabled, following the
-            # Explorer's ROM-only precedent -- a refusal the user can read
-            # beats an option that silently is not there.
-            self._mpc_radio.setChecked(True)
-            self._fw_radio.setEnabled(False)
-            self._fw_radio.setText(
-                "Simulate firmware import — not yet implemented for AKAI")
-            self._fw_radio.setToolTip(
-                "mpc2emu has no device-law mode for AKAI: it deliberately "
-                "keeps its own hardware-measured laws, because an S3000XL is "
-                "on the bench and the firmware is not the only reference. "
-                "What the K2000 discards on import is documented but not yet "
-                "implemented anywhere.")
+                f"A {source_format} disc has no documented layout, so the "
+                f"reader is derived from the sampler's own firmware. The "
+                f"bank it produces is then written normally, and the options "
+                f"below apply as they do to any other import.")
+        self._mpc_radio.setChecked(True)
 
-        if initial is not None and initial.firmware_import and self._fw_radio.isEnabled():
-            self._fw_radio.setChecked(True)
+        self._device_note = QLabel("")
+        self._device_note.setWordWrap(True)
+        self._device_note.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px; "
+            "margin-left: 20px;")
+        box.addWidget(self._device_note)
 
-        self._fw_radio.toggled.connect(self._on_method_changed)
+        self._device_radio.toggled.connect(self._on_method_changed)
+        self._refresh_device_arm()
+        if (initial is not None and getattr(initial, "match_device_import", False)
+                and self._device_radio.isEnabled()):
+            self._device_radio.setChecked(True)
         self._on_method_changed()
         return row
 
-    def _on_method_changed(self, *_args) -> None:
-        """Firmware simulation takes no options, so the option body is off.
+    def _refresh_device_arm(self) -> None:
+        """Re-ask whether THIS source→target pair can match the device.
 
-        Not cosmetic: every group in that body -- resampling, rate ceilings,
-        zone reduction, pan law -- is this project's own processing. Applying
-        any of it would produce something the firmware would not, while the
-        dialog still said "simulate firmware import". Greyed rather than
-        hidden so it stays legible what is being skipped.
+        Re-run whenever the target format changes: the answer is per PATH,
+        not per source. Upstream has AKAI→KRZ working and AKAI→E4B still
+        being wired, so the same disc can be matchable into one format and
+        not the other, and a row decided once at construction would be wrong
+        the moment the picker moved.
         """
-        fw = getattr(self, "_fw_radio", None)
-        if fw is None:
+        radio = getattr(self, "_device_radio", None)
+        if radio is None:
             return
-        on = fw.isChecked()
+        st = firmware_sim.status(self._source_format, self._current_target_format())
+        radio.setEnabled(st.available)
+        self._device_note.setText("" if st.available else f"Unavailable: {st.reason}")
+        radio.setToolTip(
+            "Writes what the sampler's own disk importer would have written, "
+            "byte for byte. This is deliberately LOWER fidelity than a normal "
+            "conversion — it exists so the result can be compared against a "
+            "real device import, not to sound better."
+            if st.available else st.reason)
+        if not st.available and radio.isChecked():
+            self._mpc_radio.setChecked(True)
+
+    def _on_method_changed(self, *_args) -> None:
+        """Matching the device takes no options, so the option body is off.
+
+        Only for THAT arm. An Ensoniq or Roland import is a normal
+        conversion -- its reader is unusual, its writer is not -- so greying
+        its options out would withhold resampling and rate ceilings from the
+        two formats most likely to need them.
+        """
+        radio = getattr(self, "_device_radio", None)
+        if radio is None:
+            return
+        on = radio.isChecked()
         self._warning_label.setText(
-            _FIRMWARE_WARNING if on else self._default_warning)
+            _DEVICE_MATCH_WARNING if on else self._default_warning)
         self._scroll.setEnabled(not on)
         self._scroll.setToolTip(
-            "Firmware simulation reproduces the device's own conversion — "
-            "these options would make the result something the device would "
-            "not produce." if on else "")
+            "Matching the device reproduces its own conversion — these "
+            "options would make the result something it would not produce."
+            if on else "")
 
-    def _firmware_selected(self) -> bool:
-        fw = getattr(self, "_fw_radio", None)
-        return bool(fw is not None and fw.isChecked())
+    def _device_match_selected(self) -> bool:
+        radio = getattr(self, "_device_radio", None)
+        return bool(radio is not None and radio.isChecked() and radio.isEnabled())
 
     def _current_target_format(self) -> str:
         # Python dispatches to this override from the BASE __init__, which runs
@@ -315,6 +331,7 @@ class FormatConvertDialog(ConvertOptionsDialog):
         self._refresh_pan_law_availability()
         self._refresh_krz_layers_availability()
         self._refresh_akai_hw_availability()
+        self._refresh_device_arm()
 
     def _apply_krz_sane_default(self) -> None:
         # Only nudges the max-sample-rate step (now its own independent
@@ -329,7 +346,7 @@ class FormatConvertDialog(ConvertOptionsDialog):
     def _to_options(self) -> ConversionOptions:
         return dataclasses.replace(super()._to_options(),
                                     target_format=self._format_box.currentText(),
-                                    firmware_import=self._firmware_selected())
+                                    match_device_import=self._device_match_selected())
 
     @staticmethod
     def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
