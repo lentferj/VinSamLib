@@ -114,7 +114,18 @@ LEAF_EXTS = (".sfz", ".exs", ".talsmpl")
 # Measured here: both detectors are 0.1 ms on a 618 MB disc and both return
 # False on an E4B file, so running them during a directory listing is
 # affordable -- which the `inspect()` note below makes a requirement.
-IMAGE_CONTENT_EXTS = (".iso",)
+# `.img` and `.hda` joined `.iso` on 2026-09-22. Until that day mpc2emu's
+# three-way identification was wired to `.iso` ALONE -- `.img` tried AKAI and
+# then fell through to the MPC60 reader, `.hda` went straight to AKAI with no
+# test at all -- so the same Roland or Ensoniq disc read fine under one name
+# and failed under another. They found that while fixing the dropped-kwargs
+# report from here and now share one dispatcher across all three.
+#
+# Safe to widen because `image_content_format()` gives vfs.detect first
+# refusal, and that is what claims AKAI media, EMU3, the FAT volumes and a
+# real ISO 9660 -- only a file none of them recognises is offered to the two
+# weaker content tests.
+IMAGE_CONTENT_EXTS = (".iso", ".img", ".hda")
 EPS_FORMAT = "EPS"
 ROLAND_FORMAT = "Roland"
 IMAGE_CONTENT_FORMATS = (EPS_FORMAT, ROLAND_FORMAT)
