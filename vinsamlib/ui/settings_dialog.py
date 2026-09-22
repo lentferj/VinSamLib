@@ -16,8 +16,10 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                              QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                             QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
+                             QMessageBox, QPushButton, QScrollArea, QSpinBox,
+                             QVBoxLayout, QWidget)
 
+from .. import audition
 from ..build import calllog
 from ..config import Config
 
@@ -338,6 +340,22 @@ class SettingsDialog(QDialog):
             # this box is about to reproduce something.
             calllog.set_enabled(self._config.debug_mpc2emu_log)
         if audition_changed:
+            # VALIDATED AT THE BOUNDARY, not only rendered red beneath it.
+            # accept() wrote whatever was typed regardless of what
+            # _validate_notes had shown, and main_window's comment claimed the
+            # value was "already guarded at the field" -- nothing blocked OK.
+            # An unparseable list reached the renderer, and a quote reached
+            # config.toml.
+            try:
+                audition.parse_notes(self._audition_notes_edit.text())
+            except ValueError as ex:
+                QMessageBox.warning(
+                    self, "Audition notes",
+                    f"{ex}\n\nNothing was saved. Fix the note list, or "
+                    f"press Cancel to leave the settings as they were.")
+                self._audition_notes_edit.setFocus()
+                self._audition_notes_edit.selectAll()
+                return
             self._config.audition_notes = self._audition_notes_edit.text()
             self._config.audition_velocity = self._audition_velocity_spin.value()
             self._config.audition_hold_seconds = self._audition_hold_spin.value()

@@ -19,10 +19,12 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel,
-                             QPushButton, QTextBrowser, QVBoxLayout)
+                               QMessageBox, QPushButton, QTextBrowser,
+                               QVBoxLayout)
 
 from ..audition.caveats import SEVERITY_ORDER
-from .audition_player import AuditionPlayer, write_wav
+from .audition_player import (AuditionPlayer, check_audio_output,
+                              write_wav)
 
 HEADER = ("This is a model of the preset's parameters. It is not a model of "
           "the sampler, and it will not sound like the hardware.")
@@ -72,7 +74,6 @@ class AuditionDialog(QDialog):
         layout.addLayout(close_row)
 
         # A device may have vanished between the menu being offered and here.
-        from .audition_player import check_audio_output
         ok, _reason = check_audio_output()
         self._play_btn.setEnabled(ok)
         self._stop_btn.setEnabled(ok)
@@ -115,13 +116,40 @@ class AuditionDialog(QDialog):
         self._stop_btn.setEnabled(False)
 
     def _on_save(self) -> None:
-        suggested = "audition.wav"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Audition as WAV", suggested,
-            "WAV audio (*.wav)", options=QFileDialog.Option.DontUseNativeDialog)
-        if not path:
+        # An instance rather than getSaveFileName(), only because the static
+        # helper cannot set a default suffix: a name typed without ".wav"
+        # otherwise produces a file the desktop will not open, and the
+        # sidecar lands beside it under a matching stem either way.
+        dlg = QFileDialog(self, "Save Audition as WAV")
+        dlg.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dlg.setNameFilter("WAV audio (*.wav)")
+        dlg.setDefaultSuffix("wav")
+        dlg.selectFile("audition.wav")
+        dlg.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        if not dlg.exec():
             return
-        write_wav(path, self._rendering)
+        chosen = dlg.selectedFiles()
+        if not chosen:
+            return
+        path = chosen[0]
+        try:
+            sidecar = write_wav(path, self._rendering)
+        except OSError as exc:
+            # A full disc, a read-only card, a path that vanished between the
+            # dialog and the write. Silently leaving the button reading
+            # "Save as WAV…" would look like nothing happened, and with no
+            # audio device this is the ONLY way to hear the render at all --
+            # a failure here has to be said out loud.
+            QMessageBox.warning(
+                self, "Save Audition",
+                f"Could not write {Path(path).name}\n\n{exc.strerror or exc}")
+            return
+        if sidecar is None:
+            QMessageBox.warning(
+                self, "Save Audition",
+                f"{Path(path).name} was written, but its report could not be "
+                f"saved beside it.\n\nThe audio now travels with none of the "
+                f"caveats that say what it is.")
         self._save_btn.setText(f"Saved {Path(path).name}")
 
     def closeEvent(self, event) -> None:

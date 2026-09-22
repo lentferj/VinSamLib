@@ -14,6 +14,7 @@ already f0, and the E4B Z-plane types have been collapsed onto XPM "Low 4" by
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,13 @@ _AUDITION_TEMP_PREFIX = "vinsamlib_audition_"
 #: Bounded to 4: a KRZ bank carries tens of MB of PCM.
 _BANK_CACHE: "OrderedDict[Any, BankHolder]" = OrderedDict()
 _BANK_CACHE_MAX = 4
+
+# Guards the OrderedDict itself, not the parse. Two audition renders overlap
+# whenever a second is started before the first finishes, and `move_to_end`
+# plus `popitem` on a shared OrderedDict from two threads is a reordering of
+# a container mid-iteration, not an atomic swap. The parse stays outside the
+# lock; a duplicated parse costs ~30 ms and yields an equal Bank.
+_BANK_CACHE_LOCK = threading.Lock()
 
 
 class AuditionError(RuntimeError):
@@ -75,21 +83,24 @@ def _cache_key(kind: str, payload: Any, ident: Any) -> Any:
 
 
 def _cache_get(key):
-    got = _BANK_CACHE.get(key)
-    if got is not None:
-        _BANK_CACHE.move_to_end(key)
-    return got
+    with _BANK_CACHE_LOCK:
+        got = _BANK_CACHE.get(key)
+        if got is not None:
+            _BANK_CACHE.move_to_end(key)
+        return got
 
 
 def _cache_put(key, value):
-    _BANK_CACHE[key] = value
-    _BANK_CACHE.move_to_end(key)
-    while len(_BANK_CACHE) > _BANK_CACHE_MAX:
-        _BANK_CACHE.popitem(last=False)
+    with _BANK_CACHE_LOCK:
+        _BANK_CACHE[key] = value
+        _BANK_CACHE.move_to_end(key)
+        while len(_BANK_CACHE) > _BANK_CACHE_MAX:
+            _BANK_CACHE.popitem(last=False)
 
 
 def clear_cache() -> None:
-    _BANK_CACHE.clear()
+    with _BANK_CACHE_LOCK:
+        _BANK_CACHE.clear()
 
 
 # ── the routes, one per source format ────────────────────────────────────────
@@ -118,8 +129,13 @@ def _e4b_filter_bytes(preset_obj) -> Optional[dict]:
         return None
 
 
-def _assemble_and_parse(bank, preset_obj, kind, module, suffix, parser) -> _Parsed:
-    data = module.assemble([(bank, preset_obj)])
+def _assemble_and_parse(bank, preset_obj, kind, module, suffix, parser,
+                        edits: Optional[dict] = None) -> _Parsed:
+    # `edits` are New Bank's staged renames, placement, velocity and loop
+    # repairs, bound exactly as BankPane._assemble_fn binds them for the
+    # meter, Save as… and Send to Image. Without them an audition of a staged
+    # preset played the unedited original.
+    data = module.assemble([(bank, preset_obj)], **(edits or {}))
     tmp_dir = tempdirs.session_temp_dir(_AUDITION_TEMP_PREFIX)
     stem = _sanitize(getattr(preset_obj, "name", "") or "preset")
     tmp_path = tmp_dir / f"{stem}{suffix}"
@@ -160,7 +176,16 @@ def _sanitize(name: str) -> str:
     return (keep.strip() or "preset")[:48]
 
 
-def _akai_route(bank, program) -> _Parsed:
+def _akai_route(bank, program, edits: Optional[dict] = None) -> _Parsed:
+    # TODO (spec stage 2, deliberately not done yet): the rule that the
+    # program and its samples must land in SEPARATE directories lives here
+    # AND in convert._convert_akai_program(). A real library disc converts to
+    # noise if either copy drifts, so the two want one home --
+    # convert.parse_preset(). Not extracted with the audition work because
+    # that refactor is guarded by manual_akai_convert and
+    # manual_hw_convert_matrix, which must be run either side of it, and
+    # folding a conversion-path change into a new feature would make a
+    # failure in those two ambiguous about which change caused it.
     from ..banks import akai as vs_akai
     ok, reason = Config.load().check_akai_read_support()
     if not ok:
@@ -168,7 +193,11 @@ def _akai_route(bank, program) -> _Parsed:
     tmp_dir = tempdirs.session_temp_dir(_AUDITION_TEMP_PREFIX)
     samples_dir = tmp_dir / "samples"
     samples_dir.mkdir(parents=True, exist_ok=True)
-    files = vs_akai.assemble([(bank, program)])
+    # AKAI's assemble() takes none of the placement or loop-repair arguments
+    # (see BankPane._RENAMEABLE / _PLACEABLE / _LOOP_REPAIRABLE), so `edits`
+    # is normally empty here. Passed through anyway rather than dropped, so
+    # that a format gaining support upstream does not need this line found.
+    files = vs_akai.assemble([(bank, program)], **(edits or {}))
     program_files = [(fn, d) for fn, d in files
                      if fn.upper().endswith((".P3", ".P1"))]
     sample_files = [(fn, d) for fn, d in files if (fn, d) not in program_files]
@@ -248,7 +277,7 @@ def parameters_for_node(payload, kind: str) -> _Parsed:
                 bank, preset_obj, "EIII", vs_eiii, ".e3x",
                 mpc2emu_bridge.eiii_parser.parse_eiii)
         elif isinstance(bank, vs_akai.AkaiBank):
-            parsed = _akai_route(bank, preset_obj)
+            parsed = _akai_route(bank, preset_obj, edits)
         else:
             raise AuditionError(
                 f"not a recognised bank for audition: {type(bank)!r}")
@@ -291,7 +320,20 @@ def parameters_for_node(payload, kind: str) -> _Parsed:
     raise AuditionError(f"cannot audition a {kind!r} node")
 
 
-def parameters_for_staged(bank, preset_obj, name: str = "") -> _Parsed:
+def _edits_fingerprint(edits: Optional[dict]) -> str:
+    """A stable, cheap identity for a set of staged edits.
+
+    repr() of sorted items rather than a hash of the objects: the dicts hold
+    plain names, ints and tuples, and two equal edit sets must produce one
+    cache entry while any change produces another.
+    """
+    if not edits:
+        return ""
+    return repr(sorted((k, repr(v)) for k, v in edits.items()))
+
+
+def parameters_for_staged(bank, preset_obj, name: str = "",
+                          edits: Optional[dict] = None) -> _Parsed:
     """New Bank's staged ``(bank, preset_obj, name)`` tuple -> parsed model.
 
     Auditioning a staged preset is the one path that catches a bad build before
@@ -302,24 +344,28 @@ def parameters_for_staged(bank, preset_obj, name: str = "") -> _Parsed:
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
-    key = _cache_key("staged", None, (id(bank), id(preset_obj)))
+    # THE EDITS ARE PART OF THE KEY. Keyed on id() alone, a re-audition after
+    # correcting a placement returned the first parse -- the pinned objects
+    # keep their ids for the lifetime of the row, so nothing ever invalidated.
+    key = _cache_key("staged", None,
+                     (id(bank), id(preset_obj), _edits_fingerprint(edits)))
     cached = _cache_get(key)
     if cached is not None:
         return cached
     if isinstance(bank, vs_e4b.E4BFile):
         parsed = _assemble_and_parse(
             bank, preset_obj, "E4B", vs_e4b, ".e4b",
-            mpc2emu_bridge.e4b_parser.parse_e4b)
+            mpc2emu_bridge.e4b_parser.parse_e4b, edits)
     elif isinstance(bank, vs_krz.KrzFile):
         parsed = _assemble_and_parse(
             bank, preset_obj, "KRZ", vs_krz, ".krz",
-            mpc2emu_bridge.krz_parser.parse_krz)
+            mpc2emu_bridge.krz_parser.parse_krz, edits)
     elif isinstance(bank, vs_eiii.EIIIFile):
         parsed = _assemble_and_parse(
             bank, preset_obj, "EIII", vs_eiii, ".e3x",
-            mpc2emu_bridge.eiii_parser.parse_eiii)
+            mpc2emu_bridge.eiii_parser.parse_eiii, edits)
     elif isinstance(bank, vs_akai.AkaiBank):
-        parsed = _akai_route(bank, preset_obj)
+        parsed = _akai_route(bank, preset_obj, edits)
     else:
         raise AuditionError(
             f"not a recognised bank for audition: {type(bank)!r}")

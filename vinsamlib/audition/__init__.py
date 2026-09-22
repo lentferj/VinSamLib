@@ -122,11 +122,15 @@ def render_node(payload, kind: str, opts: AuditionOptions) -> Rendering:
 
 
 def render_staged(bank, preset_obj, opts: AuditionOptions,
-                  name: str = "") -> Rendering:
-    """New Bank's ``(bank, preset_obj, name)`` tuple -> audio."""
+                  name: str = "", edits=None) -> Rendering:
+    """New Bank's ``(bank, preset_obj, name)`` tuple -> audio.
+
+    `edits` are the pane's staged renames, placement, velocity and loop
+    repairs, so what is heard is what Save as… would write.
+    """
     from . import params as _params
     from . import render as _render
-    parsed = _params.parameters_for_staged(bank, preset_obj, name)
+    parsed = _params.parameters_for_staged(bank, preset_obj, name, edits)
     return _render.render(parsed.bank, parsed.preset, parsed.provenance, opts)
 
 

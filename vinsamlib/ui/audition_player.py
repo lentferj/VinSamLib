@@ -24,10 +24,16 @@ from typing import Optional, Tuple
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Signal
 
 try:
-    from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
+    # The state enum lives on QAudio (QtAudio), NOT on QAudioSink: PySide6
+    # has no QAudioSink.State at all, so comparing against one raises
+    # AttributeError on the first state change. That cannot fail here --
+    # this sandbox has no audio device, so the handler never runs -- which
+    # is exactly why it needed finding by reading the binding, not the tests.
+    from PySide6.QtMultimedia import (QAudio, QAudioFormat, QAudioSink,
+                                      QMediaDevices)
     _HAVE_MULTIMEDIA = True
 except Exception:  # pragma: no cover - depends on the Qt build
-    QAudioFormat = QAudioSink = QMediaDevices = None
+    QAudio = QAudioFormat = QAudioSink = QMediaDevices = None
     _HAVE_MULTIMEDIA = False
 
 
@@ -78,23 +84,33 @@ def negotiate_format() -> Optional[Tuple[int, int]]:
     return rate, channels
 
 
-def write_wav(path, rendering) -> None:
+def write_wav(path, rendering):
     """Write a ``Rendering`` as a RIFF WAV, plus a ``.txt`` sidecar report.
 
     This is not a convenience: it is the path that works with no audio device
     and the one a headless test can assert on.
+
+    Raises ``OSError`` if the WAV itself cannot be written. Returns the
+    sidecar path, or ``None`` if only the sidecar failed -- the audio is
+    then on disc but its caveats are not, and the caller says so rather
+    than letting a WAV travel with nothing attached.
     """
     p = Path(path)
-    with wave.open(str(p), "wb") as w:
-        w.setnchannels(rendering.channels)
-        w.setsampwidth(2)
-        w.setframerate(rendering.rate)
-        w.writeframes(rendering.pcm)
+    # Open the file ourselves. `wave.open(str(p))` constructs a Wave_write
+    # BEFORE it opens, so a failed open leaves a half-built object whose
+    # __del__ raises AttributeError on top of the real OSError, burying it.
+    with open(p, "wb") as fh:
+        with wave.open(fh, "wb") as w:
+            w.setnchannels(rendering.channels)
+            w.setsampwidth(2)
+            w.setframerate(rendering.rate)
+            w.writeframes(rendering.pcm)
+    sidecar = p.with_suffix(p.suffix + ".txt")
     try:
-        p.with_suffix(p.suffix + ".txt").write_text(
-            rendering.report.as_text(), encoding="utf-8")
+        sidecar.write_text(rendering.report.as_text(), encoding="utf-8")
     except OSError:
-        pass
+        return None
+    return sidecar
 
 
 class AuditionPlayer(QObject):
@@ -106,8 +122,6 @@ class AuditionPlayer(QObject):
         super().__init__(parent)
         self._sink = None
         self._buffer = None
-        self._rate = 0
-        self._channels = 0
 
     @property
     def playing(self) -> bool:
@@ -141,15 +155,35 @@ class AuditionPlayer(QObject):
         return True
 
     def stop(self) -> None:
-        if self._sink is not None:
+        # Both objects are parented to the player, so dropping the Python
+        # reference does NOT free them -- the C++ children outlive it and
+        # every Replay adds another sink holding a device handle. Detach the
+        # signal first: an outgoing sink keeps emitting stateChanged on its
+        # way down, and a stale Idle used to null the buffer belonging to the
+        # playback that had just replaced it.
+        sink, buffer = self._sink, self._buffer
+        self._sink = None
+        self._buffer = None
+        if sink is not None:
             try:
-                self._sink.stop()
+                sink.stateChanged.disconnect(self._on_state)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                sink.stop()
             except RuntimeError:
                 pass
-        self._buffer = None
-        self._sink = None
+            sink.deleteLater()
+        if buffer is not None:
+            try:
+                buffer.close()
+            except RuntimeError:
+                pass
+            buffer.deleteLater()
 
     def _on_state(self, state) -> None:
-        if state == QAudioSink.State.IdleState:
-            self._buffer = None
+        if self.sender() is not self._sink:
+            return          # an earlier sink finishing; not ours to act on
+        if state == QAudio.State.IdleState:
+            self.stop()
             self.finished.emit()

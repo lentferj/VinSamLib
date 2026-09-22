@@ -500,7 +500,8 @@ class MainWindow(QMainWindow):
         self._audition_worker = w
         workers.run(w)
 
-    def _audition_staged(self, bank, preset_obj, name: str) -> None:
+    def _audition_staged(self, bank, preset_obj, name: str,
+                         edits=None) -> None:
         """New Bank row -> a background render of the preset AS STAGED."""
         from ..audition import render_staged
         try:
@@ -511,7 +512,7 @@ class MainWindow(QMainWindow):
         self._audition_gen += 1
         gen = self._audition_gen
         self.statusBar().showMessage(f"Rendering audition of {name}…", 0)
-        w = workers.Worker(render_staged, bank, preset_obj, opts, name)
+        w = workers.Worker(render_staged, bank, preset_obj, opts, name, edits)
         w.signals.finished.connect(
             lambda r, g=gen, n=name: self._on_audition_ready(
                 g, r, _NamedNode(n)))

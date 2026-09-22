@@ -72,9 +72,9 @@ def sounding(preset, note: int, velocity: int,
     ``ceiling_for``); it defaults to the widest of the machines.
     """
     found: List[Sounding] = []
+    capped = False
     missing: List[str] = []
     for voice in getattr(preset, "voices", []) or []:
-        env_report = report
         # A voice window folded into its zones at parse time (mpc2emu records
         # this as an open item) means there is nothing to check here; the zone
         # windows are all that exist.
@@ -91,15 +91,22 @@ def sounding(preset, note: int, velocity: int,
                     continue
             found.append(Sounding(voice=voice, zone=zone, sample=sample))
             if len(found) > max_sounding:
-                if env_report is not None:
-                    env_report.note(
+                if report is not None:
+                    report.note(
                         Severity.NOT_MODELLED, "voice budget",
                         f"This preset names more than {max_sounding} layers "
                         f"sounding on one note. Only {max_sounding} are "
                         f"played; the hardware's own voice budget and which "
                         f"layers it would drop are not modelled.")
                 found = found[:max_sounding]
-                return found
+                # BREAK, NOT RETURN. Returning here skipped the missing-sample
+                # report below, so a preset that both exceeded the ceiling and
+                # named an absent sample said only the first -- and it stopped
+                # scanning, making which layers survive depend on voice order.
+                capped = True
+                break
+        if capped:
+            break
     if missing and report is not None:
         shown = ", ".join(missing[:4]) + ("…" if len(missing) > 4 else "")
         report.note(

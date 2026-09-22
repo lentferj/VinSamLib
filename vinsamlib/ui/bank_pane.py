@@ -151,7 +151,7 @@ class BankPane(QWidget):
     #: Audition the preset AS STAGED -- renames, placement edits and loop
     #: repairs applied. New Bank rows are not TreeNodes, so this carries the
     #: ``(bank, preset_obj, name)`` tuple the list already stores.
-    auditionStagedRequested = Signal(object, object, str)
+    auditionStagedRequested = Signal(object, object, str, object)
 
     def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
@@ -725,7 +725,17 @@ class BankPane(QWidget):
         selected = self._list.selectedIndexes()
         audition_action = None
         if len(selected) == 1:
-            audition_action = menu.addAction("Audition")
+            # The same named, disabled refusal the Explorer gives. Without
+            # this the click reached the worker and came back as a traceback
+            # in a message box, where the rest of the feature answers "why
+            # can I not audition this" where the question is asked.
+            from ..audition import available as _audition_available
+            ok, why = _audition_available(self._config)
+            audition_action = menu.addAction(
+                "Audition" if ok else f"Audition — {why}")
+            audition_action.setEnabled(ok)
+            if not ok:
+                audition_action.setToolTip(why)
             menu.addSeparator()
         label = "Remove Selected" if len(self._list.selectedIndexes()) > 1 else "Remove"
         remove_action = menu.addAction(label)
@@ -768,7 +778,8 @@ class BankPane(QWidget):
             item = selected[0].data(Qt.ItemDataRole.UserRole)
             if item is not None:
                 bank, preset_obj, name = item
-                self.auditionStagedRequested.emit(bank, preset_obj, name)
+                self.auditionStagedRequested.emit(
+                    bank, preset_obj, name, self._edit_kwargs())
             return
         if chosen is up_action:
             self._move_rows(-1)
@@ -1538,6 +1549,30 @@ class BankPane(QWidget):
         # displayed size has to be recomputed rather than left stale.
         self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
 
+    def _edit_kwargs(self) -> dict:
+        """The staged EDITS as assemble() keyword arguments.
+
+        Extracted from _assemble_fn so that auditioning a staged preset hears
+        the same bytes Save as… and Send to Image would write. It did not:
+        audition called assemble() bare, so a user who corrected a zone
+        placement and auditioned to check it heard the UNCORRECTED original --
+        while the docstring promised "what is heard is what would be written".
+        Found by an external review, 2026-09-21.
+
+        Each entry is gated exactly as before: binding an argument a format's
+        assemble() does not take is a TypeError, not a no-op.
+        """
+        kw: dict = {}
+        if self._sample_renames and self._format in self._RENAMEABLE:
+            kw["sample_names"] = dict(self._sample_renames)
+        if self._zone_placement and self._format in self._PLACEABLE:
+            kw["zone_placement"] = dict(self._zone_placement)
+        if self._voice_velocity and self._format in self._PLACEABLE:
+            kw["voice_velocity"] = dict(self._voice_velocity)
+        if self._loop_repairs and self._format in _LOOP_REPAIRABLE:
+            kw["loop_repair"] = dict(self._loop_repairs)
+        return kw
+
     def _assemble_fn(self):
         """The real assemble() to call for the currently-locked format,
         pre-bound with the user's typed bank name for EIII (the one format
@@ -1546,6 +1581,8 @@ class BankPane(QWidget):
         taking just `selections`, so it drops straight into
         `workers.Worker(fn, selections)` the same way as before."""
         fn = _ASSEMBLE_FNS[self._format]
+        for key, value in self._edit_kwargs().items():
+            fn = functools.partial(fn, **{key: value})
         if self._format == "EIII":
             fn = functools.partial(fn, bank_name=_sanitize_bank_name(self._name_edit.text()))
         elif self._format == "AKAI":
@@ -1555,26 +1592,6 @@ class BankPane(QWidget):
             # (banks/akai.py's assemble() enforces that itself).
             fn = functools.partial(
                 fn, volume_name=_sanitize_bank_name(self._name_edit.text()))
-        # Bound the same way as bank_name, so the meter, Save as… and Send to
-        # Image all assemble the identical bytes -- a rename visible only in
-        # one of the three would be worse than no rename at all. Only for the
-        # formats whose assemble() accepts it; _sync_rename_button keeps the
-        # dict empty for the others, and AKAI is absent from _RENAMEABLE too --
-        # binding an argument its assemble() does not take would be a
-        # TypeError rather than a no-op.
-        if self._sample_renames and self._format in self._RENAMEABLE:
-            fn = functools.partial(fn, sample_names=dict(self._sample_renames))
-        # Same binding rule as the renames: bound here so the meter, Save as…
-        # and Send to Image all assemble identical bytes.
-        if self._zone_placement and self._format in self._PLACEABLE:
-            fn = functools.partial(fn, zone_placement=dict(self._zone_placement))
-        if self._voice_velocity and self._format in self._PLACEABLE:
-            fn = functools.partial(fn, voice_velocity=dict(self._voice_velocity))
-        # Gated like the two above. Every format this pane can build stores
-        # loop points, but not every assemble() accepts the argument -- see
-        # _LOOP_REPAIRABLE.
-        if self._loop_repairs and self._format in _LOOP_REPAIRABLE:
-            fn = functools.partial(fn, loop_repair=dict(self._loop_repairs))
         return fn
 
     def _apply_size(self, gen: int, data: bytes) -> None:

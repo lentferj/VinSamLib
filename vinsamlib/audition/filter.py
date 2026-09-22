@@ -169,6 +169,18 @@ def corner_to_f0(corner_hz: float, poles: int, fmt: str,
     so here.
     """
     corner = max(float(corner_hz), _MIN_F0_HZ)
+    if corner_hz < _MIN_F0_HZ and report is not None:
+        # The render loop's own clamp can never see this one: by the time f0
+        # reaches it the floor has already been applied here, so a preset
+        # authored below the floor would be silently opened up with nothing
+        # said. A K2000 cutoff really does go this low.
+        report.note(
+            Severity.FITTED, "filter cutoff clamped",
+            f"This voice states a cutoff of {float(corner_hz):.0f} Hz, below "
+            f"the {_MIN_F0_HZ:.0f} Hz floor this renderer's filter can run. It "
+            f"was raised to the floor, so the audition is more open than the "
+            f"preset asks for. The machine has its own floor and it is not "
+            f"this one.")
     if fmt == "KRZ":
         return corner
     sections = sections_for(poles)

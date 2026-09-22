@@ -101,6 +101,19 @@ def require_real_state_opt_in(what: str) -> None:
         f"this once destroyed a library index.")
 
 
+def _toml_str(value) -> str:
+    """One TOML basic string, with the two characters that can break the file
+    escaped.
+
+    `audition_notes` is free text typed into a Settings box, and it was
+    written into the file raw: a single `"` produced a config.toml that
+    `tomllib.load()` rejects, so the NEXT start raised and every setting was
+    lost. Paths take the same treatment -- a backslash is a legal character in
+    a POSIX filename and TOML reads it as an escape.
+    """
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _default_mpc2emu_path() -> Path:
     """mpc2emu is a sibling checkout by convention (../mpc2emu relative to
     this repo). Used only as a fallback default; always overridable."""
@@ -260,8 +273,8 @@ class Config:
             # start a scan it deliberately avoided.
             roots = Config.load(path).library_roots
         path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [f'mpc2emu_path = "{self.mpc2emu_path.as_posix()}"']
-        roots_str = ", ".join(f'"{p.as_posix()}"' for p in roots)
+        lines = [f"mpc2emu_path = {_toml_str(self.mpc2emu_path.as_posix())}"]
+        roots_str = ", ".join(_toml_str(p.as_posix()) for p in roots)
         lines.append(f"library_roots = [{roots_str}]")
         if self.last_image_dir is not None:
             lines.append(f'last_image_dir = "{self.last_image_dir.as_posix()}"')
@@ -278,7 +291,7 @@ class Config:
         lines.append(f"autosave_seconds = {self.autosave_seconds}")
         lines.append(f"debug_mpc2emu_log = {str(bool(self.debug_mpc2emu_log)).lower()}")
         lines.append(f"loop_click_check = {str(self.loop_click_check).lower()}")
-        lines.append(f'audition_notes = "{self.audition_notes}"')
+        lines.append(f"audition_notes = {_toml_str(self.audition_notes)}")
         lines.append(f"audition_velocity = {int(self.audition_velocity)}")
         lines.append(f"audition_hold_seconds = {float(self.audition_hold_seconds)}")
         lines.append(f"audition_gap_seconds = {float(self.audition_gap_seconds)}")

@@ -17,8 +17,9 @@ and is slower, never refused (spec §7.2).
 from __future__ import annotations
 
 import math
+import threading
 from collections import OrderedDict
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
 from .. import mpc2emu_bridge
 from . import envelope as env_mod
@@ -75,7 +76,20 @@ def _decode(sample) -> _Source:
     n_ch = int(getattr(sample, "channels", 1) or 1)
     n_ch = 2 if n_ch == 2 else 1
     if _np is not None:
+        # TRIM TO WHOLE FRAMES FIRST. frombuffer raises on an odd byte count
+        # where resampler._pcm_to_float drops the stray byte, so a sample with
+        # one trailing byte auditioned fine WITHOUT numpy and crashed with it
+        # -- an accelerator that changes behaviour is not an accelerator.
+        data = data[: (len(data) // 2) * 2]
         arr = _np.frombuffer(data, dtype="<i2").astype("float64") / 32768.0
+        # .tolist() IS DELIBERATE AND WAS MEASURED. A review proposed keeping
+        # these as ndarrays to save the conversion; measured here on one
+        # second at 44.1 kHz, that is a 2x REGRESSION, because `_read` indexes
+        # per frame and a numpy scalar costs far more than a float:
+        #     tolist() once                2.33 ms
+        #     1 s of _read over a list    22.16 ms   -> 24.5 ms total
+        #     1 s of _read over an array  47.67 ms   -> 47.7 ms total
+        # The conversion is per SAMPLE and cached; the reads are per FRAME.
         if n_ch == 2:
             arr = arr[: (len(arr) // 2) * 2]
             channels = [arr[0::2].tolist(), arr[1::2].tolist()]
@@ -124,28 +138,52 @@ _SAMPLE_CACHE: "OrderedDict[int, tuple]" = OrderedDict()
 _SAMPLE_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _sample_cache_bytes = 0
 
+# Two auditions really can render at once: the generation counter in
+# main_window discards the older render's RESULT, it does not cancel the
+# QRunnable, which keeps decoding in the pool. `_sample_cache_bytes += size`
+# is LOAD_GLOBAL/BINARY_OP/STORE_GLOBAL — three bytecodes with a preemption
+# point between them, so a lost update is not hypothetical. The damage is
+# silent and permanent: the running total drifts away from what the cache
+# actually holds, and from then on the cache either evicts on every insert
+# or never evicts at all. Nothing raises; it just stops being bounded.
+_SAMPLE_CACHE_LOCK = threading.Lock()
+
 
 def _decode_cached(sample, report: AuditionReport) -> _Source:
     global _sample_cache_bytes
     key = id(sample)
-    got = _SAMPLE_CACHE.get(key)
-    if got is not None and got[0] is sample:
-        _SAMPLE_CACHE.move_to_end(key)
-        return got[1]
+    with _SAMPLE_CACHE_LOCK:
+        got = _SAMPLE_CACHE.get(key)
+        if got is not None and got[0] is sample:
+            _SAMPLE_CACHE.move_to_end(key)
+            return got[1]
+    # Decode OUTSIDE the lock: it is the expensive half and it calls into
+    # mpc2emu. Two threads decoding the same sample duplicates work once and
+    # produces equal results; holding the lock across it would serialise
+    # every render behind the slowest decode.
     src = _decode_for_render(sample, report)
     size = src.frames * max(1, len(src.channels)) * 8  # float64 bytes
-    _SAMPLE_CACHE[key] = (sample, src)
-    _sample_cache_bytes += size
-    while _sample_cache_bytes > _SAMPLE_CACHE_MAX_BYTES and len(_SAMPLE_CACHE) > 1:
-        _old_key, (_old_sample, old_src) = _SAMPLE_CACHE.popitem(last=False)
-        _sample_cache_bytes -= old_src.frames * max(1, len(old_src.channels)) * 8
+    with _SAMPLE_CACHE_LOCK:
+        prior = _SAMPLE_CACHE.get(key)
+        if prior is not None and prior[0] is sample:
+            # The other thread got there first. Its entry is already counted,
+            # so adding ours again is exactly the drift this lock exists to
+            # prevent. Use theirs and charge nothing.
+            _SAMPLE_CACHE.move_to_end(key)
+            return prior[1]
+        _SAMPLE_CACHE[key] = (sample, src)
+        _sample_cache_bytes += size
+        while _sample_cache_bytes > _SAMPLE_CACHE_MAX_BYTES and len(_SAMPLE_CACHE) > 1:
+            _old_key, (_old_sample, old_src) = _SAMPLE_CACHE.popitem(last=False)
+            _sample_cache_bytes -= old_src.frames * max(1, len(old_src.channels)) * 8
     return src
 
 
 def clear_sample_cache() -> None:
     global _sample_cache_bytes
-    _SAMPLE_CACHE.clear()
-    _sample_cache_bytes = 0
+    with _SAMPLE_CACHE_LOCK:
+        _SAMPLE_CACHE.clear()
+        _sample_cache_bytes = 0
 
 
 def _read(src: _Source, ch: List[float], pos: float, looping: bool) -> float:
@@ -153,7 +191,15 @@ def _read(src: _Source, ch: List[float], pos: float, looping: bool) -> float:
     n = len(ch)
     if n == 0:
         return 0.0
-    if looping and src.loop_end > src.loop_start:
+    # `pos > le` IS THE WHOLE CONDITION. Without it, a position BEFORE the
+    # loop folded into it: Python's % returns a positive remainder for a
+    # negative operand, so `(pos - ls) % span` mapped frame 0 of a sample
+    # looping 1000..1400 to frame 1203. Every forward-looped multisample
+    # auditioned with no attack transient, starting at an arbitrary phase
+    # inside its own loop -- audible on everything with a pluck or a hit, and
+    # exactly the class of defect this feature exists to catch. Found by an
+    # external review 2026-09-21 and reproduced on a ramp before fixing.
+    if looping and src.loop_end > src.loop_start and pos > src.loop_end:
         ls, le = src.loop_start, src.loop_end
         span = le - ls + 1
         rel = (pos - ls) % span
@@ -235,14 +281,21 @@ def velocity_to_filter_cents(voice, velocity: int) -> float:
 
 # ── the per-voice render ─────────────────────────────────────────────────────
 
-def _voice_seconds(snd: voice_mod.Sounding, opts, report: AuditionReport) -> float:
-    """How long this voice needs, for note spacing and tail budgeting."""
+def _voice_seconds(snd: voice_mod.Sounding, opts, report: AuditionReport,
+                   ratio: Optional[float] = None) -> float:
+    """How long this voice needs, for note spacing and tail budgeting.
+
+    ``ratio`` is the caller's already-computed pitch ratio. Recomputing it
+    here would be cheap but would give the two a way to disagree, and the
+    length of a whole-sample voice is derived from it.
+    """
     voice, zone, sample = snd.voice, snd.zone, snd.sample
     if sample is None:
         return opts.hold_seconds
     amp_env = getattr(voice, "amp_env", None)
     whole = bool(getattr(voice, "plays_whole_sample", False))
-    ratio = _pitch_ratio(voice, zone, sample, opts)
+    if ratio is None:
+        ratio = _pitch_ratio(voice, zone, sample, opts)
     if whole and ratio > 0.0:
         play_s = (len(sample.data) / 2 / max(getattr(sample, "channels", 1), 1)
                   / ratio / opts.render_rate)
@@ -282,7 +335,7 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
         return [], [], 0.0
 
     ratio = _pitch_ratio(voice, zone, sample, opts)
-    seconds = _voice_seconds(snd, opts, report)
+    seconds = _voice_seconds(snd, opts, report, ratio)
     n_frames = max(1, int(math.ceil(seconds * opts.render_rate)))
 
     amp_env = getattr(voice, "amp_env", None)
@@ -346,9 +399,14 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
                 float(getattr(voice, "filter_resonance", 0.0) or 0.0),
                 getattr(opts, "_fmt", ""), report)
             filt_q = q
+            # TWO, NOT opts.channels. The render is internally stereo and
+            # _finish() downmixes at the end, so the per-frame loop below
+            # always processes two channels. Sizing this by the OUTPUT count
+            # raised IndexError on any device whose preferred format is mono
+            # -- a traceback in a message box, for every filtered preset.
             filt = [filter_mod.Cascade(opts.render_rate, mode,
                                        filter_mod.sections_for(poles))
-                    for _ in range(opts.channels)]
+                    for _ in range(2)]
             fenv = getattr(voice, "filter_env", None)
             fenv_cents = float(getattr(voice, "filter_env_cents", 0.0) or 0.0)
             if fenv is not None and fenv_cents != 0.0:
@@ -363,8 +421,6 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
                     f"here records it; MIDI {KEYTRACK_PIVOT} was assumed. A "
                     "wrong pivot is inaudible on the note you test and wrong "
                     "across the keyboard.")
-            # Report clamps that bit.
-            _ = (vel_cents, q)
 
     # Level and pan.
     db = (float(getattr(getattr(opts, "_preset", None), "volume", 0.0) or 0.0)
@@ -387,6 +443,7 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
     gamma = opts.render_rate / env_mod.CONTROL_RATE
     block = max(1, int(round(gamma)))
     pos = 0.0
+    clamped = False
     hold_frame = int(opts.hold_seconds * opts.render_rate)
 
     for f in range(n_frames):
@@ -401,7 +458,17 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
                       * 2.0 ** (keytrack * (note - KEYTRACK_PIVOT) / 12.0)
                       * 2.0 ** (vel_cents / 1200.0)
                       * 2.0 ** (f_cents * float(getattr(voice, "filter_env_cents", 0.0) or 0.0) / 1200.0))
-                f0 = min(max(f0, 20.0), 0.45 * opts.render_rate)
+                lo, hi = 20.0, 0.45 * opts.render_rate
+                if (f0 < lo or f0 > hi) and not clamped:
+                    clamped = True
+                    report.note(
+                        Severity.FITTED, "filter cutoff clamped",
+                        f"This voice's cutoff left the band this renderer can "
+                        f"run ({lo:.0f} Hz to {hi:.0f} Hz at {opts.render_rate} "
+                        f"Hz) once keytracking, velocity and the filter "
+                        f"envelope were applied, and was held at the edge. The "
+                        f"machine has its own ceiling and it is not this one.")
+                f0 = min(max(f0, lo), hi)
                 for c in filt:
                     c.set(f0, filt_q)
 
@@ -497,7 +564,6 @@ def _finish(out_l: List[float], out_r: List[float], opts) -> tuple[float, bytes]
         peak = max(peak, abs(v))
     # Report the pre-headroom peak: a quiet audition the user attributes to the
     # preset is a lie about the preset. The caller checks it against headroom.
-    from .. import mpc2emu_bridge
     if _np is not None:
         # Mirror the pure path EXACTLY: same soft-limit above full scale, same
         # 32768.0 scaling and truncation, same clip. An accelerator that
@@ -528,20 +594,38 @@ def _finish(out_l: List[float], out_r: List[float], opts) -> tuple[float, bytes]
 def _soft_limit_np(a):
     """The vectorised ``_soft_limit``, bit-for-bit the same mapping."""
     mag = _np.abs(a)
-    over = mag > 1.0
+    over = mag > _LIMIT_KNEE
     if not bool(over.any()):
         return a
     out = a.copy()
     m = mag[over]
-    out[over] = _np.sign(a[over]) * (m / (1.0 + (m - 1.0)))
+    k = (m - _LIMIT_KNEE) / (1.0 - _LIMIT_KNEE)
+    out[over] = _np.sign(a[over]) * (
+        _LIMIT_KNEE + (1.0 - _LIMIT_KNEE) * _np.tanh(k))
     return out
 
 
+#: Where the knee starts. Below this the mapping is exactly 1:1, so ordinary
+#: material is untouched; above it the curve is continuous, monotonic and
+#: asymptotic to full scale.
+_LIMIT_KNEE = 0.7
+
+
 def _soft_limit(x: float) -> float:
+    """Soften what is over full scale, rather than flattening it.
+
+    THE OLD EXPRESSION WAS A HARD CLIP WEARING A SOFT NAME: `a / (1 + (a - 1))`
+    simplifies to `a / a`, i.e. exactly 1.0 for every a > 1. So everything over
+    full scale came out flat-topped -- the harsh distortion `headroom_db` was
+    added to avoid -- while the report told the user the audition had merely
+    been "attenuated". Caught by an external review 2026-09-21.
+    """
     a = abs(x)
-    if a <= 1.0:
+    if a <= _LIMIT_KNEE:
         return x
-    return math.copysign(a / (1.0 + (a - 1.0)), x)
+    over = (a - _LIMIT_KNEE) / (1.0 - _LIMIT_KNEE)
+    return math.copysign(
+        _LIMIT_KNEE + (1.0 - _LIMIT_KNEE) * math.tanh(over), x)
 
 
 def _seed_report(report: AuditionReport, prov, opts) -> None:

@@ -697,7 +697,16 @@ def _audition_decision(node, model_ok: bool, model_why: str, dev_ok: bool,
         return ("Audition — needs an mpc2emu checkout (Settings…)",
                 False, model_why)
     if not dev_ok:
-        return (f"Audition — {dev_why}", False, dev_why)
+        # ENABLED, NOT DISABLED. Rendering needs no audio device -- Save as
+        # WAV… is documented as "the path that works headless", and the
+        # matrix asserts it. Disabling the action here made the dialog that
+        # holds Save as WAV unreachable, so the documented path could not be
+        # taken on exactly the machines that need it. The device gates PLAY,
+        # inside the dialog, and the label says so up front.
+        return (f'Audition "{node.label}" — no audio device, saves to WAV',
+                True,
+                f"{dev_why}. The audition still renders; use Save as WAV… in "
+                f"the dialog.")
     if rom_only:
         return ("Audition — this program references only ROM samples", False,
                 "the bank file holds no audio for this program; its samples "
