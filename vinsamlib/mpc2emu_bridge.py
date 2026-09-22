@@ -107,6 +107,19 @@ sampledir_parser = _Lazy("parsers.sampledir_parser")
 # `callable(path, wav_dir, **kw) -> Bank` shape, and calls itself "the one
 # source of truth" for it. Re-exporting the table keeps that true here too.
 parser_registry = _Lazy("parsers.registry")
+# Ensoniq EPS/ASR and Roland S-7xx discs. Bound separately from the registry
+# because the registry only offers `parse`, and browsing needs the two cheap
+# halves it does not export: the content TESTS (`is_eps_image`,
+# `is_roland_image`, 0.1 ms each) that decide whether an `.iso` is ours at
+# all, and the directory reads (`eps_instruments`, `read_roland_partials`)
+# that list a disc without decoding its audio. Going through `parse` for
+# either would cost 19 s per listed row.
+#
+# These live on mpc2emu's `fw-only-imports` branch, not on its main -- so
+# they are gated by Config.check_firmware_import_support(), exactly as the
+# AKAI parsers are gated for a checkout without AKAI support.
+eps_parser = _Lazy("parsers.eps_parser")
+roland_parser = _Lazy("parsers.roland_s7xx_parser")
 info_cmd = _Lazy("info_cmd")
 iso_builder = _Lazy("writers.iso_builder")
 hda_builder = _Lazy("writers.hda_builder")

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import array
 import contextlib
+import dataclasses
 import io
 import math
 import re
@@ -71,6 +72,13 @@ class ConvertOpError(RuntimeError):
 @dataclass(frozen=True)
 class ConversionOptions:
     target_format: str = "E4B"                    # "E4B" | "KRZ" | "EIII" | "AKAI" -- the OUTPUT format
+    # Reproduce the TARGET sampler's own firmware import rather than
+    # converting with this project's laws. Only meaningful for a source the
+    # firmware itself can import (Ensoniq EPS, Roland S-7xx, AKAI), and for
+    # EPS/Roland it is the only law that exists -- there is no instrument
+    # here to measure a better one against. See mpc2emu's
+    # docs/FIRMWARE_IMPORT_ROUTINES.md and foreign_import.EXPERIMENTAL_FORMATS.
+    firmware_import: bool = False
     resample_profile: Optional[str] = None        # "emulator2" | "emax1" | None (off)
     no_bandpass: bool = False
     resample_keep_gain: bool = False
@@ -751,10 +759,57 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
     # was handed, but only this shows the whole set as it stood after
     # defaults were applied -- which is the thing nobody can reconstruct
     # afterwards from the output.
+    opts = _strip_processing_for_firmware(opts, risks_out)
     calllog.note("conversion", source=getattr(bank, "path", ""),
                  out_stem=out_stem, options=opts)
     with collect_diagnostics_into(risks_out):
         return _apply_and_write_pipeline(bank, opts, out_stem, risks_out)
+
+
+#: The option fields that are this project's OWN processing, as opposed to
+#: the writer's own business (target_format, pan_law and the AKAI/KRZ layer
+#: settings, which shape the output file rather than reprocess the audio).
+_PROCESSING_FIELDS = (
+    "resample_profile", "no_bandpass", "resample_keep_gain",
+    "max_sample_rate", "reduce_key_zones_pct", "reduce_velocity_layers_pct",
+    "mono", "trim_start", "trim_tail",
+)
+
+
+def _strip_processing_for_firmware(opts: ConversionOptions,
+                                   risks_out: Optional[list] = None) -> ConversionOptions:
+    """Under ``firmware_import``, drop this project's own processing steps.
+
+    The dialog greys these out, but a greyed widget is not a guarantee: the
+    options object is also built by the matrix tests, by a restored session
+    and by any caller that constructs one directly. If a resample survived
+    into a run labelled "simulate firmware import", the output would be
+    something the device would never produce while the UI said otherwise --
+    and that is the one failure this whole feature cannot afford, because
+    nobody here has the instrument to notice it by ear.
+
+    Silently dropping them would be its own lie, so anything actually
+    dropped is reported as a risk.
+    """
+    if not getattr(opts, "firmware_import", False):
+        return opts
+    blank = ConversionOptions()
+    changed = {}
+    for field in _PROCESSING_FIELDS:
+        if not hasattr(opts, field):
+            continue
+        current, default = getattr(opts, field), getattr(blank, field)
+        if current != default:
+            changed[field] = default
+    if not changed:
+        return opts
+    if risks_out is not None:
+        risks_out.append(
+            "Firmware simulation ignores this project's own processing: "
+            + ", ".join(sorted(changed))
+            + " were set and have been skipped, because applying them would "
+              "produce something the device would not.")
+    return dataclasses.replace(opts, **changed)
 
 
 def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,

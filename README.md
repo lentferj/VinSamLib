@@ -16,7 +16,8 @@ and AKAI banks are assembled and saved without mpc2emu at all.
 Where mpc2emu is available, presets convert **between** the four, and
 Akai MPC material comes in directly — a `.xpm` program, or a whole
 `.xpj` project one program at a time — along with SoundFont, SFZ,
-EXS24, TAL-Sampler and GigaSampler instruments, a folder of loose WAVs,
+EXS24, TAL-Sampler and GigaSampler instruments, Ensoniq EPS/ASR and
+Roland S-7xx sampler discs (experimental), a folder of loose WAVs,
 and mpc2emu's vintage resample / sample-count reduction pipeline on
 anything's way into a bank.
 
@@ -242,6 +243,46 @@ Only an actual import parses the samples.
 Instruments that cannot be converted still appear, greyed, with the
 reason — most often a TAL-Sampler preset whose samples are encrypted
 `.talwav` files, which nothing outside TAL-Sampler can decode.
+
+### Simulate a firmware import: Ensoniq EPS/ASR and Roland S-7xx discs
+
+**Experimental.** An Ensoniq EPS/ASR or Roland S-7xx CD image is recognised
+by its content — not its extension, since `.iso` is shared with AKAI media
+and with the EMU3 filesystem — and expands like a bank, one row per
+instrument on the disc. Importing a row writes an ordinary E4B or KRZ.
+
+What makes this different from every other import here is **whose rules it
+follows**. There is no Ensoniq or Roland on the bench, so there is nothing
+to measure a better conversion against. Instead the conversion reproduces
+what the *target* sampler's own firmware does when it imports such a disc —
+read out of the E-MU EOS 4.7 and Kurzweil K2000 v3.87J ROMs. Matching the
+device is not a compromise here; with the source instrument absent it is the
+only available definition of correct.
+
+So the import dialog offers **Import method**, and for these two formats
+"Simulate firmware import" is the only live choice — the other arm is shown
+disabled and says why. The conversion options are greyed out while it is
+selected: resampling or reducing the result would produce something the
+device would never produce, while the dialog claimed otherwise. Anything
+that *is* set gets dropped and reported rather than silently applied.
+
+Two consequences worth knowing before you trust the output:
+
+* An EPS **instrument** becomes up to four presets — the layer-mask
+  variants the firmware itself writes, suffixed `00`, `0*`, `*0`, `**`.
+  One row imports the whole group, because the variants are the instrument.
+* The Roland path is **coarser than the device**: the machine groups
+  partials into one program and splits keys from the patch, while this makes
+  one preset per partial.
+
+For AKAI the choice is the other way round. An S3000XL *is* on the bench, so
+mpc2emu deliberately keeps its own hardware-measured laws, and the firmware
+arm is the one that does not exist — it appears named and disabled rather
+than silently missing.
+
+These parsers live on an mpc2emu branch rather than its main line, so a
+checkout without them simply shows no such discs; Settings reports it the
+same way it reports the other capabilities.
 
 ### Run an existing preset through mpc2emu's vintage pipeline
 
@@ -536,7 +577,7 @@ you type. Search is **word-prefix matching**: each space-separated word
 you type must *start* a word somewhere in the item's name, and multiple
 words are AND-ed together (so `bass str` matches "Bassoon Strings" but
 not "Bassoon Trumpet"). The format dropdown next to the search box
-(`All`/`E4B`/`KRZ`/`EIII`/`AKAI`/`MPC`, plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`
+(`All`/`E4B`/`KRZ`/`EIII`/`AKAI`/`MPC`, plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`/`EPS`/`Roland`
 when mpc2emu is available) filters both the live tree and search results
 to just that format. `MPC` covers all three Akai containers at once —
 `.xpm` programs, `.xty` tracks and `.xpj` projects — because they are

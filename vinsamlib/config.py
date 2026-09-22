@@ -424,3 +424,30 @@ class Config:
         if missing:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Soundfont/SFZ/EXS/TAL/GIG import is available"
+
+    def check_firmware_import_support(self) -> tuple[bool, str]:
+        """Ensoniq EPS/ASR and Roland S-7xx discs (build/foreign_import.py).
+
+        A SEPARATE probe from check_foreign_import_support(), because these
+        two live on mpc2emu's `fw-only-imports` branch and its main branch
+        has neither -- exactly the situation check_akai_* already handles for
+        a checkout without AKAI support. Folding them into the soft-sampler
+        probe would take SF2/SFZ/EXS/TAL/GIG down with them on any checkout
+        that does not carry the branch.
+
+        Both files, not either: `registry._parse_iso` imports both at module
+        import, so a checkout with one and not the other cannot dispatch
+        `.iso` at all.
+        """
+        ok, reason = self.check_mpc2emu_path()
+        if not ok:
+            return False, reason
+        required = [Path("parsers") / name for name in (
+            "eps_parser.py", "roland_s7xx_parser.py")]
+        missing = [str(rel) for rel in required
+                   if not (self.mpc2emu_path / rel).exists()]
+        if missing:
+            return False, (f"this mpc2emu checkout has no firmware-import "
+                           f"parsers (missing {', '.join(missing)}) — they are "
+                           f"on its fw-only-imports branch")
+        return True, "Ensoniq EPS and Roland S-7xx disc import is available"

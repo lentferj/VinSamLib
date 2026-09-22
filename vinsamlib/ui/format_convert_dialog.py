@@ -47,13 +47,28 @@ from typing import Callable, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel,
-                                QSizePolicy, QWidget)
+                                QRadioButton, QSizePolicy, QVBoxLayout,
+                                QWidget)
 
 from .convert_options_dialog import ConvertOptionsDialog
+from ..build import foreign_import
 from ..build.convert import ConversionOptions
 
 _KRZ_SANE_MAX_RATE_HZ = 24000
 
+
+#: Shown instead of _DEFAULT_WARNING while firmware simulation is selected.
+#: The default says the import "goes through mpc2emu's own model, same as any
+#: other conversion here", which is precisely what this arm does NOT do --
+#: leaving it up would have the dialog contradict the radio button above it.
+_FIRMWARE_WARNING = (
+    "This reproduces what the target sampler's own firmware does when it "
+    "imports this disc — traced from the E-MU EOS 4.7 and Kurzweil K2000 "
+    "v3.87J ROMs, not measured against the original instrument, because "
+    "none is here to measure. Experimental: what it produces is the "
+    "device's behaviour as far as it has been read, including what the "
+    "device itself drops. The options below are this project's own "
+    "processing and are skipped.")
 
 _DEFAULT_WARNING = (
     "Importing goes through mpc2emu's own model, same as any other "
@@ -106,10 +121,11 @@ class FormatConvertDialog(ConvertOptionsDialog):
                  title: str = "Import MPC Program", warning_text: Optional[str] = None,
                  locked_format: Optional[str] = None,
                  bank_loader: Optional[Callable[[], list]] = None,
-                 source_text: str = ""):
+                 source_text: str = "", source_format: str = ""):
         super().__init__(parent, initial=initial, bank_loader=bank_loader)
         self.setWindowTitle(title)
-        self._warning_label.setText(warning_text or _DEFAULT_WARNING)
+        self._default_warning = warning_text or _DEFAULT_WARNING
+        self._warning_label.setText(self._default_warning)
 
         # Built here, inserted after the format row below -- that one also
         # goes in at index 0 and would otherwise end up above this.
@@ -156,6 +172,11 @@ class FormatConvertDialog(ConvertOptionsDialog):
                 f"different format.")
         self.layout().insertWidget(0, format_row)
 
+        self._source_format = source_format
+        self._method_row = self._build_method_row(source_format, initial)
+        if self._method_row is not None:
+            self.layout().insertWidget(1, self._method_row)
+
         # Now, so it lands ABOVE the format picker: the first question this
         # dialog has to answer is "what am I about to import?". Only present
         # when a caller supplies one -- an empty row would be a blank line at
@@ -178,6 +199,106 @@ class FormatConvertDialog(ConvertOptionsDialog):
         self._refresh_pan_law_availability()
         self._refresh_krz_layers_availability()
         self._refresh_akai_hw_availability()
+
+    # ── import method ──────────────────────────────────────────────────────
+
+    def _build_method_row(self, source_format: str,
+                          initial: Optional[ConversionOptions]):
+        """The firmware-vs-mpc2emu choice, or None when it does not apply.
+
+        Only three source formats can be imported by a target sampler's own
+        firmware -- Ensoniq EPS/ASR, Roland S-7xx and AKAI -- so for anything
+        else this row is absent rather than present-and-disabled. An always
+        disabled row on every SF2 import would be noise about a choice that
+        does not exist for that file.
+
+        **The two arms are not symmetrical, and the asymmetry is the point.**
+        For EPS and Roland the firmware trace is the ONLY law: no Ensoniq or
+        Roland instrument is on the bench here, so there is nothing to
+        measure a better conversion against, and "the device's behaviour" is
+        the specification rather than a fallback. For AKAI the opposite
+        holds -- an S3000XL is on the bench, mpc2emu deliberately keeps its
+        own hardware-measured laws, and the firmware arm is the one that
+        does not exist yet.
+        """
+        fw_formats = (foreign_import.EPS_FORMAT, foreign_import.ROLAND_FORMAT)
+        if source_format not in fw_formats + ("AKAI",):
+            return None
+
+        row = QWidget()
+        box = QVBoxLayout(row)
+        box.setContentsMargins(0, 0, 0, 6)
+        box.addWidget(QLabel("Import method:"))
+
+        self._fw_radio = QRadioButton("Simulate firmware import (experimental)")
+        self._mpc_radio = QRadioButton("mpc2emu import")
+        for rb in (self._fw_radio, self._mpc_radio):
+            box.addWidget(rb)
+
+        if source_format in fw_formats:
+            # The firmware arm is the only one. mpc2emu's EPS and Roland
+            # parsers ARE the firmware trace, so "mpc2emu import" is not a
+            # second law being withheld -- it is not a thing that exists.
+            self._fw_radio.setChecked(True)
+            self._mpc_radio.setEnabled(False)
+            self._mpc_radio.setText(
+                "mpc2emu import — no independent law exists for "
+                f"{source_format}")
+            self._mpc_radio.setToolTip(
+                f"There is no {source_format} instrument here to measure a "
+                f"conversion against, so reproducing what the target "
+                f"sampler's firmware does with this disc is the only "
+                f"definition of correct available.")
+            self._fw_radio.setToolTip(
+                "Reproduces what the target sampler's own firmware does when "
+                "it imports this disc, traced from the E-MU EOS 4.7 and "
+                "Kurzweil K2000 v3.87J ROMs.")
+        else:
+            # AKAI: the firmware arm is named and disabled, following the
+            # Explorer's ROM-only precedent -- a refusal the user can read
+            # beats an option that silently is not there.
+            self._mpc_radio.setChecked(True)
+            self._fw_radio.setEnabled(False)
+            self._fw_radio.setText(
+                "Simulate firmware import — not yet implemented for AKAI")
+            self._fw_radio.setToolTip(
+                "mpc2emu has no device-law mode for AKAI: it deliberately "
+                "keeps its own hardware-measured laws, because an S3000XL is "
+                "on the bench and the firmware is not the only reference. "
+                "What the K2000 discards on import is documented but not yet "
+                "implemented anywhere.")
+
+        if initial is not None and initial.firmware_import and self._fw_radio.isEnabled():
+            self._fw_radio.setChecked(True)
+
+        self._fw_radio.toggled.connect(self._on_method_changed)
+        self._on_method_changed()
+        return row
+
+    def _on_method_changed(self, *_args) -> None:
+        """Firmware simulation takes no options, so the option body is off.
+
+        Not cosmetic: every group in that body -- resampling, rate ceilings,
+        zone reduction, pan law -- is this project's own processing. Applying
+        any of it would produce something the firmware would not, while the
+        dialog still said "simulate firmware import". Greyed rather than
+        hidden so it stays legible what is being skipped.
+        """
+        fw = getattr(self, "_fw_radio", None)
+        if fw is None:
+            return
+        on = fw.isChecked()
+        self._warning_label.setText(
+            _FIRMWARE_WARNING if on else self._default_warning)
+        self._scroll.setEnabled(not on)
+        self._scroll.setToolTip(
+            "Firmware simulation reproduces the device's own conversion — "
+            "these options would make the result something the device would "
+            "not produce." if on else "")
+
+    def _firmware_selected(self) -> bool:
+        fw = getattr(self, "_fw_radio", None)
+        return bool(fw is not None and fw.isChecked())
 
     def _current_target_format(self) -> str:
         # Python dispatches to this override from the BASE __init__, which runs
@@ -207,18 +328,19 @@ class FormatConvertDialog(ConvertOptionsDialog):
 
     def _to_options(self) -> ConversionOptions:
         return dataclasses.replace(super()._to_options(),
-                                    target_format=self._format_box.currentText())
+                                    target_format=self._format_box.currentText(),
+                                    firmware_import=self._firmware_selected())
 
     @staticmethod
     def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
                             title: str = "Import MPC Program", warning_text: Optional[str] = None,
                             locked_format: Optional[str] = None,
                             bank_loader: Optional[Callable[[], list]] = None,
-                            source_text: str = ""
+                            source_text: str = "", source_format: str = ""
                             ) -> Optional[ConversionOptions]:
         dialog = FormatConvertDialog(parent, initial=initial, title=title, warning_text=warning_text,
                                   locked_format=locked_format, bank_loader=bank_loader,
-                                  source_text=source_text)
+                                  source_text=source_text, source_format=source_format)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog._to_options()

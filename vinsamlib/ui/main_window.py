@@ -109,6 +109,8 @@ class MainWindow(QMainWindow):
         # both decide whether the soundfont-style formats are rows at all,
         # from worker threads that have no Config of their own.
         foreign_import.set_available(config.check_foreign_import_support()[0])
+        foreign_import.set_firmware_available(
+            config.check_firmware_import_support()[0])
 
         self._model = LibraryTreeModel(list(config.library_roots),
                                         index_db=self._index_db)
@@ -920,8 +922,15 @@ class MainWindow(QMainWindow):
                        else f"{len(requests)} {noun}s")
         title = (f"Import {noun}" if len(requests) == 1
                  else f"Import {len(requests)} {noun}s")
+        # The import-method row only appears when every selected source is
+        # the SAME format: the firmware arm is a statement about one
+        # device's behaviour with one kind of disc, and a mixed selection
+        # has no single answer to make it about.
+        source_formats = {foreign_import.format_for(r["path"]) or ""
+                          for r in requests}
+        source_format = source_formats.pop() if len(source_formats) == 1 else ""
         opts = FormatConvertDialog.get_import_options(
-            self, title=title,
+            self, title=title, source_format=source_format,
             warning_text=None if all_mpc else (
                 "These formats are import sources only — VinSamLib reads "
                 "them and writes the hardware bank you choose here, never "
@@ -1046,7 +1055,13 @@ class MainWindow(QMainWindow):
         # either (see locked_format below) -- converting to anything
         # else would just be rejected after the fact.
         source_fmts = {n.parent.format_label for n in nodes if n.parent is not None}
-        source_fmt = source_fmts.pop() if len(source_fmts) == 1 else "E4B"
+        # Kept apart from source_fmt below, which FALLS BACK to "E4B" for a
+        # mixed selection. That fallback is a sensible default target; it is
+        # not a statement about where the presets came from, and feeding it
+        # to the import-method row would claim a shared source format that
+        # the selection does not have.
+        shared_source_fmt = source_fmts.copy().pop() if len(source_fmts) == 1 else ""
+        source_fmt = shared_source_fmt or "E4B"
         title = "Import via mpc2emu" if len(nodes) == 1 \
             else f"Import {len(nodes)} presets via mpc2emu"
         # No path to show here -- the source is a preset (or several) already
@@ -1060,7 +1075,7 @@ class MainWindow(QMainWindow):
         sources = [node.payload for node in nodes]
         opts = FormatConvertDialog.get_import_options(
             self, initial=convert.ConversionOptions(target_format=source_fmt or "E4B"),
-            title=title,
+            title=title, source_format=shared_source_fmt,
             warning_text=(
                 "Converting goes through mpc2emu's own model, same as any "
                 "other conversion here; a few advanced parameters may not "

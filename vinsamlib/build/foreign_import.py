@@ -1,8 +1,33 @@
-"""Importing a soft-sampler instrument into a real, native hardware bank.
+"""Importing an instrument this project cannot write into a native bank.
 
-Five formats, none of them from a hardware sampler: SoundFont 2 (``.sf2``),
-SFZ, Logic EXS24 (``.exs``), TAL-Sampler (``.talsmpl``) and GigaSampler
-(``.gig``). They are **import sources only** — VinSamLib browses them and
+Seven formats, in two groups that behave identically here and differ in
+where their conversion law comes from.
+
+**Five soft-sampler formats**, none of them from a hardware sampler:
+SoundFont 2 (``.sf2``), SFZ, Logic EXS24 (``.exs``), TAL-Sampler
+(``.talsmpl``) and GigaSampler (``.gig``).
+
+**Two hardware disc formats**, added 2026-09-22: Ensoniq EPS/ASR and Roland
+S-7xx, both CD images. They are here rather than in a module of their own
+because every consumer in this project -- ``ui/models.py``, ``index/scanner``,
+``ui/search_resolve``, ``ui/main_window``, ``detail_pane``, ``samples_pane``
+-- already routes through this module's ``inspect``/``format_for``/
+``list_presets``/``import_foreign``, and a parallel spine would mean a second
+branch in all seven. That is exactly the drift this file's own note below
+warns about.
+
+**What makes them different, and it matters to the UI.** For the five
+soft-sampler formats mpc2emu's parser is a reading of a documented file.
+For these two it is a reading of *the target sampler's own firmware*: what
+EOS 4.7 does when an E4XT imports an Ensoniq or Roland disc, and what the
+K2000 does. No Ensoniq or Roland instrument exists to measure against here,
+so matching the device is not a compromise, it is the specification -- and
+there is no alternative law to offer. Hence ``EXPERIMENTAL_FORMATS``: these
+two are marked experimental in every surface that shows them, and the import
+dialog says whose behaviour is being reproduced. See mpc2emu's
+``docs/FIRMWARE_IMPORT_ROUTINES.md``.
+
+All seven are **import sources only** — VinSamLib browses them and
 converts out of them, and will never write one. Output stays what the
 hardware understands: E4B, KRZ, EIII.
 
@@ -50,6 +75,7 @@ from .sample_names import apply_sample_names, names_from_base
 from .xpm_import import XpmSummary, _preset_samples, summarize_program
 from .. import foreign_names
 from ..config import Config
+from .. import mpc2emu_bridge
 from ..mpc2emu_bridge import parser_registry, xpm_parser
 
 # The format label each extension carries through the Explorer, the index and
@@ -74,13 +100,39 @@ CONTAINER_EXTS = (".sf2", ".gig")
 # the duplication that ui/models.py's _project_program_labels() warns about.
 LEAF_EXTS = (".sfz", ".exs", ".talsmpl")
 
-FOREIGN_FORMATS = frozenset(FOREIGN_EXT_FORMAT.values())
+# ── the two hardware disc formats ──────────────────────────────────────────
+#
+# NOT extension-keyed, and that is the whole difficulty. `.iso` is claimed by
+# AKAI media, by the EMU3 filesystem (which is not ISO 9660 at all) and by
+# real ISO 9660 CDs, so these are decided on CONTENT -- and only after
+# `vfs.detect.sniff()` has declined the file, so an AKAI disc can never reach
+# a weaker test. mpc2emu's registry._parse_iso orders its three the same way
+# and says why: EPS decodes a real directory in block 2, while Roland has no
+# header at all and only checks that a fixed record base holds plausible
+# records, which is the weakest test of the three and so goes last.
+#
+# Measured here: both detectors are 0.1 ms on a 618 MB disc and both return
+# False on an E4B file, so running them during a directory listing is
+# affordable -- which the `inspect()` note below makes a requirement.
+IMAGE_CONTENT_EXTS = (".iso",)
+EPS_FORMAT = "EPS"
+ROLAND_FORMAT = "Roland"
+IMAGE_CONTENT_FORMATS = (EPS_FORMAT, ROLAND_FORMAT)
+
+#: Shown with an "experimental" marker wherever they appear, and the import
+#: dialog names whose firmware is being reproduced. Not a hedge about code
+#: quality: it is that the conversion law is a disassembly of someone else's
+#: firmware, with no instrument here to check the result against.
+EXPERIMENTAL_FORMATS = frozenset(IMAGE_CONTENT_FORMATS)
+
+FOREIGN_FORMATS = frozenset(FOREIGN_EXT_FORMAT.values()) | set(IMAGE_CONTENT_FORMATS)
 
 # Unlike the MPC's three containers -- which are three wrappers around one
 # keygroup program, and so earn a single "MPC" chip in the format dropdown --
 # these are five unrelated ecosystems that happen to share a job. A user
 # looking for a SoundFont is not looking for an EXS24 instrument.
-FORMAT_FILTERS = ("SF2", "SFZ", "EXS24", "TAL", "GIG")
+FORMAT_FILTERS = ("SF2", "SFZ", "EXS24", "TAL", "GIG",
+                  EPS_FORMAT, ROLAND_FORMAT)
 
 # macOS writes a metadata fork beside every real file on a non-HFS volume.
 # There are 22 of them among this author's .exs files alone, each carrying the
@@ -152,9 +204,80 @@ class FileVerdict:
         return not self.empty_reason
 
 
+_fw_available: Optional[bool] = None
+
+
+def set_firmware_available(ok: bool) -> None:
+    """Record whether this checkout can read EPS/Roland discs."""
+    global _fw_available
+    _fw_available = ok
+
+
+def firmware_available() -> bool:
+    """Whether the two disc formats are readable here.
+
+    Separate from ``available()``: the disc parsers live on an mpc2emu
+    BRANCH, so a perfectly good checkout supplies SF2/SFZ/EXS/TAL/GIG and
+    none of these. One flag for both would hide five working formats
+    whenever the branch is absent.
+    """
+    global _fw_available
+    if _fw_available is None:
+        try:
+            _fw_available = Config.load().check_firmware_import_support()[0]
+        except Exception:
+            _fw_available = False
+    return _fw_available
+
+
 def format_for(path) -> Optional[str]:
-    """The format label for a path's extension, or None if it is not ours."""
-    return FOREIGN_EXT_FORMAT.get(Path(path).suffix.lower())
+    """The format label for a path, or None if it is not ours.
+
+    Extension for the five soft-sampler formats; content for the two disc
+    formats, which share `.iso` with things that are not ours at all.
+    """
+    ext = Path(path).suffix.lower()
+    fmt = FOREIGN_EXT_FORMAT.get(ext)
+    if fmt is not None:
+        return fmt
+    if ext in IMAGE_CONTENT_EXTS:
+        return image_content_format(path)
+    return None
+
+
+def image_content_format(path) -> Optional[str]:
+    """``"EPS"``, ``"Roland"`` or None for a disc image.
+
+    **Order is load-bearing and is not ours to reorder casually.** A disc a
+    stronger test can identify must never be offered to a weaker one, so:
+
+      1. ``vfs.detect.sniff()`` first. If it claims the file -- AKAI media,
+         EMU3, FAT, a real ISO 9660 -- it is already browsable as a volume
+         and this module must not also claim it, or one disc would appear
+         twice in the tree under two different readers.
+      2. EPS, which decodes an actual directory.
+      3. Roland, which has no header at all. Last, always.
+
+    Returns None rather than raising for anything unreadable: a listing runs
+    this over every `.iso` in a folder and an unreadable file is simply not
+    one of ours.
+    """
+    if not firmware_available():
+        return None
+    try:
+        from ..vfs.detect import sniff
+        if sniff(str(path)) is not None:
+            return None
+    except Exception:
+        return None
+    try:
+        if mpc2emu_bridge.eps_parser.is_eps_image(str(path)):
+            return EPS_FORMAT
+        if mpc2emu_bridge.roland_parser.is_roland_image(str(path)):
+            return ROLAND_FORMAT
+    except Exception:
+        return None
+    return None
 
 
 def inspect(path) -> Optional[FileVerdict]:
@@ -177,7 +300,15 @@ def inspect(path) -> Optional[FileVerdict]:
     # none of its own.
     name = str(path).rpartition("/")[2]
     dot = name.rfind(".")
-    if dot <= 0 or name[dot:].lower() not in FOREIGN_EXT_FORMAT:
+    if dot <= 0:
+        return None
+    suffix = name[dot:].lower()
+    # `.iso` is let through to a CONTENT test rather than rejected here. It
+    # costs a 512-byte read plus 0.1 ms, and only for files actually called
+    # `.iso` -- the sample folders this early return protects hold WAVs and
+    # programs, not disc images, so the measured 14 253-Path problem is
+    # untouched.
+    if suffix not in FOREIGN_EXT_FORMAT and suffix not in IMAGE_CONTENT_EXTS:
         return None
     if not available():
         return None
@@ -229,6 +360,20 @@ def inspect(path) -> Optional[FileVerdict]:
                     f"normally.")
         return FileVerdict(fmt, verdict.program_name, note=note)
 
+    if ext in IMAGE_CONTENT_EXTS:
+        # Deliberately does NOT list. Unlike SF2/GIG -- where listing is the
+        # only way to know the file holds anything -- the content test that
+        # got us here already decoded an EPS directory or validated Roland's
+        # record base, so a disc that passes and then holds nothing is not a
+        # case that occurs. Listing anyway cost 55 ms per Roland disc, which
+        # a folder of images multiplies by every row; detection alone is
+        # 0.1 ms. An empty disc shows a row that expands to nothing, which
+        # is the cheaper wrong answer of the two.
+        return FileVerdict(fmt, p.stem, container=True, note=(
+            f"{fmt} import is experimental: it reproduces what the target "
+            f"sampler's own firmware does with this disc, and no {fmt} "
+            f"instrument exists here to check the result against."))
+
     # Containers: SF2 and GIG.
     listed = list_presets(p)
     if listed is None:
@@ -252,11 +397,47 @@ def list_presets(path) -> Optional[list]:
         return foreign_names.sf2_preset_names(path)
     if ext == ".gig":
         return foreign_names.gig_instrument_names(path)
+    if ext in IMAGE_CONTENT_EXTS:
+        return _list_disc_presets(path)
     return None
 
 
+def _list_disc_presets(path) -> Optional[list]:
+    """Rows for an EPS or Roland disc, WITHOUT decoding any audio.
+
+    Measured on the reference discs: the directory read is 0.01 s for EPS
+    (613 instruments) and 0.03 s for Roland (4004 partials), against 19 s to
+    parse an EPS disc in full. Browsing must never pay the second number.
+
+    **EPS lists INSTRUMENTS, not presets, and the two counts differ.** One
+    instrument becomes up to four presets on import -- EOS's layer-mask
+    variants, suffixed ``00``/``0*``/``*0``/``**`` -- so 613 rows here
+    correspond to 2396 presets after conversion. Listing the variants would
+    show the user four rows for something the disc holds one of, and they
+    are an artefact of the conversion, not of the disc. ``resolve_ordinal()``
+    reconciles the two counts, which is the very problem it exists for.
+    """
+    fmt = image_content_format(path)
+    if fmt is None:
+        return None
+    try:
+        if fmt == EPS_FORMAT:
+            ents = mpc2emu_bridge.eps_parser.eps_instruments(str(path), quiet=True)
+            return [foreign_names.ListedPreset(name=e.name, program=i)
+                    for i, e in enumerate(ents)]
+        parts = mpc2emu_bridge.roland_parser.read_roland_partials(str(path))
+        return [foreign_names.ListedPreset(name=part.get("name", ""), program=i)
+                for i, part in enumerate(parts)]
+    except Exception:
+        return None
+
+
 def is_container(path) -> bool:
-    return Path(path).suffix.lower() in CONTAINER_EXTS
+    ext = Path(path).suffix.lower()
+    if ext in CONTAINER_EXTS:
+        return True
+    # A disc holds hundreds of instruments; it is a container by any measure.
+    return ext in IMAGE_CONTENT_EXTS and image_content_format(path) is not None
 
 
 # ── parsing, via mpc2emu ───────────────────────────────────────────────────
@@ -375,6 +556,61 @@ def parse_foreign(path, wav_dir: Optional[str] = None,
 def _listed_count(path) -> Optional[int]:
     listed = list_presets(path) if is_container(path) else None
     return len(listed) if listed else None
+
+
+#: EOS's layer-mask variant suffixes, in the order mpc2emu emits them. An
+#: EPS instrument becomes up to four presets, one per variant, and an empty
+#: variant is skipped rather than written silent.
+_EPS_VARIANT_SUFFIXES = ("00", "0*", "*0", "**")
+
+
+def _eps_base_name(name: str) -> str:
+    for suffix in _EPS_VARIANT_SUFFIXES:
+        if name.endswith(suffix):
+            return name[:-len(suffix)]
+    return name
+
+
+def disc_preset_indices(bank, listed: list, ordinal: int) -> list:
+    """Which parsed presets belong to disc row *ordinal*.
+
+    EPS is the one format here that parses to MORE presets than it lists --
+    613 instruments became 2396 presets on the reference disc -- so
+    ``resolve_ordinal()`` does not apply: it handles entries being DROPPED,
+    the opposite direction.
+
+    **Positional, not by name, and that was measured.** Name matching looked
+    obvious and is wrong twice over on the reference disc: ``HARP`` is the
+    name of two different instruments, and 32 instrument names are a prefix
+    of another name (``ELEC BASS`` and ``ELEC BASS 1``), so a prefix match
+    sweeps a neighbour's variants into the answer -- precisely the "asks for
+    one preset and gets its neighbour" failure ``resolve_ordinal`` exists to
+    stop.
+
+    What holds instead, verified over the whole disc: mpc2emu emits each
+    instrument's variants as one consecutive run, in listed order. A single
+    forward pass consumed all 2396 presets with nothing left over, and the
+    two ``HARP`` instruments fell into their own runs of four.
+
+    Returns the parsed indices for the row, or ``[]`` when the instrument
+    produced no preset at all -- two did on the reference disc, and the
+    caller must say so rather than import silence.
+    """
+    parsed = bank.presets
+    if not 0 <= ordinal < len(listed):
+        raise ValueError(
+            f"row {ordinal + 1} is not on this disc any more — it holds "
+            f"{len(listed)}. Collapse and re-expand it to re-read.")
+    i = 0
+    for row, entry in enumerate(listed):
+        want = entry.name if hasattr(entry, "name") else str(entry)
+        run = []
+        while i < len(parsed) and _eps_base_name(parsed[i].name) == want:
+            run.append(i)
+            i += 1
+        if row == ordinal:
+            return run
+    return []
 
 
 def resolve_ordinal(bank, listed: list, ordinal: int) -> int:
@@ -515,7 +751,13 @@ def import_foreign(path, opts: ConversionOptions,
     # emitted, and a dropped entry SHIFTS every later ordinal -- the fault
     # resolve_ordinal() exists to reconcile.
     with convert_mod.collect_diagnostics_into(risks_out):
-        bank = parse_foreign(p, wav_dir, max_presets=_listed_count(p))
+        # A disc lists INSTRUMENTS and parses to more presets than that, so
+        # its listed count is not a preset ceiling and must not be passed as
+        # one. (mpc2emu's `.iso` entry currently ignores the kwarg, so this
+        # is belt and braces -- but the day it stops ignoring it, an EPS
+        # import would silently keep 613 of 2396 presets.)
+        cap = None if p.suffix.lower() in IMAGE_CONTENT_EXTS else _listed_count(p)
+        bank = parse_foreign(p, wav_dir, max_presets=cap)
     if not bank.presets:
         raise ValueError(
             f"{p.name} holds no sampled content: nothing in it references a "
@@ -527,10 +769,34 @@ def import_foreign(path, opts: ConversionOptions,
         # (one here spreads 5737 samples across 219 presets), so without this
         # every single-preset import would carry the whole font's audio.
         listed = list_presets(p) or []
-        preset = bank.presets[resolve_ordinal(bank, listed, ordinal)]
-        preset.program_number = 0
-        bank.presets = [preset]
-        bank.samples = _preset_samples(bank, preset)
+        if p.suffix.lower() in IMAGE_CONTENT_EXTS:
+            # A disc row is an INSTRUMENT, which can be several presets --
+            # EOS's layer-mask variants. Importing one row imports its whole
+            # variant group, because the variants are the instrument: taking
+            # only the first would silently drop the layers the user can see
+            # named on the disc.
+            indices = disc_preset_indices(bank, listed, ordinal)
+            if not indices:
+                name = listed[ordinal].name if ordinal < len(listed) else "?"
+                raise ValueError(
+                    f"{name!r} yielded no preset — the disc lists it, but "
+                    f"nothing in it references a sample. Two instruments on "
+                    f"the reference disc are like this.")
+            chosen = [bank.presets[i] for i in indices]
+            for n, preset in enumerate(chosen):
+                preset.program_number = n
+            bank.presets = chosen
+            keep: list = []
+            for preset in chosen:
+                for sample in _preset_samples(bank, preset):
+                    if not any(sample is k for k in keep):
+                        keep.append(sample)
+            bank.samples = keep
+        else:
+            preset = bank.presets[resolve_ordinal(bank, listed, ordinal)]
+            preset.program_number = 0
+            bank.presets = [preset]
+            bank.samples = _preset_samples(bank, preset)
     if not any(voice.zones for preset in bank.presets for voice in preset.voices):
         # A TAL preset whose every sample is an encrypted .talwav parses
         # SUCCESSFULLY into a preset with no zones -- talsmpl_parser appends
