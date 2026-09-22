@@ -61,13 +61,22 @@ _KRZ_SANE_MAX_RATE_HZ = 24000
 #: The default says the import "goes through mpc2emu's own model, same as any
 #: other conversion here", which is precisely what this arm does NOT do --
 #: leaving it up would have the dialog contradict the radio button above it.
+#: Shown for the two disc formats, which have no mode to choose between.
+_DISC_READER_WARNING = (
+    "{article} {fmt} disc has no documented layout, so the reader is derived from "
+    "the sampler's own firmware — which is also why there is no second, "
+    "better conversion to offer: nothing beyond what the firmware itself "
+    "reads is available to convert. The bank is then written normally, and "
+    "the options below apply as they do to any other import.")
+
 _DEVICE_MATCH_WARNING = (
-    "This writes what the sampler's own disk importer would have written, "
-    "byte for byte — traced from the E-MU EOS 4.7 and Kurzweil K2000 v3.87J "
-    "ROMs. It is deliberately LOWER fidelity than a normal conversion, "
-    "including whatever the device itself discards; its purpose is that the "
-    "result can be diffed against a real device import. The options below "
-    "are this project's own processing and are skipped.")
+    "Converting as the firmware would: this writes what the sampler's own "
+    "disk importer would have written, byte for byte — traced from the E-MU "
+    "EOS 4.7 and Kurzweil K2000 v3.87J ROMs. It is deliberately LOWER "
+    "fidelity than converting as well as possible, including whatever the "
+    "device itself discards; its purpose is that the result can be diffed "
+    "against a real device import. The options below are this project's own "
+    "processing and are skipped.")
 
 _DEFAULT_WARNING = (
     "Importing goes through mpc2emu's own model, same as any other "
@@ -121,8 +130,18 @@ class FormatConvertDialog(ConvertOptionsDialog):
                  locked_format: Optional[str] = None,
                  bank_loader: Optional[Callable[[], list]] = None,
                  source_text: str = "", source_format: str = ""):
+        self._source_format = source_format
         super().__init__(parent, initial=initial, bank_loader=bank_loader)
         self.setWindowTitle(title)
+        # A disc whose reader came out of the firmware says so here. The
+        # chooser is gone for those sources -- there is no second mode to
+        # choose -- but the fact was worth keeping: it is the reason the
+        # result is what it is, and it used to be carried by a radio label.
+        if not warning_text and source_format in (foreign_import.EPS_FORMAT,
+                                                  foreign_import.ROLAND_FORMAT):
+            article = "An" if source_format[:1].upper() in "AEIOU" else "A"
+            warning_text = _DISC_READER_WARNING.format(
+                article=article, fmt=source_format)
         self._default_warning = warning_text or _DEFAULT_WARNING
         self._warning_label.setText(self._default_warning)
 
@@ -171,7 +190,6 @@ class FormatConvertDialog(ConvertOptionsDialog):
                 f"different format.")
         self.layout().insertWidget(0, format_row)
 
-        self._source_format = source_format
         self._method_row = self._build_method_row(source_format, initial)
         if self._method_row is not None:
             self.layout().insertWidget(1, self._method_row)
@@ -224,9 +242,16 @@ class FormatConvertDialog(ConvertOptionsDialog):
         "match the device" and silently receives our normal output would
         have no way to know.
         """
-        importable = (foreign_import.EPS_FORMAT, foreign_import.ROLAND_FORMAT,
-                      "AKAI")
-        if source_format not in importable:
+        # NO CHOOSER WHERE THERE IS NO CHOICE. mpc2emu's Roland and Ensoniq
+        # readers extract no filter, envelope or LFO field at all -- measured
+        # -- because everything known about those disc formats was read out
+        # of the samplers' own import routines to begin with. So "convert as
+        # good as possible" would differ from "convert as the firmware would"
+        # only in our writer's defaults, which convert nothing. Drawing a
+        # disabled second option there would invent a denial: the user is not
+        # missing anything. AKAI is the exception, and the only source where
+        # the two modes are genuinely different products.
+        if not firmware_sim.offers_a_choice(source_format):
             return None
 
         row = QWidget()
@@ -234,23 +259,19 @@ class FormatConvertDialog(ConvertOptionsDialog):
         box.setContentsMargins(0, 0, 0, 6)
         box.addWidget(QLabel("Import method:"))
 
-        self._mpc_radio = QRadioButton("mpc2emu import")
+        # Their wording, read from the contract so that mpc2emu's CLI, their
+        # README and this dialog cannot drift into three vocabularies for
+        # two things.
+        self._mpc_radio = QRadioButton(
+            firmware_sim.mode_label("best").capitalize())
         self._device_radio = QRadioButton(
-            "Match the sampler's own import (experimental)")
+            f'{firmware_sim.mode_label("firmware").capitalize()} '
+            f'(experimental)')
         box.addWidget(self._mpc_radio)
         box.addWidget(self._device_radio)
-
-        if source_format in (foreign_import.EPS_FORMAT,
-                             foreign_import.ROLAND_FORMAT):
-            self._mpc_radio.setText(
-                f"mpc2emu import — the only way to read "
-                f"{'an' if source_format[0] in 'AEIOU' else 'a'} "
-                f"{source_format} disc")
-            self._mpc_radio.setToolTip(
-                f"A {source_format} disc has no documented layout, so the "
-                f"reader is derived from the sampler's own firmware. The "
-                f"bank it produces is then written normally, and the options "
-                f"below apply as they do to any other import.")
+        self._mpc_radio.setToolTip(
+            "This project's own conversion, using laws measured on the "
+            "hardware where they exist — which for AKAI is most of them.")
         self._mpc_radio.setChecked(True)
 
         self._device_note = QLabel("")
@@ -294,9 +315,9 @@ class FormatConvertDialog(ConvertOptionsDialog):
             self._device_note.setText(f"Unavailable: {st.reason}")
         radio.setToolTip(
             "Writes what the sampler's own disk importer would have written, "
-            "byte for byte. This is deliberately LOWER fidelity than a normal "
-            "conversion — it exists so the result can be compared against a "
-            "real device import, not to sound better."
+            "byte for byte. Deliberately LOWER fidelity than converting as "
+            "well as possible — it exists so the result can be compared "
+            "against a real device import, not to sound better."
             if st.available else st.reason)
         if not st.available and radio.isChecked():
             self._mpc_radio.setChecked(True)

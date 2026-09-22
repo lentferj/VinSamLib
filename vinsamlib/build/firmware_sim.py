@@ -152,6 +152,56 @@ def fidelity(source_format: str, target_format: str) -> str:
     return " ".join(parts)
 
 
+#: Jan's wording, carried in the contract's `modes` block so mpc2emu's CLI,
+#: their README and this dialog all say the same two things. Fallback only --
+#: the contract's own strings win.
+_MODE_LABELS = {"firmware": "convert as the firmware would",
+                "best": "convert as good as possible"}
+
+
+def mode_label(mode: str) -> str:
+    data = _contract_data() or {}
+    return (data.get("modes") or {}).get(mode) or _MODE_LABELS.get(mode, mode)
+
+
+def modes_offered(source_format: str, target_format: str) -> list:
+    """Which of `firmware` / `best` this path can actually offer.
+
+    **A different axis from ``status``, and conflating them misleads.** The
+    four Roland and Ensoniq paths offer one mode, and that mode is currently
+    not implemented -- so such a disc has exactly one thing to offer and it
+    is not ready. Gate on ``status``; use this only to decide whether a
+    CHOICE exists to draw.
+    """
+    entry = _entry(source_format, target_format)
+    if entry is None:
+        return []
+    return list(entry.get("modes_offered") or [])
+
+
+def offers_a_choice(source_format: str) -> bool:
+    """Is there any target where this source offers both modes?
+
+    False means the user is not being denied anything and no chooser should
+    be drawn: mpc2emu's Roland and Ensoniq readers extract no filter,
+    envelope or LFO fields at all -- measured -- because everything known
+    about those disc formats was read out of the samplers' own import
+    routines to begin with. A "convert as good as possible" mode would
+    differ only in our writer's defaults, which convert nothing. AKAI is the
+    exception: its reader carries laws measured on a real S3000XL that both
+    samplers discard, so there the two modes are genuinely different
+    products.
+    """
+    data = _contract_data()
+    if not data:
+        return source_format.upper() == "AKAI"
+    for entry in data.get("paths", []):
+        if _norm(entry.get("source")) == _norm(source_format):
+            if len(entry.get("modes_offered") or []) > 1:
+                return True
+    return False
+
+
 def _entry(source_format: str, target_format: str) -> Optional[dict]:
     data = _contract_data()
     if not data:

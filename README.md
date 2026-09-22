@@ -272,27 +272,33 @@ These parsers live on an mpc2emu branch rather than its main line, so a
 checkout without them simply shows no such discs; Settings reports it the
 same way it reports the other capabilities.
 
-### Match the sampler's own import
+### Convert as the firmware would
 
-A separate, stricter thing, and **not yet available on any path**.
+For an AKAI source the import dialog offers a choice of two, in mpc2emu's
+own words: **convert as good as possible**, or **convert as the firmware
+would**.
 
-mpc2emu is building a mode that writes what a sampler's own disk importer
-would have written, byte for byte. It is **deliberately lower fidelity than
-a normal conversion** — its value is that the result can be diffed against a
-real device import, so any difference is a defect in the reading of the
-firmware rather than a matter of taste. It is not a quality setting and it
-will never make a bank sound better.
+The second writes what the sampler's own disk importer would have written,
+byte for byte. It is **deliberately lower fidelity** — its value is that the
+result can be diffed against a real device import, so any difference is a
+defect in the reading of the firmware rather than a matter of taste. It is
+not a quality setting and it will never make a bank sound better. The
+conversion options are skipped while it is selected, and the dialog shows
+what that path does *not* reproduce before you choose it.
 
-The import dialog offers it for every source a sampler can actually import —
-Ensoniq, Roland and AKAI — and **disables it with the reason** wherever the
-path is not ready, rather than leaving it out. That is deliberate: someone
-who asks to match the device and silently receives an ordinary conversion
-has no way to tell the difference.
+**Only AKAI gets the choice**, and the reason is the interesting part. An
+S3000XL is on the bench, so mpc2emu's AKAI reader carries filter, envelope,
+LFO and velocity laws measured on real hardware — every one of which both
+samplers throw away on import. That makes the two modes genuinely different
+products. For an Ensoniq or Roland disc there is no second mode to offer:
+everything known about those formats was read out of the samplers' own
+import routines to begin with, so there is nothing beyond what the firmware
+itself reads available to convert, and the dialog shows no chooser rather
+than a disabled option for something you are not being denied.
 
-For AKAI the situation is the reverse of the disc formats above. An S3000XL
-is on the bench, so mpc2emu deliberately keeps its own hardware-measured
-laws as the better conversion, and matching the device is the option that is
-still being built.
+Where a path is not ready, the option is **disabled with mpc2emu's own
+reason**, never left out — someone who asks to convert as the firmware would
+and silently receives an ordinary conversion has no way to tell.
 
 (`All`/`E4B`/`KRZ`/`EIII`/`AKAI`/`MPC`, plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`/`EPS`/`Roland`
 when mpc2emu is available) filters both the live tree and search results
