@@ -216,6 +216,19 @@ def modes_offered(source_format: str, target_format: str) -> list:
     return list(entry.get("modes_offered") or [])
 
 
+def sole_mode(source_format: str, target_format: str) -> Optional[str]:
+    """The only mode this path offers, or None when it offers 0 or 2.
+
+    A path offering exactly one mode is not a path with a choice withheld:
+    it is a path where the other mode does not exist. Running anything else
+    would be inventing a mode mpc2emu does not claim -- which for the disc
+    formats means converting with our own defaults on material where nothing
+    beyond the firmware's own reading was ever extracted.
+    """
+    modes = modes_offered(source_format, target_format)
+    return modes[0] if len(modes) == 1 else None
+
+
 def offers_a_choice(source_format: str) -> bool:
     """Is there any target where this source offers both modes?
 

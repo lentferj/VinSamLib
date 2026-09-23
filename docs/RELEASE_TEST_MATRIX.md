@@ -862,9 +862,9 @@ rows are absent on `master`.
 | # | Cell | Covered by |
 |---|---|---|
 | FW1 | An EPS and a Roland disc are **recognised by content**, list without decoding audio, and one row imports to E4B and to KRZ. Includes: an AKAI disc keeps the `.iso` extension; the EPS row→preset mapping partitions the whole disc; the variant suffixes still match mpc2emu's | `manual_firmware_import.py` |
-| FW2 | **Convert as the firmware would**, AKAI source, into E4B and KRZ: the output must differ from an ordinary conversion of the same program (byte comparison, one flag apart) | `manual_firmware_import.py` step 8 |
-| FW3 | The mode chooser appears **only** where a second mode exists — AKAI into E4B/KRZ — and never for a disc format or for a target no simulation writes | `manual_render_import_dialog.py` |
-| FW4 | Device matching **strips this project's processing** and says so, refuses a target with no simulation, and refuses a checkout whose parser cannot simulate rather than degrading silently | `manual_firmware_import.py` |
+| FW2 | **Convert as the firmware would** reaches the output on every implemented path — bytes differ for AKAI; for a disc the parser attaches `firmware_raw` (the two modes are byte-identical into E4B, which is correct, not hollow) | `manual_firmware_matrix.py`, `manual_firmware_import.py` |
+| FW3 | The mode chooser appears **only** where the contract offers two modes, per (source, target); where one mode is offered the dialog runs it rather than leaving it unreachable | `manual_firmware_matrix.py`, `manual_render_import_dialog.py` |
+| FW4 | Device matching **strips this project's processing** and says so, refuses a target with no simulation, and refuses a checkout whose parser cannot simulate rather than degrading silently. The whole chain runs once: dialog → options → import → readable bank | `manual_firmware_import.py`, `manual_firmware_matrix.py` |
 
 **Not covered, and deliberately so:** whether a simulated bank matches what
 the hardware actually writes. That needs the bank loaded on an E4XT or a

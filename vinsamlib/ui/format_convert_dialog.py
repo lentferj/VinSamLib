@@ -65,11 +65,11 @@ _KRZ_SANE_MAX_RATE_HZ = 24000
 #: leaving it up would have the dialog contradict the radio button above it.
 #: Shown for the two disc formats, which have no mode to choose between.
 _DISC_READER_WARNING = (
-    "{article} {fmt} disc has no documented layout, so the reader is derived from "
-    "the sampler's own firmware — which is also why there is no second, "
-    "better conversion to offer: nothing beyond what the firmware itself "
-    "reads is available to convert. The bank is then written normally, and "
-    "the options below apply as they do to any other import.")
+    "{article} {fmt} disc has no documented layout, so everything known "
+    "about it was read out of the samplers' own import routines — which is "
+    "why there is no second, better conversion to offer and no choice to "
+    "make here. This import converts as the firmware would, which for these "
+    "formats is the only definition of correct available.")
 
 _DEVICE_MATCH_WARNING = (
     "Converting as the firmware would: this writes what the sampler's own "
@@ -218,6 +218,11 @@ class FormatConvertDialog(ConvertOptionsDialog):
         self._refresh_pan_law_availability()
         self._refresh_krz_layers_availability()
         self._refresh_akai_hw_availability()
+        # AFTER `_method_row` exists. _build_method_row calls this as well,
+        # but at that moment the attribute is still the return value being
+        # assigned, so the per-target hide never landed and a single-mode
+        # path drew a chooser for a choice it does not have.
+        self._refresh_device_arm()
 
     # ── import method ──────────────────────────────────────────────────────
 
@@ -255,6 +260,9 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # the two modes are genuinely different products.
         if not firmware_sim.offers_a_choice(source_format):
             return None
+        # Built for the sources that have a choice into SOME target; which
+        # targets those are is settled per path by _refresh_device_arm,
+        # which hides the row where only one mode exists.
 
         row = QWidget()
         box = QVBoxLayout(row)
@@ -355,8 +363,37 @@ class FormatConvertDialog(ConvertOptionsDialog):
             if on else "")
 
     def _device_match_selected(self) -> bool:
+        """Is this conversion to reproduce the device's own import?
+
+        Two ways to be true. The AKAI radio is the visible one. The other is
+        a path that offers exactly ONE mode and that mode is `firmware` --
+        the four disc paths -- where there is no chooser precisely because
+        there is nothing to choose, and running anything else would invent a
+        mode mpc2emu does not offer. That case is stated in the dialog's own
+        text rather than left silent; see _DISC_READER_WARNING.
+        """
         radio = getattr(self, "_device_radio", None)
-        return bool(radio is not None and radio.isChecked() and radio.isEnabled())
+        if radio is not None and radio.isChecked() and radio.isEnabled():
+            return True
+        return self._sole_mode_is_firmware()
+
+    def _sole_mode_is_firmware(self) -> bool:
+        """Per PATH, never per source.
+
+        mpc2emu answered the question this was written for by changing the
+        contract: the two disc→KRZ paths now offer both modes, because the
+        outputs genuinely differ there, while the two disc→E4B paths still
+        offer one, because they are byte-identical. So the same disc has a
+        choice into one target and none into the other, and a source-level
+        test gets it wrong in both directions.
+        """
+        src = getattr(self, "_source_format", "")
+        if not src:
+            return False
+        target = self._current_target_format()
+        if firmware_sim.sole_mode(src, target) != "firmware":
+            return False
+        return firmware_sim.status(src, target).available
 
     def _current_target_format(self) -> str:
         # Python dispatches to this override from the BASE __init__, which runs

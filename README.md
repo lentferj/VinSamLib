@@ -286,15 +286,22 @@ not a quality setting and it will never make a bank sound better. The
 conversion options are skipped while it is selected, and the dialog shows
 what that path does *not* reproduce before you choose it.
 
-**Only AKAI gets the choice**, and the reason is the interesting part. An
-S3000XL is on the bench, so mpc2emu's AKAI reader carries filter, envelope,
-LFO and velocity laws measured on real hardware — every one of which both
-samplers throw away on import. That makes the two modes genuinely different
-products. For an Ensoniq or Roland disc there is no second mode to offer:
-everything known about those formats was read out of the samplers' own
-import routines to begin with, so there is nothing beyond what the firmware
-itself reads available to convert, and the dialog shows no chooser rather
-than a disabled option for something you are not being denied.
+**Which paths offer a choice is decided per path, not per format**, and the
+dialog reads it from mpc2emu rather than deciding for itself.
+
+An AKAI source offers both into either target: an S3000XL is on the bench,
+so mpc2emu's AKAI reader carries filter, envelope, LFO and velocity laws
+measured on real hardware — every one of which both samplers throw away on
+import. That makes the two modes genuinely different products.
+
+For an Ensoniq or Roland disc it depends on the target. Into **E4B** there
+is no second mode, because everything known about those formats was read out
+of EOS's own import routines to begin with — measurably so: the two modes
+produce byte-identical banks on the reference discs. The dialog shows no
+chooser there and converts as the firmware would, that being the only mode
+offered. Into **KRZ** the two do differ, because the K2000's import writes
+things our ordinary conversion does not, so both modes are offered and you
+choose.
 
 Where a path is not ready, the option is **disabled with mpc2emu's own
 reason**, never left out — someone who asks to convert as the firmware would
