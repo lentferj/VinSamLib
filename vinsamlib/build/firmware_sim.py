@@ -46,11 +46,26 @@ from typing import Optional
 #: an out-of-date table identifies itself instead of being believed.
 PROVISIONAL_AS_OF = "2026-09-22"
 
-#: The input shape VinSamLib actually hands mpc2emu. We assemble a program
-#: file and convert that; we never hand over a disk image. A path
-#: implemented only for images is therefore unusable here however green the
-#: contract's `status` reads -- measured the hard way on 2026-09-22.
-REQUIRED_INPUT_SHAPE = "program_file"
+#: The input shape VinSamLib hands mpc2emu, WHICH DIFFERS BY SOURCE.
+#:
+#: For AKAI we assemble a program file out of a browsed volume and convert
+#: that -- `convert._convert_akai_program` writes a `.p3`/`.a3p` into a temp
+#: directory and parses it. For an Ensoniq or Roland disc we hand over the
+#: IMAGE itself, because `foreign_import.parse_foreign` calls the registry's
+#: `.iso` entry on the disc path; there is no loose-file form of a Roland
+#: partial or an Ensoniq instrument to assemble.
+#:
+#: A single global value here was right while AKAI was the only implemented
+#: source and WRONG the moment the other four landed -- it refused all of
+#: them with "VinSamLib converts a program_file", which reads like an
+#: upstream gap and is really us asking the wrong question.
+_INPUT_SHAPE_BY_SOURCE = {"AKAI": "program_file"}
+DEFAULT_INPUT_SHAPE = "disk_image"
+
+
+def required_input_shape(source_format: str) -> str:
+    return _INPUT_SHAPE_BY_SOURCE.get(source_format.upper(),
+                                      DEFAULT_INPUT_SHAPE)
 
 
 @dataclass(frozen=True)
@@ -158,6 +173,13 @@ def fidelity(source_format: str, target_format: str) -> str:
     if not entry:
         return ""
     parts = []
+    # Their sentence, written to be shown: what this path was actually
+    # checked against, which for these is the device's own output rather
+    # than a reading of its code. Shown FIRST -- it is the strongest thing
+    # on the row and it frames everything after it as a known residual.
+    verified = entry.get("verified_against_device")
+    if verified:
+        parts.append(str(verified))
     modelled = entry.get("modelled_cords")
     total = entry.get("cord_write_sites_in_firmware")
     if modelled and total:
@@ -277,11 +299,12 @@ def status(source_format: str, target_format: str) -> PathStatus:
             # the shape to require, and requiring it by name means a future
             # path implemented for discs only refuses here by itself.
             shapes = entry.get("input_shapes")
-            if shapes is not None and REQUIRED_INPUT_SHAPE not in shapes:
+            want = required_input_shape(source_format)
+            if shapes is not None and want not in shapes:
                 return PathStatus(
                     False, f"upstream implements this path for "
                            f"{', '.join(shapes) or 'another input shape'}, "
-                           f"but VinSamLib converts a {REQUIRED_INPUT_SHAPE}")
+                           f"but VinSamLib hands it a {want}")
             if not INVOCABLE_HERE:
                 return PathStatus(
                     False, "implemented upstream, but VinSamLib has no way to "

@@ -539,7 +539,8 @@ def _stage_tal_samples(path: Path):
 
 
 def parse_foreign(path, wav_dir: Optional[str] = None,
-                  max_presets: Optional[int] = None):
+                  max_presets: Optional[int] = None,
+                  firmware_sim: bool = False):
     """Parse any of the five formats into an mpc2emu Bank.
 
     Goes through mpc2emu's own ``parsers/registry.py`` rather than five
@@ -577,6 +578,19 @@ def parse_foreign(path, wav_dir: Optional[str] = None,
         # correctly. `limit` is deliberately not passed either: for EPS it
         # would be a PRESET ceiling applied to a count of INSTRUMENTS.
         kw: dict = {}
+        if firmware_sim:
+            # A DISC is the shape mpc2emu implements these four paths for,
+            # so unlike AKAI nothing is assembled first -- the image goes
+            # straight to the registry. Refuse rather than degrade if the
+            # checkout cannot simulate, the same way the AKAI half does:
+            # returning a normal conversion under the device's name is the
+            # failure both projects spent a day making impossible.
+            if not _disc_parser_takes_firmware_sim():
+                raise ValueError(
+                    "This mpc2emu checkout's disc parsers cannot simulate "
+                    "the firmware. Convert as good as possible instead, or "
+                    "point Settings at a checkout that carries it.")
+            kw["firmware_sim"] = True
     else:
         kw = {"max_samples": _MAX_SAMPLES}
         if max_presets:
@@ -590,6 +604,24 @@ def parse_foreign(path, wav_dir: Optional[str] = None,
             with staged:
                 return _run_captured(parser, str(p), staged.name, **kw)
     return _run_captured(parser, str(p), wav_dir, **kw)
+
+
+def _disc_parser_takes_firmware_sim() -> bool:
+    """Do BOTH disc parsers accept ``firmware_sim``?
+
+    Both, not either: the registry dispatches on content, so which one runs
+    is not known until the disc is read, and a checkout carrying the flag on
+    one reader and not the other would simulate an Ensoniq disc and quietly
+    convert a Roland one.
+    """
+    try:
+        for fn in (mpc2emu_bridge.eps_parser.parse_eps_image,
+                   mpc2emu_bridge.roland_parser.parse_roland_image):
+            if "firmware_sim" not in fn.__code__.co_varnames:
+                return False
+    except Exception:
+        return False
+    return True
 
 
 def _listed_count(path) -> Optional[int]:
@@ -796,7 +828,8 @@ def import_foreign(path, opts: ConversionOptions,
         # is belt and braces -- but the day it stops ignoring it, an EPS
         # import would silently keep 613 of 2396 presets.)
         cap = None if p.suffix.lower() in IMAGE_CONTENT_EXTS else _listed_count(p)
-        bank = parse_foreign(p, wav_dir, max_presets=cap)
+        bank = parse_foreign(p, wav_dir, max_presets=cap,
+                             firmware_sim=bool(getattr(opts, "match_device_import", False)))
     if not bank.presets:
         raise ValueError(
             f"{p.name} holds no sampled content: nothing in it references a "
