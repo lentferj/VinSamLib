@@ -37,11 +37,16 @@ We can read the artifact; we cannot reproduce it, diff it, or check that
 what is published is what their code would produce.
 
 **So treat it as ASSERTED BY mpc2emu, not as verifiable.** That is a weaker
-guarantee than the file's own wording implies, and everything downstream --
-the availability gate, `input_shapes`, the caveats we render verbatim, the
-`schema` pin -- rests on it. They told us rather than letting us discover
-it, and it is on their TODO. This paragraph comes out when the generator is
-tracked, and not before. ``_contract_data()`` reads it from the
+guarantee than the file's own wording used to imply, and everything
+downstream -- the availability gate, `input_shapes`, the caveats we render
+verbatim, the `schema` pin -- rests on it. They told us rather than letting
+us discover it, and on 2026-09-24 they put the caveat into the artifact's
+own `note`, so it is now checkable against the file instead of resting on
+this comment. `manual_firmware_matrix` asserts the invariant that survives
+both futures: **either the generator the note credits is reachable, or the
+note says it is not.** That passes the day they track it and delete the
+caveat, and fails only if the caveat is dropped while the generator stays
+invisible. ``_contract_data()`` reads it from the
 configured checkout; ``load_contract()`` is the test-only setter. The
 provisional statuses below are the fallback for a checkout without the file,
 and they are deliberately more conservative than the contract -- they come from
