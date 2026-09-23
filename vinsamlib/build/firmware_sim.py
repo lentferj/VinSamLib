@@ -24,9 +24,24 @@ name over two layers, failing as if the app were broken.
 A user who picks (2) expecting better results gets worse ones, which is why
 it is never phrased as a quality setting and never sits beside one.
 
-**The table below is PROVISIONAL and exists to be deleted.** mpc2emu is
-generating a JSON contract from their code and asserting it in their test
-suite, precisely so this cannot drift. ``_contract_data()`` reads it from the
+**The table below is PROVISIONAL and exists to be deleted.** mpc2emu
+publishes a JSON contract, which is what this reads instead of guessing.
+
+⚠ **WHAT THAT CONTRACT IS, ACCURATELY.** Its own `note` says it is
+"generated from the source by tools/firmware_sim_contract.py" and mpc2emu
+assert it in their suite -- but `tools/` is gitignored in that repository
+(verified here 2026-09-24: the artifact is tracked, the generator is not,
+11 scripts on disk and 0 tracked). So the generator and the test that
+asserts `on_disk == build()` exist in their working tree and in no clone.
+We can read the artifact; we cannot reproduce it, diff it, or check that
+what is published is what their code would produce.
+
+**So treat it as ASSERTED BY mpc2emu, not as verifiable.** That is a weaker
+guarantee than the file's own wording implies, and everything downstream --
+the availability gate, `input_shapes`, the caveats we render verbatim, the
+`schema` pin -- rests on it. They told us rather than letting us discover
+it, and it is on their TODO. This paragraph comes out when the generator is
+tracked, and not before. ``_contract_data()`` reads it from the
 configured checkout; ``load_contract()`` is the test-only setter. The
 provisional statuses below are the fallback for a checkout without the file,
 and they are deliberately more conservative than the contract -- they come from
@@ -108,8 +123,19 @@ _PROVISIONAL = {
 #: arm nearly shipped hollow.
 INVOCABLE_HERE = True
 
+#: The contract schema this code was written against. mpc2emu states the
+#: rule in the artifact itself: read any key you know while `schema` equals
+#: the number you were written against, and refuse rather than guess when it
+#: is higher. Bumping this is a deliberate act after reading their changelog,
+#: never a way to silence the refusal.
+KNOWN_SCHEMA = 1
+
 _contract: Optional[dict] = None
 _contract_tried = False
+#: Why the contract was refused, if it was -- shown instead of the generic
+#: "no contract" sentence, so a schema bump reads as a version mismatch
+#: rather than as a missing file.
+_contract_refusal = ""
 
 #: Where mpc2emu generates it. Read from the configured checkout, never
 #: copied here: a copy is a second source of truth that goes stale silently,
@@ -141,7 +167,7 @@ def _contract_data() -> Optional[dict]:
     path itself, so this does not add a new surprise, but it is the reason
     a freshly-configured checkout still shows every path unavailable.
     """
-    global _contract, _contract_tried
+    global _contract, _contract_tried, _contract_refusal
     if _contract_tried:
         return _contract
     _contract_tried = True
@@ -149,9 +175,27 @@ def _contract_data() -> Optional[dict]:
         from ..config import Config
         path = Config.load().mpc2emu_path / CONTRACT_RELPATH
         with open(path, "r", encoding="utf-8") as fh:
-            _contract = json.load(fh)
+            data = json.load(fh)
     except Exception:
         _contract = None
+        return _contract
+    # PIN THE SCHEMA. mpc2emu's rule: adding a key keeps the number,
+    # removing or re-meaning one bumps it. So a number we do not know means
+    # a key we read may be gone or may mean something else -- and finding
+    # that out as a KeyError from inside the dialog's own display code is
+    # the worst available outcome. Refuse, keep the reason, and fall back to
+    # offering nothing.
+    schema = data.get("schema")
+    if schema is not None and schema > KNOWN_SCHEMA:
+        _contract_refusal = (
+            f"this mpc2emu checkout's firmware-simulation contract is "
+            f"schema {schema} and VinSamLib was written against "
+            f"{KNOWN_SCHEMA}; a higher number means a key was removed or "
+            f"re-meant, so nothing here can be trusted to still mean what "
+            f"it says")
+        _contract = None
+        return _contract
+    _contract = data
     return _contract
 
 
@@ -337,6 +381,8 @@ def status(source_format: str, target_format: str) -> PathStatus:
         return PathStatus(
             False, f"there is no firmware simulation that writes "
                    f"{target_format} from {source_format}")
+    if _contract_refusal:
+        return PathStatus(False, _contract_refusal)
     got = _PROVISIONAL.get((source_format, target_format))
     if got is not None and got.available and not INVOCABLE_HERE:
         return PathStatus(
