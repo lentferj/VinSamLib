@@ -172,6 +172,18 @@ class FormatConvertDialog(ConvertOptionsDialog):
                 targets.append("AKAI")
         except Exception:
             pass
+        # mpc2emu refuses some (source, target) pairs outright -- an Ensoniq
+        # or Roland disc writes E4B and KRZ only, in EITHER mode -- so the
+        # combination should never be offered rather than failing at the
+        # engine after a possibly slow parse. We can do this before running
+        # where their CLI cannot: it sees only an extension, and `.iso` is
+        # claimed by three samplers, while the Explorer has already
+        # content-identified the disc and hands us the source format.
+        allowed = firmware_sim.allowed_targets(source_format)
+        if allowed is not None:
+            kept = [t for t in targets if t.upper() in allowed]
+            if kept:
+                targets = kept
         self._format_box.addItems(targets)
         default_fmt = locked_format or (initial.target_format if initial else "E4B")
         self._format_box.setCurrentText(default_fmt)

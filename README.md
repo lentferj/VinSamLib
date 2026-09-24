@@ -294,7 +294,18 @@ so mpc2emu's AKAI reader carries filter, envelope, LFO and velocity laws
 measured on real hardware — every one of which both samplers throw away on
 import. That makes the two modes genuinely different products.
 
-An Ensoniq or Roland disc offers **no choice at all**, into either target,
+An Ensoniq or Roland disc converts to **E4B and KRZ only** — the other
+targets are not offered, in either mode. The reason is the same one, carried
+a step: with no instrument on the bench, the only thing that can tell us a
+conversion is right at all is a machine that imports the same disc and can
+be diffed against it. A real E4XT and a real K2000 do. Nothing imports an
+Ensoniq or Roland disc and writes EIII, AKAI or a soft-sampler format, so
+for those targets no evidence could exist — the limit is on what can be
+justified, not on what could be produced. It lifts if an independent reading
+of the source format lands, or one of those machines gains an importer.
+
+An Ensoniq or Roland disc offers **no choice of mode at all**, into either
+allowed target,
 and the reason is the honest one: there is no Ensoniq and no Roland here.
 "As good as possible" is a claim about sounding closer to the original
 instrument, and with no such instrument on the bench nothing can check it —

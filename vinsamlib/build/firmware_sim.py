@@ -298,6 +298,57 @@ def modes_offered(source_format: str, target_format: str) -> list:
 NO_MEASURED_ALTERNATIVE = frozenset({EPS_SOURCE, ROLAND_SOURCE})
 
 
+def target_restriction(source_format: str) -> Optional[dict]:
+    """mpc2emu's `source_target_restriction` for this source, or None.
+
+    **Binds EVERY conversion from that source, not just the simulated one.**
+    Its `applies_to` lists both `firmware` and `best`, and that is the half a
+    reader would assume away: it is not a simulation rule a user escapes by
+    choosing the ordinary conversion.
+
+    The reasoning is the one Jan settled about modes, carried a step: these
+    readers extract no filter, envelope, LFO or velocity values, because
+    everything known about the format came from the samplers' own importers.
+    So the only thing that can tell us a conversion is right at all is a
+    machine that imports the same disc and can be diffed against it. A real
+    E4XT and a real K2000 do. Nothing imports an EPS or S-7xx disc and
+    writes EIII, AKAI or TAL, so for those targets no evidence could exist.
+
+    A limit on what can be JUSTIFIED, not on what could be produced -- we
+    were producing them, and they were files nothing could check.
+    """
+    data = _contract_data()
+    if not data:
+        return None
+    rule = data.get("source_target_restriction")
+    if not rule:
+        return None
+    sources = {_norm(x) for x in rule.get("sources") or ()}
+    return rule if _norm(source_format) in sources else None
+
+
+def allowed_targets(source_format: str) -> Optional[list]:
+    """Target formats this source may convert to, or None if unrestricted.
+
+    Returned in OUR labels, upper-cased, so a caller can compare against the
+    picker's entries without knowing mpc2emu writes them lower-case.
+    """
+    rule = target_restriction(source_format)
+    if not rule:
+        return None
+    return [str(t).upper() for t in rule.get("allowed_targets") or ()]
+
+
+def refuse_target(source_format: str, target_format: str) -> str:
+    """Why this pair is refused, or "" if it is allowed."""
+    allowed = allowed_targets(source_format)
+    if allowed is None or target_format.upper() in allowed:
+        return ""
+    rule = target_restriction(source_format) or {}
+    return (f"{source_format} converts to {', '.join(allowed)} only. "
+            f"{rule.get('why', '')}").strip()
+
+
 def sole_mode(source_format: str, target_format: str) -> Optional[str]:
     """The only mode this path offers, or None when it offers 0 or 2.
 

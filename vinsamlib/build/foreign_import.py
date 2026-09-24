@@ -70,6 +70,7 @@ from pathlib import Path, PurePosixPath
 from typing import Optional
 
 from . import convert as convert_mod
+from . import firmware_sim
 from .convert import ConversionOptions, _apply_and_write, _run_captured
 from .sample_names import apply_sample_names, names_from_base
 from .xpm_import import XpmSummary, _preset_samples, summarize_program
@@ -817,6 +818,17 @@ def import_foreign(path, opts: ConversionOptions,
     accident.
     """
     p = Path(path)
+    # REFUSE A PAIR mpc2emu refuses, here rather than inside their parser.
+    # This binds the ordinary conversion too -- the rule's `applies_to` lists
+    # both modes -- and a caller that is not the dialog (a restored session,
+    # a matrix test, a script) reaches this with no picker to have greyed the
+    # target out. Before the parse, because we already know the source
+    # format by content and need not pay for a 19-second disc read to learn
+    # the answer is no.
+    _src_fmt = format_for(p) or ""
+    _refusal = firmware_sim.refuse_target(_src_fmt, opts.target_format)
+    if _refusal:
+        raise ValueError(_refusal)
     # Collected around the PARSE, not just the write: mpc2emu's SoundFont
     # parser is where SF2_ENTRIES_DROPPED and SF2_PRESETS_TRUNCATED are
     # emitted, and a dropped entry SHIFTS every later ordinal -- the fault
