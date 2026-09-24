@@ -66,6 +66,10 @@ from typing import Optional
 #: an out-of-date table identifies itself instead of being believed.
 PROVISIONAL_AS_OF = "2026-09-22"
 
+#: Our labels for the two disc formats, as foreign_import uses them.
+EPS_SOURCE = "EPS"
+ROLAND_SOURCE = "Roland"
+
 #: The input shape VinSamLib hands mpc2emu, WHICH DIFFERS BY SOURCE.
 #:
 #: For AKAI we assemble a program file out of a browsed volume and convert
@@ -262,7 +266,36 @@ def modes_offered(source_format: str, target_format: str) -> list:
     entry = _entry(source_format, target_format)
     if entry is None:
         return []
-    return list(entry.get("modes_offered") or [])
+    modes = list(entry.get("modes_offered") or [])
+    if source_format.upper() in {m.upper() for m in NO_MEASURED_ALTERNATIVE}:
+        # Never ADD a mode -- only drop the one we cannot justify offering.
+        modes = [m for m in modes if m != "best"] or modes
+    return modes
+
+
+#: Sources with NO INSTRUMENT ON THE BENCH, where this project therefore has
+#: no basis for a conversion it can call better than the device's own.
+#:
+#: **A VinSamLib policy, applied on top of the contract, and it exists
+#: because of a mistake of ours.** We measured that disc->KRZ output differs
+#: between the two modes (97 bytes on the EPS reference disc, 14 on the
+#: Roland one) and reported the difference; mpc2emu read that as evidence
+#: that both modes exist there and added `best` to `modes_offered`. But the
+#: difference is our KRZ writer filling in program fields the K2000's own
+#: importer leaves at template defaults -- in ten of those fourteen bytes we
+#: write a value and the device writes zero -- using envelope and filter
+#: laws measured on an E4XT and an S3000XL. Applying those to Roland
+#: material is not an improvement, it is a guess with no reference, and
+#: "convert as good as possible" promises the user something nobody here
+#: can check.
+#:
+#: AKAI is deliberately absent: an S3000XL IS on the bench, so there the
+#: better conversion is measured and the choice is real.
+#:
+#: This filter disappears of its own accord if mpc2emu drop `best` from
+#: those paths again -- it removes a mode, never adds one, so it can only
+#: ever agree with a narrower contract.
+NO_MEASURED_ALTERNATIVE = frozenset({EPS_SOURCE, ROLAND_SOURCE})
 
 
 def sole_mode(source_format: str, target_format: str) -> Optional[str]:
@@ -294,9 +327,13 @@ def offers_a_choice(source_format: str) -> bool:
     data = _contract_data()
     if not data:
         return source_format.upper() == "AKAI"
+    # Through modes_offered(), never the raw entry: NO_MEASURED_ALTERNATIVE
+    # is applied there, and reading the contract directly here would draw a
+    # chooser for a mode the policy has just withdrawn.
     for entry in data.get("paths", []):
         if _norm(entry.get("source")) == _norm(source_format):
-            if len(entry.get("modes_offered") or []) > 1:
+            target = str(entry.get("target") or "")
+            if len(modes_offered(source_format, target)) > 1:
                 return True
     return False
 

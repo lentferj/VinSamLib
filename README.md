@@ -294,14 +294,19 @@ so mpc2emu's AKAI reader carries filter, envelope, LFO and velocity laws
 measured on real hardware — every one of which both samplers throw away on
 import. That makes the two modes genuinely different products.
 
-For an Ensoniq or Roland disc it depends on the target. Into **E4B** there
-is no second mode, because everything known about those formats was read out
-of EOS's own import routines to begin with — measurably so: the two modes
-produce byte-identical banks on the reference discs. The dialog shows no
-chooser there and converts as the firmware would, that being the only mode
-offered. Into **KRZ** the two do differ, because the K2000's import writes
-things our ordinary conversion does not, so both modes are offered and you
-choose.
+An Ensoniq or Roland disc offers **no choice at all**, into either target,
+and the reason is the honest one: there is no Ensoniq and no Roland here.
+"As good as possible" is a claim about sounding closer to the original
+instrument, and with no such instrument on the bench nothing can check it —
+so the dialog does not offer it, and converts as the firmware would.
+
+Into E4B the question is moot anyway: the two conversions produce
+byte-identical banks on the reference discs. Into KRZ they do differ, but
+the difference is this project's writer filling in program fields the
+K2000's own importer leaves at template defaults, using envelope and filter
+laws measured on an E4XT and an S3000XL. Applying those to Roland material
+is a guess with no reference, not an improvement, and offering it under the
+word "better" would promise what nobody here can demonstrate.
 
 Where a path is not ready, the option is **disabled with mpc2emu's own
 reason**, never left out — someone who asks to convert as the firmware would
