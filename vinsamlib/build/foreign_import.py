@@ -818,7 +818,14 @@ def import_foreign(path, opts: ConversionOptions,
     accident.
     """
     p = Path(path)
-    # REFUSE A PAIR mpc2emu refuses, here rather than inside their parser.
+    # REFUSE A PAIR mpc2emu refuses, here rather than inside their parser,
+    # and EARLY -- which their contract now explicitly sanctions:
+    # `consumers_may_enforce_earlier: "yes -- if you already know the source
+    # format, refuse the pair before reading anything; the rule is the pair,
+    # not the moment it is checked"`. Their own `enforced_in_mpc2emu` says
+    # "after parsing", and that is a fact about their CLI, which sees only a
+    # filename. It is not a property of the rule, and reading it as one
+    # would make us defer a check we can make immediately.
     # This binds the ordinary conversion too -- the rule's `applies_to` lists
     # both modes -- and a caller that is not the dialog (a restored session,
     # a matrix test, a script) reaches this with no picker to have greyed the
