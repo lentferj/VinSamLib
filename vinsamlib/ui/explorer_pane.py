@@ -511,6 +511,14 @@ class ExplorerPane(QWidget):
         if locked and locked != "KRZ":
             rom_only = [n for n in convertible if _krz_rom_only(n)]
             convertible = [n for n in convertible if n not in rom_only]
+        # A split multi-disc bank refuses for a DIFFERENT reason and at every
+        # target, including KRZ: the audio is not in the file, so there is
+        # nothing to copy into the new one whichever machine it is for. Same
+        # treatment as ROM-only -- taken out of the action rather than left to
+        # fail inside assemble() once the dialog has been filled in.
+        split_banks = [n for n in convertible if _krz_missing_audio(n)]
+        if split_banks:
+            convertible = [n for n in convertible if n not in split_banks]
         if convertible:
             # One shared Convert Options dialog covers the whole
             # selection -- same options applied to every preset, not one
@@ -540,8 +548,11 @@ class ExplorerPane(QWidget):
             # perfectly well.
             dev_ok, dev_why = check_playback()
             rom_only_node = node.kind == "preset" and _krz_rom_only(node)
+            missing = ("" if node.kind != "preset"
+                       else _krz_missing_audio(node))
             label, enabled, tooltip = _audition_decision(
-                node, model_ok, model_why, dev_ok, dev_why, rom_only_node)
+                node, model_ok, model_why, dev_ok, dev_why, rom_only_node,
+                missing)
             audition_action = menu.addAction(label)
             audition_action.setEnabled(enabled)
             if tooltip:
@@ -688,8 +699,41 @@ def _krz_rom_only(node: TreeNode) -> bool:
     return True
 
 
+def _krz_missing_audio(node: TreeNode) -> str:
+    """Why this KRZ preset cannot be rebuilt from its own file, or "".
+
+    A multi-disc set puts the object table on disk 1 and the audio on the
+    next volume, so the bank parses, every reference resolves to a real
+    sample object, the row shows a size in KB -- and the PCM is not there.
+    `assemble()` refuses it, but only after the user has clicked, which is
+    how this arrived as a modal on top of an ordinary-looking row.
+
+    The arithmetic lives in banks/krz.py next to that refusal, so the menu
+    and the assembler cannot come to disagree about whether the audio is
+    here. Per PROGRAM, not per bank: in the file that prompted this, one
+    program is missing its audio and the other eleven are intact.
+    """
+    payload = getattr(node, "payload", None)
+    if not isinstance(payload, tuple) or len(payload) != 2:
+        return ""
+    bank, preset = payload
+    if not hasattr(bank, "program_keymap_refs"):
+        return ""                        # not KRZ; this question is KRZ-only
+    try:
+        from ..banks import krz as vs_krz
+        missing = vs_krz.program_missing_audio(bank, preset)
+    except Exception:
+        return ""                        # never let a guess block a real row
+    if missing is None:
+        return ""
+    name, needed, got = missing
+    return (f"{name!r} needs {needed} words of audio that are not in this "
+            f"file — a multi-disc set stores them on the next volume")
+
+
 def _audition_decision(node, model_ok: bool, model_why: str, play_ok: bool,
-                       play_why: str, rom_only: bool) -> tuple:
+                       play_why: str, rom_only: bool,
+                       missing_audio: str = "") -> tuple:
     """``(label, enabled, tooltip)`` for the Audition menu entry.
 
     A refusal is a NAMED, disabled action rather than a silent absence, so
@@ -718,6 +762,13 @@ def _audition_decision(node, model_ok: bool, model_why: str, play_ok: bool,
         return ("Audition — this program references only ROM samples", False,
                 "the bank file holds no audio for this program; its samples "
                 "live in the sampler's ROM")
+    if missing_audio:
+        # Named and DISABLED, like the ROM-only case and unlike the no-device
+        # case: there is no audio to render, so there is no WAV to save
+        # either, and an enabled action could only end in the modal this
+        # exists to replace.
+        return ("Audition — this program's audio is not in this file", False,
+                missing_audio)
     return (f'Audition "{node.label}"', True, "")
 
 

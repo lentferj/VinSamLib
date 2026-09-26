@@ -924,6 +924,57 @@ def parse(path: str) -> KrzFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
+def program_missing_audio(bank: "KrzFile", program: KrzObject):
+    """``(sample_name, needed_words, present_words)`` for the first sample a
+    program needs whose audio is NOT in this file, or ``None`` if it is all
+    here.
+
+    The multi-disc split bank `_split_bank_hint()` names: disk 1 carries the
+    object table and the audio sits on the next volume, so the bank parses
+    perfectly, every reference resolves to a real sample object, and only the
+    PCM is missing. 310 of 27 217 samples in this library are like that.
+
+    This is the SAME condition `assemble()` refuses on below, and it exists so
+    the refusal can be made before the user clicks rather than after: without
+    it the row looks ordinary, offers Audition and Import, and answers both
+    with a modal. It deliberately mirrors that arithmetic -- the extent, the
+    slice and `PCM_SHORTFALL_SLACK` -- rather than restating the rule, because
+    two copies of "is the audio here" would drift and the pessimistic copy
+    would start greying banks that convert perfectly well.
+
+    NOT the same question as `_krz_rom_only`: there the references resolve to
+    nothing at all because the audio lives in the machine's ROM. Here they
+    resolve, and the file is short. Both end in "this cannot be rebuilt", for
+    reasons that want different words.
+
+    Cheap enough for a context menu: it reads already-parsed objects and
+    slices no audio.
+    """
+    total_words = len(bank.pcm) // 2
+    for km_id in bank.program_keymap_refs(program):
+        km = bank.keymaps.get(km_id)
+        if km is None:
+            continue
+        for sid in bank.keymap_sample_refs(km):
+            samp = bank.samples.get(sid)
+            if samp is None:
+                continue          # ROM -- a different question, and not ours
+            try:
+                start, n_words = bank.sample_word_extent(samp)
+            except Exception:     # unreadable extent: leave the row alone
+                continue
+            if not n_words:
+                continue
+            got = max(0, min(total_words, start + n_words) - start)
+            # The same slack assemble() allows: a shortfall of a few words is
+            # the `sampleEnd - sampleStart + 1` convention overcounting, not
+            # missing audio. Refusing on that blocked an ordinary bank over
+            # two bytes once already.
+            if n_words - got > PCM_SHORTFALL_SLACK:
+                return (samp.name, n_words, got)
+    return None
+
+
 def assemble(selections: list[tuple[KrzFile, KrzObject]],
              sample_names: dict | None = None,
              warnings_out: list | None = None,
