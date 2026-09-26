@@ -177,6 +177,25 @@ class Config:
     #: one, and most users are not auditing loops. Nothing is ever modified —
     #: see banks/loopcheck.py for why this reports and never repairs.
     loop_click_check: bool = False
+    #: Whether the Audition report window opens every time.
+    #:
+    #: The report is the feature's honesty surface -- what is measured, what
+    #: is fitted, what is not modelled at all -- so it is shown by DEFAULT and
+    #: opting out is the user's decision, never ours. Once they have read it
+    #: for a format, a window per audition is in the way of the thing they
+    #: came for, which is the sound. Off, an audition plays straight away
+    #: behind a small notice that closes itself.
+    #:
+    #: It comes back whenever the report is the only thing there is: no
+    #: playback route means no sound, and then the window carries Save as
+    #: WAV and is shown regardless of this setting.
+    audition_show_report: bool = True
+    #: Playback level for auditions, 0-100. A PLAYBACK trim, not a render
+    #: one: it never reaches the rendered audio, the peak the report quotes,
+    #: or the file Save as WAV… writes. Those describe the PRESET, and a
+    #: number that moved because a slider moved would make the report a
+    #: statement about the slider.
+    audition_volume: int = 100
     #: What the Audition action plays, in order. Comma-separated; names use the
     #: C3 = 60 convention this project shows everywhere, and bare MIDI numbers
     #: work too. An entry may also be a chord in parentheses, and any entry may
@@ -240,6 +259,10 @@ class Config:
         debug_mpc2emu_log = bool(data.get("debug_mpc2emu_log",
                                           defaults.debug_mpc2emu_log))
         loop_click_check = bool(data.get("loop_click_check", defaults.loop_click_check))
+        audition_show_report = bool(data.get(
+            "audition_show_report", defaults.audition_show_report))
+        audition_volume = max(0, min(100, int(data.get(
+            "audition_volume", defaults.audition_volume))))
         audition_notes = str(data.get("audition_notes", defaults.audition_notes))
         audition_velocity = int(data.get("audition_velocity", defaults.audition_velocity))
         audition_hold_seconds = float(data.get("audition_hold_seconds",
@@ -255,6 +278,8 @@ class Config:
                     autosave_seconds=autosave_seconds,
                     debug_mpc2emu_log=debug_mpc2emu_log,
                     loop_click_check=loop_click_check,
+                    audition_show_report=audition_show_report,
+                    audition_volume=audition_volume,
                     audition_notes=audition_notes,
                     audition_velocity=audition_velocity,
                     audition_hold_seconds=audition_hold_seconds,
@@ -304,6 +329,8 @@ class Config:
         lines.append(f"autosave_seconds = {self.autosave_seconds}")
         lines.append(f"debug_mpc2emu_log = {str(bool(self.debug_mpc2emu_log)).lower()}")
         lines.append(f"loop_click_check = {str(self.loop_click_check).lower()}")
+        lines.append(f"audition_show_report = {str(self.audition_show_report).lower()}")
+        lines.append(f"audition_volume = {int(self.audition_volume)}")
         lines.append(f"audition_notes = {_toml_str(self.audition_notes)}")
         lines.append(f"audition_velocity = {int(self.audition_velocity)}")
         lines.append(f"audition_hold_seconds = {float(self.audition_hold_seconds)}")

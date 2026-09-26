@@ -214,6 +214,16 @@ class SettingsDialog(QDialog):
         self._audition_gap_spin.setSuffix(" s")
         self._audition_gap_spin.setValue(float(config.audition_gap_seconds))
         aud_form.addRow("Gap between notes:", self._audition_gap_spin)
+        self._audition_volume_spin = QSpinBox()
+        self._audition_volume_spin.setRange(0, 100)
+        self._audition_volume_spin.setSuffix(" %")
+        self._audition_volume_spin.setValue(int(
+            getattr(config, "audition_volume", 100)))
+        self._audition_volume_spin.setToolTip(
+            "Playback level only. It never changes the rendered audio, the "
+            "peak the report quotes, or the file Save as WAV… writes — those "
+            "describe the preset.")
+        aud_form.addRow("Playback volume:", self._audition_volume_spin)
         layout.addLayout(aud_form)
         self._audition_notes_status = QLabel("")
         layout.addWidget(self._audition_notes_status)
@@ -334,7 +344,9 @@ class SettingsDialog(QDialog):
             or abs(self._audition_hold_spin.value()
                    - self._config.audition_hold_seconds) > 1e-9
             or abs(self._audition_gap_spin.value()
-                   - self._config.audition_gap_seconds) > 1e-9)
+                   - self._config.audition_gap_seconds) > 1e-9
+            or self._audition_volume_spin.value()
+               != int(getattr(self._config, "audition_volume", 100)))
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
@@ -370,6 +382,7 @@ class SettingsDialog(QDialog):
             self._config.audition_velocity = self._audition_velocity_spin.value()
             self._config.audition_hold_seconds = self._audition_hold_spin.value()
             self._config.audition_gap_seconds = self._audition_gap_spin.value()
+            self._config.audition_volume = self._audition_volume_spin.value()
         if path_changed or limits_changed or audition_changed:
             self._config.save()
         super().accept()

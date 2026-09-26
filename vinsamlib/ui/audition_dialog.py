@@ -18,9 +18,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel,
-                               QMessageBox, QPushButton, QTextBrowser,
-                               QVBoxLayout)
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog,
+                               QHBoxLayout, QLabel, QMessageBox,
+                               QProgressBar, QPushButton,
+                               QTextBrowser, QVBoxLayout)
 
 from ..audition.caveats import SEVERITY_ORDER
 from .audition_player import (AuditionPlayer, check_playback, write_wav)
@@ -32,10 +34,23 @@ HEADER = ("This is a model of the preset's parameters. It is not a model of "
 class AuditionDialog(QDialog):
     """Holds the player and the rendered audio for one audition."""
 
-    def __init__(self, rendering, title: str = "Audition", parent=None):
+    #: The user unticked "show this every time". Emitted rather than written
+    #: straight to the Config, because the window that owns the setting also
+    #: owns the menu item that mirrors it -- two places writing it separately
+    #: is how a checkbox and a menu tick come to disagree.
+    showReportChanged = Signal(bool)
+
+    def __init__(self, rendering, title: str = "Audition", parent=None,
+                 show_report_default: bool = True, volume: int = 100,
+                 player=None):
         super().__init__(parent)
         self._rendering = rendering
-        self._player = AuditionPlayer(self)
+        # `player` is a RUNNING player handed over by the notice window, so
+        # opening the report does not interrupt the sound it describes.
+        self._player = player if player is not None \
+            else AuditionPlayer(self, volume=volume)
+        if player is not None:
+            self._player.setParent(self)
         self._player.finished.connect(self._on_finished)
         self._player.failed.connect(self._on_failed)
         self.setWindowTitle(title)
@@ -57,7 +72,7 @@ class AuditionDialog(QDialog):
         self._play_btn = QPushButton("Play")
         self._play_btn.clicked.connect(self._on_play)
         self._stop_btn = QPushButton("Stop")
-        self._stop_btn.clicked.connect(self._player.stop)
+        self._stop_btn.clicked.connect(self._on_stop)
         self._save_btn = QPushButton("Save as WAV…")
         self._save_btn.clicked.connect(self._on_save)
         transport.addWidget(self._play_btn)
@@ -67,6 +82,17 @@ class AuditionDialog(QDialog):
         layout.addLayout(transport)
 
         close_row = QHBoxLayout()
+        # The opt-out sits beside Close, where someone who has finished
+        # reading is already looking. It says what it does in the positive,
+        # so the ticked state is the one that matches what is on screen.
+        self._show_again = QCheckBox("Show this report every time")
+        self._show_again.setChecked(bool(show_report_default))
+        self._show_again.setToolTip(
+            "Off: an audition plays straight away behind a small notice.\n"
+            "The report still opens when there is no way to play it, and\n"
+            "Save as WAV\u2026 always writes it beside the audio.")
+        self._show_again.toggled.connect(self.showReportChanged)
+        close_row.addWidget(self._show_again)
         close_row.addStretch(1)
         close = QPushButton("Close")
         close.clicked.connect(self.reject)
@@ -79,10 +105,10 @@ class AuditionDialog(QDialog):
         # would refuse a machine that can in fact play the audio.
         ok, reason = check_playback()
         self._play_btn.setEnabled(ok)
-        self._stop_btn.setEnabled(ok)
         self._play_btn.setToolTip(reason)
         if not ok:
             self._play_btn.setText("No audio output")
+        self._sync_transport()
 
     # -- report -------------------------------------------------------------
 
@@ -96,7 +122,7 @@ class AuditionDialog(QDialog):
             if not group:
                 continue
             parts.append(
-                f"<p><b>{severity.name}</b> "
+                f"<p><b>{severity.heading}</b> "
                 f"<span style='color:gray'>({severity.value})</span></p><ul>")
             for c in group:
                 parts.append(f"<li><b>{_esc(c.subject)}</b> — "
@@ -111,6 +137,25 @@ class AuditionDialog(QDialog):
 
     # -- transport ----------------------------------------------------------
 
+    def _on_stop(self) -> None:
+        self._player.stop()
+        self._sync_transport()
+
+    def _sync_transport(self) -> None:
+        """Make the buttons say what the player is actually doing.
+
+        The label is a STATE, not a history. It used to be set to "Replay"
+        when play was pressed and left there, which was harmless while this
+        window always started silent -- and became wrong the moment it could
+        open over a note already sounding, or be looked at again after one
+        had finished. "Replay" means "there is sound now"; "Play" means there
+        is not.
+        """
+        playing = bool(self._player is not None and self._player.playing)
+        self._stop_btn.setEnabled(playing)
+        if self._play_btn.isEnabled():
+            self._play_btn.setText("Replay" if playing else "Play")
+
     def _on_play(self) -> None:
         if not self._player.play(self._rendering):
             ok, reason = check_playback()
@@ -118,8 +163,7 @@ class AuditionDialog(QDialog):
             self._play_btn.setText("No audio output")
             self._play_btn.setToolTip(reason)
             return
-        self._stop_btn.setEnabled(True)
-        self._play_btn.setText("Replay")
+        self._sync_transport()
         if self._player.route() == "external":
             # Worth saying: the external route has no position reporting and
             # Stop kills a process, so "Replay" behaves slightly differently
@@ -129,7 +173,7 @@ class AuditionDialog(QDialog):
                 "device on this system")
 
     def _on_finished(self) -> None:
-        self._stop_btn.setEnabled(False)
+        self._sync_transport()
 
     def _on_failed(self, why: str) -> None:
         """A player that was there and could not open the device.
@@ -141,7 +185,7 @@ class AuditionDialog(QDialog):
         player's own last line of stderr.
         """
         self._stop_btn.setEnabled(False)
-        self._play_btn.setText("Playback failed")
+        self._play_btn.setText("Playback failed")   # not a state: an outcome
         self._play_btn.setToolTip(
             f"{why}\n\nUse Save as WAV… and play the file yourself.")
 
@@ -190,3 +234,171 @@ class AuditionDialog(QDialog):
 def _esc(text: str) -> str:
     return (str(text).replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+class AuditionNotice(QDialog):
+    """"Auditioning <preset>" — plays at once and closes itself when done.
+
+    What the report window becomes once the user has opted out of it. It owns
+    the player for the same reason the dialog does: a collected ``QBuffer``
+    stops playback mid-note under PySide6 with no error.
+
+    THREE THINGS IT MUST NOT DO, each of which would make opting out a way to
+    lose information rather than a way to skip a window:
+
+    * vanish on a failure. A player that cannot open the device closes this
+      with its reason shown, and does not auto-close on top of it;
+    * hide the caveats for good. ``Show report`` reopens the full window for
+      this audition, and the setting is still in View and in that window;
+    * start silently when nothing can play. The caller checks for a route
+      first and falls back to the report window, which holds Save as WAV.
+    """
+
+    #: Ask the owner to open the full report for this same rendering. Carries
+    #: the PLAYER, so the sound does not stop to show the report.
+    reportRequested = Signal(object)
+
+    def __init__(self, rendering, name: str, parent=None,
+                 volume: int = 100):
+        super().__init__(parent)
+        self._rendering = rendering
+        self.setWindowTitle("Audition")
+        from .audition_player import AuditionPlayer
+        self._player = AuditionPlayer(self, volume=volume)
+        self._player.finished.connect(self._on_finished)
+        self._player.failed.connect(self._on_failed)
+
+        layout = QVBoxLayout(self)
+        self._label = QLabel(f"Auditioning {name}…")
+        self._label.setWordWrap(True)
+        self._label.setStyleSheet("font-weight: 600;")
+        layout.addWidget(self._label)
+        self._sub = QLabel(HEADER)
+        self._sub.setWordWrap(True)
+        self._sub.setStyleSheet("color: palette(placeholdertext);"
+                                " font-size: 11px;")
+        layout.addWidget(self._sub)
+
+        row = QHBoxLayout()
+        self._report_btn = QPushButton("Show report")
+        self._report_btn.clicked.connect(self._on_report)
+        row.addWidget(self._report_btn)
+        row.addStretch(1)
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.clicked.connect(self._on_stop)
+        row.addWidget(self._stop_btn)
+        layout.addLayout(row)
+        self.setMinimumWidth(360)
+
+    def start(self) -> bool:
+        """Begin playback. False when no route would play (caller falls back
+        to the full report window, which is the only way to hear it then)."""
+        return self._player.play(self._rendering)
+
+    def _on_finished(self) -> None:
+        self.accept()
+
+    def _on_failed(self, why: str) -> None:
+        # Stays open: the whole point of the notice is that it is the only
+        # thing on screen, so closing it on a failure would leave the user
+        # with a click that did nothing and no reason anywhere.
+        self._label.setText("Audition could not play")
+        self._sub.setText(f"{why}\n\nUse Show report to save it as a WAV "
+                          f"and play it yourself.")
+        self._stop_btn.setEnabled(False)
+
+    def _on_stop(self) -> None:
+        if self._player is not None:
+            self._player.stop()
+        self.reject()
+
+    def detach_player(self):
+        """Give up the player WITHOUT stopping it, and stop owning it.
+
+        The player is a Qt CHILD of this window, so closing the notice would
+        destroy it and the note would cut off mid-way. Handing it over means
+        reparenting it first and dropping our own reference, or `closeEvent`
+        below would stop the very playback we just gave away.
+        """
+        player = self._player
+        if player is None:
+            return None
+        for sig, slot in ((player.finished, self._on_finished),
+                          (player.failed, self._on_failed)):
+            try:
+                sig.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        player.setParent(None)
+        self._player = None
+        return player
+
+    def _on_report(self) -> None:
+        # Deliberately NOT stop(). Asking to see the report is not asking for
+        # silence -- the report describes what you are listening to, and
+        # having to restart the sound to read about it is the opposite of
+        # what the button is for.
+        self.reportRequested.emit(self.detach_player())
+        self.accept()
+
+    def closeEvent(self, event) -> None:
+        # None once the player has been handed to the report window.
+        if self._player is not None:
+            self._player.stop()
+        super().closeEvent(event)
+
+
+class AuditionProgress(QDialog):
+    """"Preparing audition of <preset>" — up immediately, gone when it is.
+
+    The window that was missing. Rendering a big multisample takes seconds,
+    and until this existed the only sign was a line in the status bar: the
+    audition simply appeared to do nothing, then a window arrived. A 340 MB
+    library folder makes that several seconds of apparent nothing.
+
+    Shown for EVERY audition, cache hits excepted (those never get here --
+    the caller looks the render up on the GUI thread and skips straight to
+    playing it). It carries Cancel, because the honest answer to "this is
+    taking too long" is a way to stop it, not a faster spinner.
+    """
+
+    cancelled = Signal()
+
+    def __init__(self, name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Audition")
+        layout = QVBoxLayout(self)
+        self._label = QLabel(f"Preparing audition of {name}…")
+        self._label.setWordWrap(True)
+        self._label.setStyleSheet("font-weight: 600;")
+        layout.addWidget(self._label)
+
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+        # No text on the bar: the phase line below says more than a number,
+        # and two readouts of the same thing disagree the moment one lags.
+        self._bar.setTextVisible(False)
+        layout.addWidget(self._bar)
+
+        self._phase = QLabel("Starting…")
+        self._phase.setStyleSheet("color: palette(placeholdertext);"
+                                  " font-size: 11px;")
+        layout.addWidget(self._phase)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self._on_cancel)
+        row.addWidget(cancel)
+        layout.addLayout(row)
+        self.setMinimumWidth(340)
+
+    def set_progress(self, percent: int, text: str) -> None:
+        self._bar.setValue(max(0, min(100, int(percent))))
+        if text:
+            self._phase.setText(text)
+
+    def _on_cancel(self) -> None:
+        self.cancelled.emit()
+        self.reject()

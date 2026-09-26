@@ -66,6 +66,18 @@ def _via_mpc2emu(name: str) -> str:
     return name if name.endswith(_VIA_MPC2EMU.strip()) else f"{name}{_VIA_MPC2EMU}"
 
 
+class _ProgressRelay(QObject):
+    """Carries a worker thread's progress across to the GUI thread.
+
+    `render()` calls its hook on whatever thread it is on. Touching a widget
+    from there is the kind of thing that works for weeks and then crashes, so
+    the hook emits this signal instead: the relay lives in the GUI thread, Qt
+    queues the emission, and the slot runs where the widget is.
+    """
+
+    tick = Signal(int, str)
+
+
 class _NamedNode:
     """The one thing the audition dialog needs from a selection: a label.
 
@@ -364,6 +376,35 @@ class MainWindow(QMainWindow):
         dupe_check_action.toggled.connect(self._toggle_dupe_check)
         view_menu.addAction(dupe_check_action)
 
+        view_menu.addSeparator()
+        self._audition_report_action = QAction(
+            "Show Audition Report", self, checkable=True)
+        self._audition_report_action.setChecked(
+            bool(self._config.audition_show_report))
+        self._audition_report_action.setStatusTip(
+            "Off: an audition plays straight away behind a small notice that "
+            "closes itself. The report still opens when nothing can play it.")
+        self._audition_report_action.toggled.connect(
+            self._set_audition_show_report)
+        view_menu.addAction(self._audition_report_action)
+
+        # A NAMED, DISABLED ACTION -- the idiom this project already uses for
+        # a fact the user cannot act on from here (see explorer_pane's
+        # refusals). It sits under the audition entry because that is the
+        # feature it changes, and it is a statement rather than a control:
+        # the engine is chosen at import and cannot be switched from a menu.
+        from ..audition import render as _render_mod
+        renderer_action = QAction(
+            f"Audition renderer: {_render_mod.renderer_description()}",
+            self)
+        renderer_action.setEnabled(False)
+        renderer_action.setStatusTip(
+            "numpy is an accelerator, never a requirement. Set "
+            "VINSAMLIB_NO_NUMPY=1 to force the pure-Python path.")
+        view_menu.addAction(renderer_action)
+
+        view_menu.addSeparator()
+
         dupe_prompt_action = QAction("Prompt Before Skipping Duplicates", self, checkable=True)
         dupe_prompt_action.setChecked(True)
         dupe_prompt_action.toggled.connect(self._toggle_dupe_prompt)
@@ -593,11 +634,24 @@ class MainWindow(QMainWindow):
             # guarded at the field.
             self.statusBar().showMessage(f"Audition settings: {ex}", 10000)
             return
+        self._silence_previous_auditions()
         self._audition_gen += 1
         gen = self._audition_gen
+        # A repeat of the same preset with the same settings is already
+        # rendered. Looked up HERE, on the GUI thread, so it costs no worker
+        # and no progress window -- it just plays.
+        from ..audition import cached_render, render_cache_key
+        hit = cached_render(render_cache_key(node.kind, node.payload, opts))
+        if hit is not None:
+            self.statusBar().showMessage(
+                f"Audition of {node.label} (already rendered)", 4000)
+            self._on_audition_ready(gen, hit, node)
+            return
+        relay = self._begin_audition_progress(gen, node.label)
         self.statusBar().showMessage(
             f"Rendering audition of {node.label}…", 0)
-        w = workers.Worker(render_node, node.payload, node.kind, opts)
+        w = workers.Worker(render_node, node.payload, node.kind, opts,
+                           progress=relay)
         w.signals.finished.connect(
             lambda r, g=gen, n=node: self._on_audition_ready(g, r, n))
         w.signals.error.connect(
@@ -616,10 +670,13 @@ class MainWindow(QMainWindow):
         except ValueError as ex:
             self.statusBar().showMessage(f"Audition settings: {ex}", 10000)
             return
+        self._silence_previous_auditions()
         self._audition_gen += 1
         gen = self._audition_gen
+        relay = self._begin_audition_progress(gen, name)
         self.statusBar().showMessage(f"Rendering audition of {name}…", 0)
-        w = workers.Worker(render_staged, bank, preset_obj, opts, name, edits)
+        w = workers.Worker(render_staged, bank, preset_obj, opts, name, edits,
+                           progress=relay)
         w.signals.finished.connect(
             lambda r, g=gen, n=name: self._on_audition_ready(
                 g, r, _NamedNode(n)))
@@ -630,24 +687,165 @@ class MainWindow(QMainWindow):
         self._audition_worker = w
         workers.run(w)
 
+    def _silence_previous_auditions(self) -> None:
+        """Stop whatever an earlier audition is still playing.
+
+        Nothing did this, and two complaints came out of it that looked
+        unrelated. An audition can be twenty seconds long -- a three-note
+        render of a preset with long release tails measured 20.3 s -- so
+        asking for the next one while the last is still sounding left both
+        playing at once, and each further click added another. That is the
+        "stuck, keeps playing".
+
+        The second complaint was the same fault wearing a different face:
+        with the report window switched back ON, a new audition opened a
+        report whose own player was idle -- correctly showing "Play" -- while
+        the sound still coming out belonged to a NOTICE from an earlier,
+        report-disabled audition. The button was right; it was describing a
+        different player.
+
+        A NOTICE is closed, because it exists only to carry the sound and a
+        silent one says "Auditioning ..." about nothing. A REPORT window is
+        left open and merely silenced: someone may be reading it, and its
+        transport will show "Play" because that is now true of it.
+        """
+        from .audition_dialog import AuditionNotice
+        for window in list(self._audition_dialogs):
+            player = getattr(window, "_player", None)
+            if player is not None:
+                try:
+                    player.stop()
+                except RuntimeError:
+                    pass            # already gone; nothing to silence
+            if isinstance(window, AuditionNotice):
+                window.close()
+            else:
+                # Silencing a window without telling it leaves the transport
+                # claiming "Replay" over nothing -- the exact mismatch
+                # between button and reality that this whole fix is about.
+                sync = getattr(window, "_sync_transport", None)
+                if sync is not None:
+                    try:
+                        sync()
+                    except RuntimeError:
+                        pass
+
+    def _begin_audition_progress(self, gen: int, label: str):
+        """Show the progress window at once and return the hook `render()`
+        should call. The window is up BEFORE the work starts, which is the
+        whole point -- rendering a big multisample used to look like nothing
+        happening followed by a window."""
+        from .audition_dialog import AuditionProgress
+        dialog = AuditionProgress(label, parent=self)
+        relay = _ProgressRelay(self)
+        relay.tick.connect(
+            lambda pct, text, d=dialog, g=gen: (
+                d.set_progress(pct, text)
+                if g == self._audition_gen and d.isVisible() else None))
+        dialog.cancelled.connect(lambda g=gen: self._cancel_audition(g))
+        self._audition_progress = dialog
+        self._audition_relay = relay        # held: a collected relay emits to
+        dialog.show()                        # nothing, silently
+        return relay.tick.emit
+
+    def _cancel_audition(self, gen: int) -> None:
+        """Stop caring about a render in flight.
+
+        The worker is not killed -- nothing here can safely interrupt a
+        parse mid-way -- so the generation counter is bumped instead and its
+        result is dropped on arrival, exactly as a superseded one is. The
+        cost is a thread finishing work nobody wants, which is finite and
+        invisible, against the alternative of leaving the user no way out.
+        """
+        if gen == self._audition_gen:
+            self._audition_gen += 1
+        self._end_audition_progress()
+        self.statusBar().showMessage("Audition cancelled", 4000)
+
+    def _end_audition_progress(self) -> None:
+        dialog = getattr(self, "_audition_progress", None)
+        self._audition_progress = None
+        self._audition_relay = None
+        if dialog is not None:
+            dialog.close()
+
     def _audition_worker_done(self, w) -> None:
         if self._audition_worker is w:
             self._audition_worker = None
 
+    def _set_audition_show_report(self, on: bool) -> None:
+        """The one writer for this setting, so the menu tick, the checkbox in
+        the report window and the file cannot drift apart."""
+        on = bool(on)
+        if self._config.audition_show_report == on:
+            return
+        self._config.audition_show_report = on
+        if self._audition_report_action.isChecked() != on:
+            self._audition_report_action.setChecked(on)
+        self._config.save()
+        self.statusBar().showMessage(
+            "Audition will show its report each time" if on else
+            "Audition will play straight away — View ▸ Show Audition Report "
+            "brings it back", 6000)
+
     def _on_audition_ready(self, gen: int, rendering, node) -> None:
         if gen != self._audition_gen:
-            # A later request superseded this one; delivering it would play
-            # the wrong preset with no sign that it had.
+            # A later request superseded this one, or it was cancelled;
+            # delivering it would play the wrong preset with no sign that it
+            # had. The progress window belongs to whatever replaced it, so it
+            # is NOT taken down here.
             return
+        self._end_audition_progress()
         self.statusBar().clearMessage()
+        if not self._config.audition_show_report:
+            from .audition_player import check_playback
+            # Opting out of the REPORT must not become opting out of the
+            # audition. With nothing to play through, the notice would show a
+            # name and fall silent, so the full window is shown instead --
+            # it holds Save as WAV, which is the only way to hear it then.
+            if check_playback()[0] and self._show_audition_notice(rendering,
+                                                                  node):
+                return
+        self._show_audition_report(rendering, node)
+
+    def _show_audition_notice(self, rendering, node) -> bool:
+        """The small "Auditioning <name>" window. False if it would not play,
+        so the caller can fall back to the report."""
+        from .audition_dialog import AuditionNotice
+        notice = AuditionNotice(
+            rendering, node.label, parent=self,
+            volume=int(getattr(self._config, "audition_volume", 100)))
+        # Same ownership rule as the report window: held in a LIST, because a
+        # second audition must not drop the first one's Python wrapper while
+        # its audio is still running.
+        self._audition_dialogs.append(notice)
+        notice.finished.connect(
+            lambda *_, d=notice: self._forget_audition_dialog(d))
+        notice.reportRequested.connect(
+            lambda player, r=rendering, n=node:
+                self._show_audition_report(r, n, player=player))
+        notice.show()
+        if not notice.start():
+            notice.close()
+            return False
+        return True
+
+    def _show_audition_report(self, rendering, node, player=None) -> None:
         from .audition_dialog import AuditionDialog
-        dialog = AuditionDialog(rendering, title=f"Audition — {node.label}",
-                                parent=self)
+        # `player` arrives still PLAYING when this was reached from the
+        # notice's "Show report": the report describes the sound, so reading
+        # it must not silence it.
+        dialog = AuditionDialog(
+            rendering, title=f"Audition — {node.label}", parent=self,
+            show_report_default=bool(self._config.audition_show_report),
+            volume=int(getattr(self._config, "audition_volume", 100)),
+            player=player)
         # Held so the QAudioSink and its QBuffer are not collected mid-note,
         # and held in a LIST so a second audition cannot drop the first
         # dialog's Python wrapper while its audio is still playing.
         self._audition_dialog = dialog
         self._audition_dialogs.append(dialog)
+        dialog.showReportChanged.connect(self._set_audition_show_report)
         dialog.finished.connect(
             lambda *_, d=dialog: self._forget_audition_dialog(d))
         dialog.show()
@@ -661,6 +859,7 @@ class MainWindow(QMainWindow):
     def _on_audition_error(self, gen: int, message: str) -> None:
         if gen != self._audition_gen:
             return
+        self._end_audition_progress()
         self.statusBar().clearMessage()
         QMessageBox.warning(self, "Audition", workers.last_error_line(message))
 
@@ -1698,11 +1897,16 @@ class MainWindow(QMainWindow):
                 f"Added {len(items)} favourite(s) from {node.label}", 6000)
 
     def _show_about(self) -> None:
+        from ..audition import render as _render_mod
         QMessageBox.about(
             self, "About VinSamLib",
             "VinSamLib — a librarian for E-mu E4B/EIII and Kurzweil KRZ sample banks.\n\n"
             "Built on mpc2emu's format-writing code, with its own read path "
-            "for EMU3/FAT images and E4B/KRZ/EIII banks.",
+            "for EMU3/FAT images and E4B/KRZ/EIII banks.\n\n"
+            f"Audition renderer: {_render_mod.renderer_description()}.\n"
+            f"Events render in parallel: "
+            f"{'yes' if _render_mod.parallel_supported() else 'no'} "
+            f"({os.cpu_count()} cores).",
         )
 
     # -- background indexing ---------------------------------------------------
