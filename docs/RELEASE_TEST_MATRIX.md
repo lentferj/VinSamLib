@@ -873,6 +873,23 @@ point of the mode, and the one thing no test here can do.
 
 ---
 
+## Matrix L — Library folders
+
+| # | Cell | Test |
+|---|---|---|
+| LIB1 | folders dropped on the window are added by full path; every refusal is named; overlapping roots are refused | `manual_library_drop` |
+| LIB2 | a disc image our own readers do not know is still listed, and its folder is not called empty | `manual_foreign_disc_listing` |
+| LIB3 | the cheap folder probe agrees with the full listing and counts every suffix it can emit | `manual_browse_probe` |
+| LIB4 | browsing stays within its recorded times AND returns the same rows | `manual_browse_perf` |
+
+The drop reaches the window rather than the tree, which is DragOnly. That is
+the part that can silently stop working — if the tree's viewport ever starts
+accepting drops, a folder dropped where people actually aim would be
+swallowed and no assertion about the *logic* would notice, so LIB1 checks the
+propagation on a real `MainWindow` and not only the helper.
+
+---
+
 ## Matrix K — Audition: does it make a sound, and does it say what it is
 
 Audition renders a preset's **parameters** through mpc2emu's parsed model —
@@ -894,6 +911,16 @@ both halves true: that it sounds, and that it never claims to be the hardware.
 | AUD10 | the dialog renders as a readable layout, not only without raising | `manual_audition_dialog_render` |
 | AUD11 | the external-player route plays, stops, reports a refusal, leaks no temp file | `manual_audition_external_player` |
 | AUD12 | note syntax: chords sound together, per-entry holds move note-off, every refusal names its token | `manual_audition_note_syntax` |
+| AUD13 | the report can be opted out of; the notice plays and closes itself; no route falls back to the report | `manual_audition_opt_out` |
+| AUD14 | a program whose audio is on another disc is refused in the MENU, per program, not in a modal | `manual_audition_split_bank` |
+| AUD15 | render progress is reported in order; the session cache misses on every input that changes the audio | `manual_audition_cache_progress` |
+| AUD16 | each specialised filter tap equals `process()` exactly; hoisted coefficients are bit-identical | `manual_audition_filter_taps` |
+| AUD17 | the numpy render stays within 80 dB / 4 LSB of the pure-Python one | `manual_audition_numpy_tolerance` |
+| AUD18 | events rendered in parallel give identical audio and an identical report, and leak no processes | `manual_audition_parallel` |
+| AUD19 | numpy in use is visible in the menu, About and the debug log, from one function | `manual_numpy_visible` |
+| AUD20 | the volume is a playback trim: both routes honour it, the render and the saved WAV do not | `manual_audition_volume` |
+| AUD21 | "Show report" hands the running player over; the transport says what is playing | `manual_audition_report_handover` |
+| AUD22 | LFO to cutoff, Q, pan and volume; identical in both engines; free where there is no LFO | `manual_audition_lfo` |
 
 **AUD3 is expected to fail, and the failure is the finding.** A plain
 two-section cascade puts the 4-pole −3 dB point at 0.803·f₀ against the
@@ -984,13 +1011,36 @@ exiting 0, with the temp file and the teardown checked. It plays digital
 silence, so it proves the plumbing and **not** audibility. The by-ear row
 below is still open and still means what it says.
 
-**Audio confirmed by ear: STILL NOT CLAIMED.** A 440 Hz test tone was played
-through the external route on 2026-09-26 (`aplay` exited 0), and after the
-host's move to PipeWire the same tone played through **`QAudioSink` itself**,
-reaching `IdleState` and tearing down cleanly — the first time that code has
-ever run anywhere. Both say the device accepted the frames. Neither says
-anyone's monitors were up. This row still wants what the K2000R and S3000XL
-rows carry: a person, named presets, and what they heard.
+**AUDIO CONFIRMED BY EAR, 2026-09-26.** Jan auditioned an MPC keygroup
+program — `Canedrive Analogue Synths/Synth-Sp Neptune-Combo 3.xpm`, three
+layers sounding together at velocity 100 — and compared it against the same
+program on the MPC itself: **"very close to the MPC original"**. That is the
+first time anyone has heard this feature and said so. A second program,
+**"Ambient Pad"**, was auditioned the same evening and was also **fine** --
+one result is an anecdote, two on different material start to be a row.
+
+Earlier the same day two 440 Hz test tones went out, one through `aplay` and
+one through `QAudioSink` after the host moved to PipeWire. Those said a device
+accepted the frames; they said nothing about whether anything sounded right,
+which is why they were never allowed to close this row.
+
+**What the confirmation reaches, and what it does not.** A three-layer
+stacking program exercises the parts most likely to be wrong together:
+layering (every overlapping zone, not the first), the per-zone LEVEL that
+sums them — this program's layers sit 6.6 dB and 8.0 dB under the others —
+pitch from root/coarse/fine, and the amp envelope. It was rendered on the
+numpy path with events forked in parallel, so that path is the one confirmed;
+`manual_audition_numpy_tolerance` holds the pure-Python path to within 80 dB
+of it.
+
+It does NOT reach: the resonant filter (AUD3 is still the open 4-pole
+finding), the hardware formats — nothing E4B, KRZ, EIII or AKAI has been
+heard against its own machine — or `coarse_tune`, which is 0.0% across 8 497
+E4B and KRZ zones. That last is probably parsers folding the offset into
+`root_key` instead, which is what the MPC parser visibly does, but "probably"
+is the honest word: it wants one bank with a known semitone offset set in the
+sampler's own UI. Jan's call, 2026-09-26: acceptable for a preview, not
+chased.
 
 One thing the PipeWire move did retire: `QAudio.State` versus the
 non-existent `QAudioSink.State` was found by reading the binding, precisely

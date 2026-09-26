@@ -115,6 +115,20 @@ everything into a local search database, so typing in the search box
 finds a preset by name anywhere in the whole library, instantly, without
 waiting for the tree to be expanded down to it.
 
+### Adding folders to the library
+
+**Drag folders from your file manager onto the VinSamLib window** and they
+are added as library roots under their full path — one at a time or several
+at once. File ▸ Add Library Folder… does the same thing through a picker.
+
+Refusals are named rather than silent, because dropping four folders and
+watching three appear says nothing about the fourth. A folder is refused when
+it is already in the library, when it sits **inside** a folder already there,
+or when it would **contain** folders already there: either way the same files
+would be walked twice, shown under two rows and indexed twice, which reads as
+a duplicate bug rather than as something you asked for. A symlink pointing at
+a root is recognised as that root.
+
 ### Audition a preset before you carry it
 
 Every defect found by ear this month needed media carried to a machine: a
@@ -156,10 +170,17 @@ parts are measured on hardware, which are fitted, which were never measured,
 and which are not modelled at all — appended at the point each approximation
 is applied, never from a per-format table. What *is* modelled: layering (every
 overlapping zone, not the first), per-zone level and pan, tuning, the amp
-envelope (including velocity-to-volume and the two curve laws), and the
-resonant filter with its envelope, keytracking and velocity modulation. What
-is not: the machines' own converters, output stages, anti-alias filters, LFOs,
-chorus, delay, and polyphony limits.
+envelope (including velocity-to-volume and the two curve laws), the resonant
+filter with its envelope, keytracking and velocity modulation, and an **LFO**
+routed to cutoff, resonance, pan or volume. What is not: the machines' own
+converters, output stages, anti-alias filters, chorus, delay, polyphony
+limits, and an LFO's delay, fade-in or tempo sync.
+
+Those four LFO destinations were chosen by counting the library rather than
+by guessing: across 32 558 E4B voices, 7 230 KRZ voices and all 453 064 MPC
+keygroups, cutoff is the most used on the hardware formats (7.5 % of E4B
+voices) while LFO-to-volume — the one that sounds most obvious — appears on
+none of them and is common only on MPC.
 
 It renders from **mpc2emu's parsed model**, never from VinSamLib's own
 readers, so any format mpc2emu can read — including the Roland and Ensoniq
