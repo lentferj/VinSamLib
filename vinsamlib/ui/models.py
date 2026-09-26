@@ -191,6 +191,8 @@ class TreeNode:
     #: the children do not sum to the parent and are not meant to -- presets
     #: share samples.
     audio_bytes: Optional[int] = None
+    #: Replaces "no audio" on a row whose zero has a better explanation.
+    note_short: str = ""
     format_label: str = ""
     fetching: bool = False
     error: Optional[str] = None
@@ -214,8 +216,15 @@ class TreeNode:
             # reference only the sampler's ROM holds no audio at all, and
             # rendering that as a bare "audio" with nothing in front of it is
             # how it first appeared.
-            text += ("   no audio" if self.audio_bytes == 0
-                     else f"   {human_size(self.audio_bytes)} audio")
+            if self.audio_bytes:
+                text += f"   {human_size(self.audio_bytes)} audio"
+            elif self.note_short:
+                # A zero with a KNOWN reason says the reason instead. "no
+                # audio" is true of a KRZ ROM-only program and misleading of
+                # an AKAI one, whose samples are on another volume.
+                text += f"   {self.note_short}"
+            else:
+                text += "   no audio"
         elif self.size:
             text += f"   {human_size(self.size)}"
         if self.error:
@@ -261,6 +270,39 @@ def _container_path_of(node: TreeNode) -> str:
             if parent is None or parent.kind not in _FOREIGN_KINDS:
                 return str(payload[0])
     return ""
+
+
+def akai_samples_elsewhere(bank, prog) -> bool:
+    """True when an AKAI program names samples that this VOLUME does not hold.
+
+    "no audio" is the right sentence for a KRZ program that reaches only the
+    K2000's ROM. IT IS THE WRONG ONE HERE, and Jan caught it: an AKAI sampler
+    has no ROM, so a program with no audio anywhere would be an impossible
+    object. What it really means is the multi-volume idiom -- a volume of
+    programs that recombine samples you loaded from a companion volume, which
+    is how an organ disc offers thirty registrations of the same stops
+    without thirty copies of the audio.
+
+    Measured on one such disc: 35 of its 100 volumes are programs-only, and
+    every sample the four programs of `E/02-MIX` name sits in the volume next
+    to it. Calling a third of a disc "no audio" says the samples are missing
+    when they are one volume over.
+
+    Deliberately does NOT say WHICH volume. Finding that means listing every
+    other volume on the media, which is far too much for drawing one tree
+    row -- and the answer would often be ambiguous anyway: 166 of that disc's
+    1 169 sample names appear in more than one volume, and 144 of those have
+    DIFFERENT AUDIO under the same name. See .claude/handoff-mpc2emu.md.
+    """
+    if not hasattr(bank, "missing_samples"):
+        return False
+    try:
+        wanted = [n for n in (getattr(prog, "sample_names", []) or []) if n]
+        if not wanted:
+            return False
+        return len(bank.missing_samples(prog)) == len(set(wanted))
+    except Exception:
+        return False
 
 
 def _preset_audio_bytes(bank, obj) -> Optional[int]:
@@ -860,7 +902,9 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
 
     bank = node.handle
     return [TreeNode("preset", (p.name.strip() or "(untitled)"), node, (bank, p),
-                     audio_bytes=_preset_audio_bytes(bank, p))
+                     audio_bytes=_preset_audio_bytes(bank, p),
+                     note_short=("samples on another volume"
+                                 if akai_samples_elsewhere(bank, p) else ""))
             for p in bank_presets(bank)]
     # preset order preserved — it reflects the bank's own numbering
 
