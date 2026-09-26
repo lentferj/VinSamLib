@@ -641,8 +641,25 @@ def _fetch_foreign_bank(node: TreeNode) -> list[TreeNode]:
     if not listed:
         node.empty_reason = f"{path.name} holds no preset."
         return []
+    # `entry.size` is the row's OWN size when the listing already knew it --
+    # an EPS directory entry's file size, a Roland partial's deduped sample
+    # bytes. Free, and previously discarded, which is why these rows showed
+    # nothing while a 19 s whole-disc parse ran behind them to produce
+    # figures that matched none of them. NEVER the image's size.
+    # WHICH FIGURE IT IS, SAID BY WHICH FIELD IT GOES IN. A Roland partial's
+    # size is its deduped sample audio, exactly, from the sample table -- that
+    # is `audio_bytes`, and the row reads "9.0 KB audio". An EPS entry's is
+    # the INSTRUMENT FILE's size; audio is ~92 % of it on the reference disc
+    # (117.4 MB of audio in 127.2 MB of files) but it is not the audio
+    # figure, so it goes in `size` and the row reads "481.5 KB" with no claim
+    # attached. Putting both in `audio_bytes` would have been one line
+    # shorter and would have made the EPS rows say something untrue.
+    exact = node.format_label != "EPS"
     return [TreeNode("foreign_preset", entry.display, node, (path, i),
-                     format_label=node.format_label)
+                     format_label=node.format_label,
+                     size=(0 if exact else (getattr(entry, "size", 0) or 0)),
+                     audio_bytes=(getattr(entry, "size", None)
+                                  if exact else None))
             for i, entry in enumerate(listed)]
 
 
@@ -1229,6 +1246,9 @@ class LibraryTreeModel(QAbstractItemModel):
                                    children: list[TreeNode]) -> None:
         """Work out an SF2 or GIG's per-preset audio, once, on expand.
 
+        SF2 and GIG only, and the docstring means it: a disc is excluded
+        below, because for an image this is both ruinous and useless.
+
         These formats embed their samples, so the only way to know what one
         preset needs is to read the file. That is why the library scan does
         NOT do it -- a blind pass over a shelf of multi-hundred-megabyte
@@ -1248,6 +1268,16 @@ class LibraryTreeModel(QAbstractItemModel):
             return
         path = _container_path_of(node)
         if not path or not any(c.kind in _FOREIGN_KINDS for c in children):
+            return
+        # NOT FOR A DISC. This reads the whole container to price its rows,
+        # which is affordable for a SoundFont and is not for an image: an EPS
+        # disc costs 19 s here and the names it produces carry EOS's variant
+        # suffixes, so NONE of the 613 rows ever matched one -- measured, 0 of
+        # 613 -- and the 19 s was thrown away on every expand. That is the
+        # "listing a disc takes ages". Disc rows now carry their own size from
+        # the listing (foreign_import._list_disc_presets), at 7 ms for EPS and
+        # 79 ms for Roland, from directory and table reads that touch no PCM.
+        if Path(path).suffix.lower() in foreign_import.IMAGE_CONTENT_EXTS:
             return
         if all(c.audio_bytes is not None for c in children
                if c.kind in _FOREIGN_KINDS):
