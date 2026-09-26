@@ -23,8 +23,7 @@ from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel,
                                QVBoxLayout)
 
 from ..audition.caveats import SEVERITY_ORDER
-from .audition_player import (AuditionPlayer, check_audio_output,
-                              write_wav)
+from .audition_player import (AuditionPlayer, check_playback, write_wav)
 
 HEADER = ("This is a model of the preset's parameters. It is not a model of "
           "the sampler, and it will not sound like the hardware.")
@@ -38,6 +37,7 @@ class AuditionDialog(QDialog):
         self._rendering = rendering
         self._player = AuditionPlayer(self)
         self._player.finished.connect(self._on_finished)
+        self._player.failed.connect(self._on_failed)
         self.setWindowTitle(title)
         self.setMinimumSize(560, 420)
 
@@ -74,9 +74,15 @@ class AuditionDialog(QDialog):
         layout.addLayout(close_row)
 
         # A device may have vanished between the menu being offered and here.
-        ok, _reason = check_audio_output()
+        # Gated on playback BY ANY ROUTE, not on Qt having found a device:
+        # Qt finds none on a working JACK desktop, and disabling Play there
+        # would refuse a machine that can in fact play the audio.
+        ok, reason = check_playback()
         self._play_btn.setEnabled(ok)
         self._stop_btn.setEnabled(ok)
+        self._play_btn.setToolTip(reason)
+        if not ok:
+            self._play_btn.setText("No audio output")
 
     # -- report -------------------------------------------------------------
 
@@ -107,13 +113,37 @@ class AuditionDialog(QDialog):
 
     def _on_play(self) -> None:
         if not self._player.play(self._rendering):
+            ok, reason = check_playback()
             self._play_btn.setEnabled(False)
-            self._play_btn.setText("No audio device")
-        else:
-            self._play_btn.setText("Replay")
+            self._play_btn.setText("No audio output")
+            self._play_btn.setToolTip(reason)
+            return
+        self._stop_btn.setEnabled(True)
+        self._play_btn.setText("Replay")
+        if self._player.route() == "external":
+            # Worth saying: the external route has no position reporting and
+            # Stop kills a process, so "Replay" behaves slightly differently
+            # from the Qt route and the tooltip should not claim otherwise.
+            self._play_btn.setToolTip(
+                "playing through an external player — Qt found no audio "
+                "device on this system")
 
     def _on_finished(self) -> None:
         self._stop_btn.setEnabled(False)
+
+    def _on_failed(self, why: str) -> None:
+        """A player that was there and could not open the device.
+
+        Deliberately NOT a modal. The button is the thing just clicked, so the
+        message lands where the user is already looking; a QMessageBox here
+        would be a fourth raise site in this package for a case the transport
+        can state itself. Save as WAV… remains, and the tooltip carries the
+        player's own last line of stderr.
+        """
+        self._stop_btn.setEnabled(False)
+        self._play_btn.setText("Playback failed")
+        self._play_btn.setToolTip(
+            f"{why}\n\nUse Save as WAV… and play the file yourself.")
 
     def _on_save(self) -> None:
         # An instance rather than getSaveFileName(), only because the static

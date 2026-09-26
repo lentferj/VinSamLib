@@ -892,6 +892,7 @@ both halves true: that it sounds, and that it never claims to be the hardware.
 | AUD8 | the four settings round-trip through the file and the dialog | `manual_audition_settings_roundtrip` |
 | AUD9 | numpy is a pure accelerator: byte-identical output, never a gate | `manual_audition_acceleration` |
 | AUD10 | the dialog renders as a readable layout, not only without raising | `manual_audition_dialog_render` |
+| AUD11 | the external-player route plays, stops, reports a refusal, leaks no temp file | `manual_audition_external_player` |
 
 **AUD3 is expected to fail, and the failure is the finding.** A plain
 two-section cascade puts the 4-pole −3 dB point at 0.803·f₀ against the
@@ -901,10 +902,90 @@ the K2000 figures describe a different topology or the plain cascade is not
 it. It passes if a topology is found that reproduces them, or if mpc2emu
 settles the conversion upstream.
 
-**Audio output confirmed by ear on the desktop: NOT YET.** The development
-sandbox has no audio device at all — offscreen `QMediaDevices.audioOutputs()`
-is empty — so every playback assertion here goes through the WAV path. This
-row is deliberately left uncovered rather than claimed: the suite cannot hear
-anything, and a green run is no evidence that `QAudioSink` was ever exercised.
-It wants a desktop run of the same presets AUD4 reaches, stated as such, the
-way the K2000R and S3000XL rows above are.
+**Audio output confirmed by ear: NOT YET, and not for the reason this row
+first gave.** It said the development sandbox has no audio device, implying a
+desktop run would cover it. Measured 2026-09-26, that is wrong, and the real
+reason is a product limit rather than a sandbox one.
+
+`QAudioSink` is the whole of our audio output — we open no device ourselves
+and choose no sound system — so what Qt reaches is what the feature reaches.
+In PySide6 6.11 on Linux that is **PipeWire or PulseAudio, and nothing else**:
+`libQt6Multimedia.so.6` links `libpulse` and dlopens `libpipewire-0.3`, and
+`QT_AUDIO_BACKEND` accepts only those two names — `alsa` and `jack` are not
+rejected, they are silently ignored and fall through to PulseAudio. There is
+no ALSA backend and no JACK backend to select.
+
+The development desktop runs `jackd -dalsa -dhw:USB,0 -r48000`, has no
+PipeWire installed at all, and no PulseAudio daemon (`$XDG_RUNTIME_DIR/pulse`
+is empty; `pa_context_connect()` fails). So `QMediaDevices.audioOutputs()`
+is **empty on the desktop too**, not only offscreen — while `aplay -D default`
+plays perfectly through this machine's Loopback→`alsa_in`→JACK route. The one
+component that cannot reach the working audio path is Qt.
+
+**Why Qt alone, when Firefox and every player manage it.** The route is
+configured in `~/.asoundrc`, which is a **libasound** config, not a service:
+any program that calls `snd_pcm_open("default")` has that chain built for it
+in-process. PulseAudio and PipeWire are *servers* reached over a socket, and
+a client that speaks only those two protocols has nothing to talk to when
+neither daemon runs. Firefox has `libasound.so.2` mapped **and**
+`libasound_module_rate_speexrate.so` — an ALSA plugin libasound dlopened
+while resolving that very config — so it tried Pulse, failed, and fell back
+to ALSA. Qt has no ALSA backend to fall back to: there is not one
+`libasound`, `snd_pcm_*` or `QAlsaAudio*` reference in the entire PySide6
+6.11 package. It is not a backend that fails, it is a backend that is absent.
+
+**Settled 2026-09-26: it is the wheel's build, and chasing it is still the
+wrong move.** Upstream `qtmultimedia` 6.11 *does* ship an ALSA backend —
+`src/multimedia/alsa/qalsaaudiosink.cpp`, guarded by `QT_FEATURE_alsa` and
+linking `ALSA::ALSA`. The official PySide6 wheel
+(`manylinux_2_34_x86_64`) is simply built without it, which is why not one
+`libasound` reference survives in the package even though this machine has
+`libasound2-dev` installed.
+
+But Qt's own Linux documentation settles the direction: *"Qt Multimedia audio
+features on Linux require PipeWire or PulseAudio"*, and *"the experimental
+ALSA backend will be deprecated in future versions of Qt. Until then,
+community contributions are required to fix issues with this backend."*
+**JACK is not mentioned anywhere by Qt, as a backend or as a plan.**
+
+So the two routes to making `QAudioSink` work here both dead-end. Enabling
+ALSA means building Qt and PySide6 from source (no distro PySide6 exists in
+this suite, and Debian's own Qt 6.4 multimedia has no direct libasound
+either) to obtain a backend Qt has announced it is removing. Waiting for
+JACK support means waiting for something never proposed. This is a permanent
+property of the toolkit on a JACK host, not a version to sit out — which is
+what moved the remedy from "check for a better build" to "do not play through
+`QAudioSink` alone".
+
+**Resolved 2026-09-26: playback has a second route, and AUD11 covers it.**
+Where Qt reports no device, the rendered WAV goes to a temporary file and an
+external player (`aplay`, `ffplay`, `mpv`, `paplay`, `pw-play`; `afplay` on
+macOS, `SoundPlayer` on Windows). That is not a workaround: it reaches the
+audio through libasound, the same interface Firefox falls back to and the
+same one that executes this host's `~/.asoundrc` chain in-process.
+
+The candidate order is an inference worth keeping straight. The list is only
+consulted *after* `QAudioSink` found no device, which on Linux means neither
+PipeWire nor PulseAudio is reachable — so the server-based players are the
+ones **least** likely to work and go last, against the order anyone would
+pick in the abstract.
+
+**AUD11 is the first test in this matrix that exercises audio leaving the
+process at all**, as a real player in a real process consuming the frames and
+exiting 0, with the temp file and the teardown checked. It plays digital
+silence, so it proves the plumbing and **not** audibility. The by-ear row
+below is still open and still means what it says.
+
+**Audio confirmed by ear: STILL NOT CLAIMED.** A 440 Hz test tone was played
+through this route on the development host on 2026-09-26 and `aplay` exited
+0, which says the device accepted the frames — not that anyone's monitors
+were up. It wants the same statement the K2000R and S3000XL rows carry: a
+person, named presets, and what they heard.
+
+What that means for the matrix: a desktop run of AUD4's presets **cannot
+cover this row as the code stands**, so it is not a pending task but a
+blocked one. Either playback gains a fallback that does not go through
+`QAudioSink`, or this row is covered only on a PipeWire/PulseAudio machine
+and Save-as-WAV stays the documented path here. Qt does implement CoreAudio
+on macOS and WASAPI on Windows, so those are expected to work — expected,
+not measured: nobody has heard this feature on any platform.

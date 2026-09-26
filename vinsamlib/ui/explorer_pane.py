@@ -532,10 +532,13 @@ class ExplorerPane(QWidget):
                         and not n.empty_reason]
         if len(auditionable) == 1:
             node = auditionable[0]
-            from .audition_player import check_audio_output
+            from .audition_player import check_playback
             from .. import audition as audition_mod
             model_ok, model_why = audition_mod.available(None)
-            dev_ok, dev_why = check_audio_output()
+            # Playback by ANY route -- Qt's device probe alone says "no" on a
+            # working JACK desktop, where an external player reaches the audio
+            # perfectly well.
+            dev_ok, dev_why = check_playback()
             rom_only_node = node.kind == "preset" and _krz_rom_only(node)
             label, enabled, tooltip = _audition_decision(
                 node, model_ok, model_why, dev_ok, dev_why, rom_only_node)
@@ -685,18 +688,22 @@ def _krz_rom_only(node: TreeNode) -> bool:
     return True
 
 
-def _audition_decision(node, model_ok: bool, model_why: str, dev_ok: bool,
-                       dev_why: str, rom_only: bool) -> tuple:
+def _audition_decision(node, model_ok: bool, model_why: str, play_ok: bool,
+                       play_why: str, rom_only: bool) -> tuple:
     """``(label, enabled, tooltip)`` for the Audition menu entry.
 
     A refusal is a NAMED, disabled action rather than a silent absence, so
     "why can I not audition this" is answered where the question is asked.
     Module-level so it can be checked without opening a modal QMenu.
+
+    ``play_ok`` is playback by any route, not Qt's device probe: the two
+    disagree on every JACK or bare-ALSA host, and it is the broader question
+    that decides what this menu should say.
     """
     if not model_ok:
         return ("Audition — needs an mpc2emu checkout (Settings…)",
                 False, model_why)
-    if not dev_ok:
+    if not play_ok:
         # ENABLED, NOT DISABLED. Rendering needs no audio device -- Save as
         # WAV… is documented as "the path that works headless", and the
         # matrix asserts it. Disabling the action here made the dialog that
@@ -705,7 +712,7 @@ def _audition_decision(node, model_ok: bool, model_why: str, dev_ok: bool,
         # inside the dialog, and the label says so up front.
         return (f'Audition "{node.label}" — no audio device, saves to WAV',
                 True,
-                f"{dev_why}. The audition still renders; use Save as WAV… in "
+                f"{play_why}. The audition still renders; use Save as WAV… in "
                 f"the dialog.")
     if rom_only:
         return ("Audition — this program references only ROM samples", False,

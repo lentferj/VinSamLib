@@ -151,6 +151,21 @@ disabled, with that reason. It needs no audio device to render: **Save as
 WAV…** writes the audio and a `.txt` sidecar of the report, which is the path
 that works headless.
 
+**Playback takes whichever of two routes works.** Qt's own audio output is
+used wherever it finds a device — the system audio on macOS and Windows, and
+on Linux **PipeWire or PulseAudio**, which is all Qt supports: it has no JACK
+backend and the shipped PySide6 has no ALSA one either. On a JACK-only or
+bare-ALSA machine Qt therefore sees no device at all, even though `aplay`
+plays perfectly. Rather than refuse there, VinSamLib hands the rendered audio
+to an external player (`aplay`, `ffplay`, `mpv`, `paplay` or `pw-play`;
+`afplay` on macOS), reaching the sound card the same way every other program
+on such a machine does. Settings says which route you are on, and if a player
+is present but cannot open the device, the Play button reports the player's
+own reason instead of falling silent.
+
+**Save as WAV…** remains the route that needs nothing at all, and nothing
+about rendering or the report depends on any of this.
+
 Audition covers E4B, KRZ, EIII, AKAI and MPC (XPM) sources today. One known
 finding is recorded rather than papered over: a plain 4-pole cascade does not
 reproduce the K2000's documented −3 dB point, and the test that measures it is

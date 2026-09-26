@@ -296,11 +296,16 @@ class SettingsDialog(QDialog):
         if not ok:
             self._audition_status_label.setText(f"✗ Audition: {reason}")
             return
-        from .audition_player import check_audio_output
-        dev_ok, dev_reason = check_audio_output()
+        from .audition_player import playback_route
+        kind, dev_reason = playback_route()
         line = f"✓ {reason}"
-        if dev_ok:
+        if kind == "qt":
             line += f"\n✓ Audio output: {dev_reason}"
+        elif kind == "external":
+            # Named, not hidden behind a tick: it works, and the user should
+            # know which of the two routes they are on, because Stop and
+            # Replay behave a little differently on this one.
+            line += f"\n✓ Audio output via external player: {dev_reason}"
         else:
             line += (f"\n✗ No audio output ({dev_reason}) — Audition can "
                      f"still render and Save as WAV")
