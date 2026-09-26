@@ -277,7 +277,14 @@ def parameters_for_node(payload, kind: str) -> _Parsed:
                 bank, preset_obj, "EIII", vs_eiii, ".e3x",
                 mpc2emu_bridge.eiii_parser.parse_eiii)
         elif isinstance(bank, vs_akai.AkaiBank):
-            parsed = _akai_route(bank, preset_obj, edits)
+            # No `edits` here, and that is the point: this is the EXPLORER
+            # path, which auditions a program as it sits on the disc. Staged
+            # renames, placement and loop repairs belong to New Bank and
+            # reach the renderer through `parameters_for_staged` instead.
+            # This line said `edits` and there is no such name in this
+            # function -- a NameError that took out AKAI audition entirely
+            # while the other three formats worked.
+            parsed = _akai_route(bank, preset_obj)
         else:
             raise AuditionError(
                 f"not a recognised bank for audition: {type(bank)!r}")
