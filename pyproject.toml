@@ -14,6 +14,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# numpy is an ACCELERATOR, never a gate. Audition renders without it and says
+# so in a speed note rather than refusing; with it the renderer's vectorised
+# path is roughly twice as fast on a filtered preset and much more on an
+# unfiltered one. Set VINSAMLIB_NO_NUMPY=1 to run the pure-Python path even
+# when it is installed, which is how the two are compared.
+speed = [
+    "numpy>=1.24",
+]
 dev = [
     "pytest>=7",
 ]

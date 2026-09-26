@@ -12,6 +12,9 @@ The one sentence that governs everything here, from the spec's §9:
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
@@ -255,36 +258,149 @@ def acceleration_note() -> str:
     takes one'.
     """
     from . import render as _render
-    if _render._np is not None:
+    if _render.numpy_in_use():
         return ""
+    if _render.numpy_available():
+        # Installed but switched off -- say WHICH, or the note reads as "numpy
+        # is missing" to someone who can see it in their site-packages.
+        return ("Audition is running on the pure-Python renderer because "
+                "VINSAMLIB_NO_NUMPY is set; unset it to use the accelerator.")
     return ("Audition is running on the pure-Python renderer; installing "
             "numpy makes long presets render several times faster.")
 
 
-def render_node(payload, kind: str, opts: AuditionOptions) -> Rendering:
+#: Rendered auditions, most-recently-used last. In this process only, and
+#: gone when the app quits -- there is no file anywhere and nothing to
+#: invalidate on the next run.
+RENDER_CACHE_MAX = 20
+_RENDER_CACHE: "OrderedDict" = OrderedDict()
+_RENDER_CACHE_LOCK = threading.Lock()
+
+
+def render_cache_key(kind: str, payload, opts: AuditionOptions,
+                     extra=None) -> tuple:
+    """A key that changes whenever the AUDIO would.
+
+    The spec said never to cache rendered audio, and the reason it gave was
+    right: velocity, the note list and the hold all change the result, and a
+    stale audition is the one bug nobody would catch -- it sounds like a
+    preset, just not this one. That is an argument about the KEY, not about
+    caching, so the key carries every input the renderer reads: the whole
+    `AuditionOptions` (notes with their per-entry holds, velocity, gap, rate,
+    channels, headroom) and the identity of the source.
+
+    A file-backed source is keyed by path, mtime and size, so editing a bank
+    on disc misses. A live object pair -- an Explorer preset -- is keyed by
+    `id()`, which is only safe because the cache ENTRY holds a reference to
+    those objects (see `_cache_render`): without that, a dropped bank could be
+    collected and a new one land on the same address, and the next audition
+    of the new one would play the old one.
+    """
+    ident: tuple
+    if isinstance(payload, tuple) and len(payload) == 2 \
+            and not isinstance(payload[0], (str, Path)):
+        ident = ("obj", id(payload[0]), id(payload[1]))
+    elif isinstance(payload, tuple) and len(payload) == 2:
+        path, index = payload
+        ident = ("path", str(path), _stat_stamp(path), index)
+    else:
+        ident = ("path", str(payload), _stat_stamp(payload), None)
+    return (kind, ident, repr(opts), repr(extra))
+
+
+def _stat_stamp(path):
+    try:
+        st = Path(path).stat()
+        return (st.st_mtime_ns, st.st_size)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def cached_render(key):
+    """The rendering for `key`, or None. Safe to call from the GUI thread --
+    that is the point, so a repeat costs no worker and no window."""
+    with _RENDER_CACHE_LOCK:
+        got = _RENDER_CACHE.get(key)
+        if got is None:
+            return None
+        _RENDER_CACHE.move_to_end(key)
+        return got[0]
+
+
+def render_cache_retains(key) -> tuple:
+    """The objects an entry keeps alive. See `render_cache_key` for why."""
+    with _RENDER_CACHE_LOCK:
+        got = _RENDER_CACHE.get(key)
+        return tuple(got[1]) if got is not None else ()
+
+
+def _cache_render(key, rendering, keep=()):
+    # The keepalive rides in the VALUE, not the key: a key has to be hashable
+    # and a parsed Bank is not. It is here for the id() reuse hazard that
+    # `render_cache_key` describes -- while an entry lives, the objects its
+    # identity was taken from cannot be collected, so nothing else can land
+    # on their addresses and be mistaken for them.
+    with _RENDER_CACHE_LOCK:
+        _RENDER_CACHE[key] = (rendering, tuple(keep))
+        _RENDER_CACHE.move_to_end(key)
+        while len(_RENDER_CACHE) > RENDER_CACHE_MAX:
+            _RENDER_CACHE.popitem(last=False)
+
+
+def clear_render_cache() -> None:
+    with _RENDER_CACHE_LOCK:
+        _RENDER_CACHE.clear()
+
+
+def render_cache_size() -> int:
+    with _RENDER_CACHE_LOCK:
+        return len(_RENDER_CACHE)
+
+
+def render_node(payload, kind: str, opts: AuditionOptions,
+                progress=None) -> Rendering:
     """Explorer TreeNode payload -> audio. Runs on a worker thread."""
     from . import params as _params
     from . import render as _render
+    key = render_cache_key(kind, payload, opts)
+    got = cached_render(key)
+    if got is not None:
+        return got
     parsed = _params.parameters_for_node(payload, kind)
-    return _render.render(parsed.bank, parsed.preset, parsed.provenance, opts)
+    out = _render.render(parsed.bank, parsed.preset, parsed.provenance, opts,
+                         progress=progress)
+    _cache_render(key, out, payload if isinstance(payload, tuple) else ())
+    return out
 
 
 def render_staged(bank, preset_obj, opts: AuditionOptions,
-                  name: str = "", edits=None) -> Rendering:
+                  name: str = "", edits=None, progress=None) -> Rendering:
     """New Bank's ``(bank, preset_obj, name)`` tuple -> audio.
 
     `edits` are the pane's staged renames, placement, velocity and loop
-    repairs, so what is heard is what Save as… would write.
+    repairs, so what is heard is what Save as… would write -- and they are in
+    the cache key for the same reason: change a rename or a loop repair and
+    this is a different sound.
     """
     from . import params as _params
     from . import render as _render
+    key = render_cache_key("staged", (bank, preset_obj), opts,
+                           (name, _params._edits_fingerprint(edits)))
+    got = cached_render(key)
+    if got is not None:
+        return got
     parsed = _params.parameters_for_staged(bank, preset_obj, name, edits)
-    return _render.render(parsed.bank, parsed.preset, parsed.provenance, opts)
+    out = _render.render(parsed.bank, parsed.preset, parsed.provenance, opts,
+                         progress=progress)
+    _cache_render(key, out, (bank, preset_obj))
+    return out
 
 
 __all__ = [
     "NOTE_SEP", "OCTAVE_OFFSET", "AuditionOptions", "Rendering",
     "parse_notes", "NoteEvent", "as_events", "describe_events",
+    "render_cache_key", "cached_render", "clear_render_cache",
+    "render_cache_size", "render_cache_retains", "RENDER_CACHE_MAX",
     "available", "acceleration_note", "render_node",
     "render_staged", "AuditionReport", "Caveat", "Severity",
     "AuditionError", "SourceProvenance", "Sounding",

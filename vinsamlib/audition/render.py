@@ -16,21 +16,87 @@ and is slower, never refused (spec §7.2).
 
 from __future__ import annotations
 
+import contextlib
 import math
+import os
 import threading
 from collections import OrderedDict
 from typing import List, Optional
 
 from .. import mpc2emu_bridge
+from ..build import calllog
 from . import envelope as env_mod
 from . import filter as filter_mod
 from . import voice as voice_mod
 from .caveats import AuditionReport, Severity
 
 try:  # accelerator only -- never a gate
-    import numpy as _np
+    import numpy as _numpy
 except ImportError:  # pragma: no cover - depends on the machine
+    _numpy = None
+
+#: The accelerator as the renderer sees it. Separate from `_numpy` so it can
+#: be switched OFF while numpy is installed.
+#:
+#: WITHOUT THAT SWITCH THERE IS NOTHING TO COMPARE. The two render paths are
+#: allowed to differ slightly, and the only way to know by how much is to run
+#: BOTH over the same preset and subtract -- in one process, because a preset
+#: is parsed and decoded once. An environment variable alone cannot do that;
+#: it decides at import and the process then has one path for its lifetime.
+#: So: the variable for running the whole app or a whole test suite on the
+#: pure path, and `pure_python()` for holding the two side by side.
+_np = None if os.environ.get("VINSAMLIB_NO_NUMPY") else _numpy
+
+
+def numpy_available() -> bool:
+    """Whether numpy is installed at all, regardless of the switch."""
+    return _numpy is not None
+
+
+def numpy_in_use() -> bool:
+    """Whether the accelerator is actually being used right now."""
+    return _np is not None
+
+
+def numpy_version() -> str:
+    """The installed numpy's version, or "" if there is none."""
+    return getattr(_numpy, "__version__", "") if _numpy is not None else ""
+
+
+def renderer_description() -> str:
+    """One line naming the render path, for a menu, About, and the log.
+
+    ONE SENTENCE, WRITTEN ONCE. Whether numpy is in use is now visible in
+    three places, and three places that phrase it themselves is three places
+    that can disagree -- which matters here more than usual, because the
+    numpy and pure paths are no longer required to produce identical audio.
+    Someone comparing two machines has to be able to tell which path each one
+    took, and a menu that says one thing while the log says another is worse
+    than neither.
+    """
+    if _np is not None:
+        return f"numpy {numpy_version()} (accelerated)"
+    if _numpy is not None:
+        return (f"pure Python — numpy {numpy_version()} is installed but "
+                f"VINSAMLIB_NO_NUMPY is set")
+    return "pure Python — numpy is not installed"
+
+
+@contextlib.contextmanager
+def pure_python():
+    """Run the pure-Python path inside this block, even with numpy present.
+
+    Not thread-safe, and deliberately not made so: it flips a module global,
+    and a renderer running on a worker thread would see the flip. It is for
+    tests and for a one-off comparison, never for the app.
+    """
+    global _np
+    saved = _np
     _np = None
+    try:
+        yield
+    finally:
+        _np = saved
 
 #: Velocity curve names, matching models.common's constants. Duplicated as
 #: plain strings so this module can be imported without mpc2emu for a test.
@@ -217,6 +283,73 @@ def _read(src: _Source, ch: List[float], pos: float, looping: bool) -> float:
     return ch[i] + (ch[i + 1] - ch[i]) * frac
 
 
+def _read_block_np(src: "_Source", ch: List[float], pos, looping):
+    """`_read` for a whole array of positions at once.
+
+    A transcription of `_read`, mask for branch, and it has to stay one: that
+    function's comment records a real defect -- a position BEFORE the loop
+    folding INTO it, so every forward-looped multisample started at an
+    arbitrary phase with no attack transient. The same `pos > loop_end` guard
+    is the second term of `fold` below, for the same reason.
+
+    `looping` is an array because a release-triggered loop stops looping at
+    note-off, which happens mid-buffer.
+    """
+    n = len(ch)
+    if n == 0:
+        return _np.zeros(pos.shape, dtype="float64")
+    data = _np.asarray(ch, dtype="float64")
+    pos = _np.asarray(pos, dtype="float64")
+    looping = _np.asarray(looping, dtype=bool)
+    out = _np.zeros(pos.shape, dtype="float64")
+
+    ls, le = src.loop_start, src.loop_end
+    p = pos.copy()
+    seam = _np.zeros(pos.shape, dtype=bool)
+    seam_frac = _np.zeros(pos.shape, dtype="float64")
+    if le > ls:
+        span = le - ls + 1
+        fold = looping & (pos > le)
+        if fold.any():
+            rel = _np.mod(pos[fold] - ls, span)
+            at_seam = rel >= (span - 1)
+            idx = _np.flatnonzero(fold)
+            seam[idx[at_seam]] = True
+            seam_frac[idx[at_seam]] = rel[at_seam] - (span - 1)
+            p[idx[~at_seam]] = ls + rel[~at_seam]
+
+    i = _np.floor(p).astype(_np.int64)      # positions are >= 0, so == int()
+    frac = p - i
+    inside = (i >= 0) & (i < n - 1) & ~seam
+    past = (i >= n - 1) & ~seam
+    if inside.any():
+        ii = i[inside]
+        lo = data[ii]
+        out[inside] = lo + (data[ii + 1] - lo) * frac[inside]
+    # Past the end: silence, unless looping, where `_read` holds the last
+    # frame rather than dropping to zero.
+    if past.any():
+        out[past] = _np.where(looping[past], data[n - 1], 0.0)
+    if seam.any():
+        f = seam_frac[seam]
+        out[seam] = data[le] * (1.0 - f) + data[ls] * f
+    return out
+
+
+def _env_block_np(values: List[float], t):
+    """`envelope.interpolate` for a whole array of control-grid positions.
+
+    `np.interp` clamps at both ends, which is what `interpolate` does with its
+    `pos <= 0` and `pos >= last` branches, and is linear between -- the same
+    arithmetic in a different order, which the tolerance test measures.
+    """
+    if not values:
+        return _np.zeros(_np.shape(t), dtype="float64")
+    v = _np.asarray(values, dtype="float64")
+    return _np.interp(_np.asarray(t, dtype="float64"),
+                      _np.arange(v.size, dtype="float64"), v)
+
+
 # ── level / pan / velocity ───────────────────────────────────────────────────
 
 def velocity_to_volume_db(voice, velocity: int,
@@ -277,6 +410,126 @@ def velocity_to_filter_cents(voice, velocity: int) -> float:
     top = float(getattr(voice, "velocity_to_filter_cents", 0.0) or 0.0)
     bottom = float(getattr(voice, "velocity_to_filter_min_cents", 0.0) or 0.0)
     return bottom + (top - bottom) * velocity / 127.0
+
+
+# ── LFO ──────────────────────────────────────────────────────────────────────
+#
+# WHICH DESTINATIONS, AND WHY THESE. Counted over this library rather than
+# guessed: 32 558 E4B voices, 7 230 KRZ voices and all 453 064 MPC keygroups.
+#
+#     destination      E4B      KRZ      MPC
+#     filter cutoff   7.51%    2.55%    6.69%
+#     pan             1.67%    2.49%   14.84%
+#     volume          0.00%    0.06%   12.07%
+#     filter Q        0.10%    0.00%       --
+#
+# Cutoff is the most used on the hardware formats and is also the CHEAPEST to
+# add: the filter already recomputes its coefficients once per control block
+# for the filter envelope, so an LFO term is one more multiply in an
+# expression that was going to run anyway. Volume is the one that looks
+# obvious and is almost absent outside MPC.
+#
+# NOT MODELLED HERE, and the report still says so: delay, fade-in
+# (`lfo1_delay`), key-sync, tempo sync, and LFO 2 where a format has one we
+# do not read. The shapes below are the four every format here names; an
+# unknown shape falls back to a sine rather than to silence.
+
+LFO_SHAPES = ("sine", "triangle", "square", "sawtooth", "random")
+
+#: Full LFO-to-volume depth, in dB either side of the note's own level.
+#:
+#: CHOSEN, NOT MEASURED, and the report says so. The model gives a 0..1
+#: depth with no unit attached, and 12 dB is a tremolo that is clearly
+#: audible without swamping the note -- erring shallow, because too much
+#: movement is mistaken for a defect in the preset and too little is merely
+#: understated.
+LFO_VOLUME_DB = 12.0
+
+
+def lfo_value(shape: str, phase: float) -> float:
+    """One LFO cycle, -1..+1, at `phase` in turns (0..1 is one full cycle).
+
+    `random` is a SAMPLE-AND-HOLD on a fixed sequence, not noise: an audition
+    that sounded different every time it was rendered could not be compared
+    against anything, which is the whole point of the feature.
+    """
+    ph = phase - math.floor(phase)
+    if shape == "square":
+        return 1.0 if ph < 0.5 else -1.0
+    if shape == "sawtooth":
+        return 2.0 * ph - 1.0
+    if shape == "triangle":
+        return 4.0 * ph - 1.0 if ph < 0.5 else 3.0 - 4.0 * ph
+    if shape == "random":
+        # A cheap deterministic hash of the step number.
+        step = int(phase)
+        x = (step * 1103515245 + 12345) & 0x7FFFFFFF
+        return (x / float(0x3FFFFFFF)) - 1.0
+    return math.sin(2.0 * math.pi * ph)
+
+
+def _lfo_terms(voice):
+    """(rate_hz, shape, to_cents, to_q, to_pan, to_volume) or None.
+
+    Sums LFO 1 and LFO 2 into one oscillator when both route to the same
+    place and share a rate; otherwise LFO 1 wins, because two independent
+    oscillators would need two phases and the second is vanishingly rare
+    (15 of 32 558 E4B voices route LFO 2 to the filter at all).
+    """
+    rate = float(getattr(voice, "lfo1_rate", 0.0) or 0.0)
+    shape = str(getattr(voice, "lfo1_shape", "") or "sine").lower()
+    cents = float(getattr(voice, "lfo1_to_filter_cents", 0.0) or 0.0)
+    q = float(getattr(voice, "lfo1_to_filter_q", 0.0) or 0.0)
+    pan = float(getattr(voice, "lfo1_to_pan", 0.0) or 0.0)
+    vol = float(getattr(voice, "lfo1_to_volume", 0.0) or 0.0)
+    if not any((cents, q, pan, vol)):
+        rate2 = float(getattr(voice, "lfo2_rate", 0.0) or 0.0)
+        cents = float(getattr(voice, "lfo2_to_filter_cents", 0.0) or 0.0)
+        q = float(getattr(voice, "lfo2_to_filter_q", 0.0) or 0.0)
+        pan = float(getattr(voice, "lfo2_to_pan", 0.0) or 0.0)
+        vol = float(getattr(voice, "lfo2_to_volume", 0.0) or 0.0)
+        if not any((cents, q, pan, vol)):
+            return None
+        rate = rate2 or rate
+        shape = str(getattr(voice, "lfo2_shape", "") or shape).lower()
+    if rate <= 0.0:
+        return None
+    return (rate, shape, cents, q, pan, vol)
+
+
+def _lfo_caveats(voice, terms, report) -> None:
+    if report is None or terms is None:
+        return
+    rate, shape, cents, q, pan, vol = terms
+    dests = [n for n, v in (("cutoff", cents), ("Q", q), ("pan", pan),
+                            ("volume", vol)) if v]
+    # LFOs LEFT THE "not modelled" LIST ON 2026-09-27, so what remains
+    # missing has to be said where an LFO actually runs -- a preset with none
+    # should hear nothing about them at all, which is why this is not in the
+    # unconditional header any more.
+    report.note(
+        Severity.NOT_MODELLED, "LFO, the parts still missing",
+        "An LFO's rate, shape and depth to cutoff, Q, pan and volume are "
+        "modelled. Its delay and fade-in, key-sync and tempo-sync are not, "
+        "and where a voice routes a second LFO to somewhere the first one "
+        "already goes, only the first is heard.")
+    report.note(
+        Severity.FITTED, "LFO",
+        f"An LFO at {rate:.2f} Hz ({shape}) modulates "
+        f"{', '.join(dests)}. The rate, shape and depth are read from the "
+        f"file; the WAVEFORM is this renderer's own and the machines' are "
+        f"not measured, so the movement is right and its exact contour is "
+        f"not.")
+    if float(getattr(voice, "lfo1_delay", 0.0) or 0.0):
+        report.note(
+            Severity.NOT_MODELLED, "LFO delay",
+            "This voice delays or fades its LFO in; that is not modelled, so "
+            "the movement starts at full depth from the first note.")
+    if getattr(voice, "lfo1_sync", None):
+        report.note(
+            Severity.NOT_MODELLED, "LFO sync",
+            "This voice syncs its LFO to tempo or to key-on; neither is "
+            "modelled, so its phase here is simply zero at note-on.")
 
 
 # ── the per-voice render ─────────────────────────────────────────────────────
@@ -386,6 +639,8 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
     mode, poles = filter_mod.topology_for(f_type)
     filt = None
     filt_env = None
+    filt_q = 0.707          # only read when `filt` is not None; named so the
+                            # numpy path can take it as a plain argument
     f_base = 0.0
     keytrack = float(getattr(voice, "filter_keytrack", 0.0) or 0.0)
     vel_cents = velocity_to_filter_cents(voice, opts.velocity)
@@ -433,22 +688,43 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
            + _key_to_pan(voice, note))
     gl, gr = _constant_power(pan)
 
+    lfo = _lfo_terms(voice)
+    _lfo_caveats(voice, lfo, report)
+
     loop_type = src.loop_type
     forward_loop = loop_type == 1
     forward_rel = loop_type == 3
     n_ch = len(src.channels)
 
-    left: List[float] = [0.0] * n_frames
-    right: List[float] = [0.0] * n_frames
     gamma = opts.render_rate / env_mod.CONTROL_RATE
     block = max(1, int(round(gamma)))
+    hold_frame = int(opts.hold_seconds * opts.render_rate)
+
+    if _np is not None:
+        return _render_voice_np(
+            src, n_frames, ratio, amp, gamma, block, hold_frame, filt,
+            filt_env, f_base, keytrack, vel_cents, voice, note, opts, report,
+            gain, gl, gr, filt_q, forward_loop, forward_rel, n_ch, seconds,
+            pan)
+
+    left: List[float] = [0.0] * n_frames
+    right: List[float] = [0.0] * n_frames
     pos = 0.0
     clamped = False
-    hold_frame = int(opts.hold_seconds * opts.render_rate)
+    rate_hz = opts.render_rate
 
     for f in range(n_frames):
         looping = forward_loop or (forward_rel and f < hold_frame)
         g = env_mod.interpolate(amp, f / gamma)
+        if lfo is not None:
+            # Phase in turns from note-on. Zero at the first frame: no format
+            # here tells us where its oscillator was, and starting every note
+            # at the same place is at least reproducible.
+            wave = lfo_value(lfo[1], f * lfo[0] / rate_hz)
+            if lfo[5]:
+                g *= _db_to_gain(wave * lfo[5] * LFO_VOLUME_DB)
+        else:
+            wave = 0.0
 
         if filt is not None:
             if f % block == 0:
@@ -457,6 +733,7 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
                 f0 = (f_base
                       * 2.0 ** (keytrack * (note - KEYTRACK_PIVOT) / 12.0)
                       * 2.0 ** (vel_cents / 1200.0)
+                      * 2.0 ** (wave * lfo[2] / 1200.0 if lfo else 0.0)
                       * 2.0 ** (f_cents * float(getattr(voice, "filter_env_cents", 0.0) or 0.0) / 1200.0))
                 lo, hi = 20.0, 0.45 * opts.render_rate
                 if (f0 < lo or f0 > hi) and not clamped:
@@ -469,9 +746,19 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
                         f"envelope were applied, and was held at the edge. The "
                         f"machine has its own ceiling and it is not this one.")
                 f0 = min(max(f0, lo), hi)
+                q_now = filt_q
+                if lfo is not None and lfo[3]:
+                    # Q rides the same oscillator. Clamped well away from the
+                    # self-oscillation the SVF would show at very high Q,
+                    # which is ours and not the machine's.
+                    q_now = min(max(filt_q * (1.0 + wave * lfo[3]),
+                                    0.5), 16.0)
                 for c in filt:
-                    c.set(f0, filt_q)
+                    c.set(f0, q_now)
 
+        if lfo is not None and lfo[4]:
+            gl_f, gr_f = _constant_power(
+                min(max(pan + wave * lfo[4], -1.0), 1.0))
         for c in range(2):
             if c < n_ch:
                 x = _read(src, src.channels[c], pos, looping)
@@ -481,24 +768,255 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
                 x = filt[c].process(x)
             v = x * g * gain
             if c == 0:
-                left[f] += v * gl
+                left[f] += v * (gl_f if lfo is not None and lfo[4] else gl)
             else:
-                right[f] += v * gr
+                right[f] += v * (gr_f if lfo is not None and lfo[4] else gr)
         pos += ratio
 
     return left, right, seconds
 
 
+def _render_voice_np(src, n_frames, ratio, amp, gamma, block, hold_frame,
+                     filt, filt_env, f_base, keytrack, vel_cents, voice, note,
+                     opts, report, gain, gl, gr, filt_q, forward_loop,
+                     forward_rel, n_ch, seconds, pan=0.0):
+    """The same voice, with the per-frame work done as whole arrays.
+
+    WHAT IS NOT VECTORISED, AND CANNOT BE: the filter. It is an IIR -- each
+    output sample depends on the state the previous one left -- so there is no
+    array form of it, and `filter.py` says so where the class is defined. What
+    this removes is everything AROUND it: the interpolated read, the envelope
+    lookup and the gain/pan multiply, which were three Python calls per frame
+    per channel.
+
+    So an unfiltered voice becomes a handful of C operations, and a filtered
+    one still pays a Python loop -- but only for the filter, over a value it
+    no longer has to compute.
+
+    NOT BIT-IDENTICAL to the loop above, on purpose and measurably: positions
+    here are `arange(n) * ratio` where the loop ACCUMULATES `pos += ratio`, so
+    the two drift apart by the accumulated rounding of a few hundred thousand
+    additions -- about 1e-10 of a frame, which is far below one LSB but not
+    zero. manual_audition_numpy_tolerance measures the whole difference and
+    holds it to 80 dB down and 4 LSB.
+    """
+    positions = _np.arange(n_frames, dtype="float64") * ratio
+    t_ctrl = _np.arange(n_frames, dtype="float64") / gamma
+    if forward_loop:
+        looping = _np.ones(n_frames, dtype=bool)
+    elif forward_rel:
+        looping = _np.arange(n_frames) < hold_frame
+    else:
+        looping = _np.zeros(n_frames, dtype=bool)
+
+    env = _env_block_np(amp, t_ctrl)
+
+    # The same LFO the pure path applies, as arrays. `lfo_value` is scalar by
+    # design (the block loop below calls it once per control block), so the
+    # per-frame waveform is built here with the identical arithmetic rather
+    # than by calling it 400 000 times.
+    lfo = _lfo_terms(voice)
+    wave = None
+    if lfo is not None:
+        phase = _np.arange(n_frames, dtype="float64") * lfo[0] / opts.render_rate
+        wave = _lfo_wave_np(lfo[1], phase)
+        if lfo[5]:
+            env = env * _np.power(10.0,
+                                  (wave * lfo[5] * LFO_VOLUME_DB) / 20.0)
+
+    chans = []
+    for c in range(2):
+        ch = src.channels[c] if c < n_ch else src.channels[0]
+        chans.append(_read_block_np(src, ch, positions, looping))
+
+    if filt is not None:
+        # Coefficients change once per control block; step them there and run
+        # the sections over the block. The per-sample work left is the filter
+        # and nothing else.
+        clamped = False
+        env_cents = float(getattr(voice, "filter_env_cents", 0.0) or 0.0)
+        lo_hz, hi_hz = 20.0, 0.45 * opts.render_rate
+        outs = [chans[0].tolist(), chans[1].tolist()]
+        for start in range(0, n_frames, block):
+            stop = min(start + block, n_frames)
+            t_frac = start / gamma
+            f_cents = (env_mod.interpolate(filt_env, t_frac)
+                       if filt_env else 0.0)
+            # The block's own LFO sample, taken at its first frame -- which is
+            # exactly what the pure path does with `f % block == 0`.
+            w = float(wave[start]) if wave is not None else 0.0
+            f0 = (f_base
+                  * 2.0 ** (keytrack * (note - KEYTRACK_PIVOT) / 12.0)
+                  * 2.0 ** (vel_cents / 1200.0)
+                  * 2.0 ** (w * lfo[2] / 1200.0 if lfo else 0.0)
+                  * 2.0 ** (f_cents * env_cents / 1200.0))
+            if (f0 < lo_hz or f0 > hi_hz) and not clamped:
+                clamped = True
+                report.note(
+                    Severity.FITTED, "filter cutoff clamped",
+                    f"This voice's cutoff left the band this renderer can "
+                    f"run ({lo_hz:.0f} Hz to {hi_hz:.0f} Hz at "
+                    f"{opts.render_rate} Hz) once keytracking, velocity and "
+                    f"the filter envelope were applied, and was held at the "
+                    f"edge. The machine has its own ceiling and it is not "
+                    f"this one.")
+            f0 = min(max(f0, lo_hz), hi_hz)
+            q_now = filt_q
+            if lfo is not None and lfo[3]:
+                q_now = min(max(filt_q * (1.0 + w * lfo[3]), 0.5), 16.0)
+            for c in filt:
+                c.set(f0, q_now)
+            for c in (0, 1):
+                step = filt[c].process
+                buf = outs[c]
+                for i in range(start, stop):
+                    buf[i] = step(buf[i])
+        chans = [_np.asarray(outs[0]), _np.asarray(outs[1])]
+
+    scaled = env * gain
+    if lfo is not None and lfo[4]:
+        # Constant-power pan, per frame, vectorised: the same
+        # cos/sin(pi/4 * (p + 1)) the scalar `_constant_power` computes.
+        pan_now = _np.clip(pan + wave * lfo[4], -1.0, 1.0)
+        ang = (pan_now + 1.0) * (math.pi / 4.0)
+        left = chans[0] * scaled * _np.cos(ang)
+        right = chans[1] * scaled * _np.sin(ang)
+    else:
+        left = chans[0] * scaled * gl
+        right = chans[1] * scaled * gr
+    return left, right, seconds
+
+
+def _lfo_wave_np(shape: str, phase):
+    """`lfo_value` over an array of phases, same arithmetic per shape."""
+    ph = phase - _np.floor(phase)
+    if shape == "square":
+        return _np.where(ph < 0.5, 1.0, -1.0)
+    if shape == "sawtooth":
+        return 2.0 * ph - 1.0
+    if shape == "triangle":
+        return _np.where(ph < 0.5, 4.0 * ph - 1.0, 3.0 - 4.0 * ph)
+    if shape == "random":
+        step = _np.floor(phase).astype(_np.int64)
+        x = (step * 1103515245 + 12345) & 0x7FFFFFFF
+        return (x / float(0x3FFFFFFF)) - 1.0
+    return _np.sin(2.0 * _np.pi * ph)
+
+
+# ── rendering events in parallel ─────────────────────────────────────────────
+#
+# Each EVENT -- one note or one chord -- is independent: it has its own slice
+# of the output and its own voices. Pure Python is GIL-bound, so threads buy
+# nothing for the DSP loop; processes do.
+#
+# FORK ONLY, AND THAT IS THE WHOLE DESIGN. The child inherits the parsed bank
+# and the decoded samples through copy-on-write, so nothing large is pickled
+# on the way IN -- only the rendered buffers come back. Under `spawn` (Windows,
+# and macOS since 3.8) the child starts empty and the bank would have to be
+# pickled per task, which for a 128 MB multisample costs more than the render.
+# So there is no spawn path: those platforms render serially, which is what
+# they do today.
+#
+# NOTHING OUTLIVES THE RENDER. The pool is context-managed, so it is torn down
+# whether the render returns, raises or is abandoned. Cancelling an audition
+# does NOT kill it early -- the generation counter drops the result on arrival
+# and the workers finish into nothing -- which is the same bargain the single
+# threaded path already makes, and is why cancel is honest about being "stop
+# caring" rather than "stop computing".
+
+#: Set in the parent immediately before forking; read by the children through
+#: copy-on-write. Never sent anywhere.
+_FORK_PLANS = None
+_FORK_ARGS = None
+
+#: Below this many output frames, forking costs more than it saves.
+PARALLEL_MIN_FRAMES = 3 * 44100
+
+
+def parallel_supported() -> bool:
+    """Whether this machine can render events in parallel."""
+    try:
+        import multiprocessing
+        return "fork" in multiprocessing.get_all_start_methods()
+    except Exception:          # pragma: no cover - depends on the platform
+        return False
+
+
+def _render_event_task(index: int):
+    """Render one event in a forked child. Returns (left, right, caveats).
+
+    Caveats come back as a list and are merged by the parent IN EVENT ORDER,
+    so the report reads the same as it would have rendered serially --
+    `AuditionReport` dedupes on (severity, subject) and keeps insertion order,
+    so a different merge order would be a different report.
+    """
+    voices, _span = _FORK_PLANS[index]
+    total, mix_np = _FORK_ARGS
+    sub = AuditionReport()
+    acc_l, acc_r = None, None
+    for note, sounds, o in voices:
+        for s in sounds:
+            left, right, _secs = render_voice(s, note, o, sub)
+            acc_l, acc_r = _accumulate(acc_l, acc_r, left, right, total, mix_np)
+    return acc_l, acc_r, list(sub)
+
+
+def _accumulate(acc_l, acc_r, left, right, total, mix_np):
+    """Add one voice into an event's own buffer, trimmed to `total`."""
+    n = min(len(left), total)
+    if n <= 0:
+        return acc_l, acc_r
+    if mix_np:
+        if acc_l is None:
+            acc_l = _np.zeros(total, dtype="float64")
+            acc_r = _np.zeros(total, dtype="float64")
+        acc_l[:n] += _np.asarray(left[:n], dtype="float64")
+        acc_r[:n] += _np.asarray(right[:n], dtype="float64")
+        return acc_l, acc_r
+    if acc_l is None:
+        acc_l = [0.0] * total
+        acc_r = [0.0] * total
+    for i in range(n):
+        acc_l[i] += left[i]
+        acc_r[i] += right[i]
+    return acc_l, acc_r
+
+
 # ── the pipeline ─────────────────────────────────────────────────────────────
 
-def render(bank, preset, prov, opts) -> "Rendering":
-    """Render a whole audition. See ``audition.render`` for the public API."""
+def render(bank, preset, prov, opts, progress=None) -> "Rendering":
+    """Render a whole audition. See ``audition.render`` for the public API``.
+
+    ``progress(percent, text)`` is called as the render advances, if given.
+    It runs on WHATEVER THREAD render() is on -- a worker, in the app -- so a
+    Qt caller must pass something that marshals, which is what emitting a
+    signal from a GUI-thread object does. Called once per event rather than
+    per voice: a chord of three notes over six layers would otherwise emit
+    eighteen times for one line of text nobody can read that fast.
+    """
+    def _say(pct, text):
+        if progress is not None:
+            try:
+                progress(int(pct), text)
+            except Exception:
+                pass          # a broken progress hook must not lose a render
     # Late imports: __init__ owns the dataclasses, and imports this module.
     from . import Rendering
     from . import as_events as _as_events
 
     report = AuditionReport()
     _seed_report(report, prov, opts)
+    # Which engine actually ran. Costs nothing when the debug log is off
+    # (calllog.note returns immediately), and when it is on it is the first
+    # thing you want to know about a render that sounded wrong or took too
+    # long -- the two paths are allowed to differ now, so "which one" is a
+    # question the log has to be able to answer after the fact.
+    calllog.note("audition_render",
+                 renderer=renderer_description(),
+                 numpy=numpy_in_use(),
+                 parallel=parallel_supported(),
+                 cores=os.cpu_count(),
+                 rate=opts.render_rate, channels=opts.channels)
     fmt = getattr(prov, "format", "") or ""
     max_sounding = voice_mod.ceiling_for(fmt)
 
@@ -506,8 +1024,9 @@ def render(bank, preset, prov, opts) -> "Rendering":
     # An event is one note or a chord; every note in a chord starts at the
     # same frame, and the event is as long as its longest voice.
     events = _as_events(opts.notes)
+    _say(2, "Reading the preset\u2026")
     plans = []
-    for ev in events:
+    for n_ev, ev in enumerate(events, 1):
         hold = ev.held_for(opts.hold_seconds)
         span = hold
         voices = []
@@ -528,6 +1047,11 @@ def render(bank, preset, prov, opts) -> "Rendering":
                            *(_voice_seconds(s, o, report) for s in sounds))
             voices.append((note, sounds, o))
         plans.append((voices, span))
+        # 5..45%: planning walks every zone and is the half that scales with
+        # the preset's size, which is why a big multisample feels slow here
+        # long before a sample has been read.
+        _say(5 + 40 * n_ev / max(len(events), 1),
+             f"Preparing note {n_ev} of {len(events)}\u2026")
 
     if any(ev.is_chord for ev in events):
         report.note(
@@ -546,24 +1070,32 @@ def render(bank, preset, prov, opts) -> "Rendering":
     total_frames = max(
         1, total_frames - int(math.ceil(opts.gap_seconds * opts.render_rate)))
 
-    out_l = [0.0] * total_frames
-    out_r = [0.0] * total_frames
+    use_np = _np is not None
+    if use_np:
+        out_l = _np.zeros(total_frames, dtype="float64")
+        out_r = _np.zeros(total_frames, dtype="float64")
+    else:
+        out_l = [0.0] * total_frames
+        out_r = [0.0] * total_frames
 
-    for (voices, _span), start in zip(plans, offsets):
-        for note, sounds, o in voices:
-            for s in sounds:
-                left, right, _secs = render_voice(s, note, o, report)
-                for i, v in enumerate(left):
-                    j = start + i
-                    if j >= total_frames:
-                        break
-                    out_l[j] += v
-                for i, v in enumerate(right):
-                    j = start + i
-                    if j >= total_frames:
-                        break
-                    out_r[j] += v
+    parallel = (len(plans) > 1
+                and total_frames >= PARALLEL_MIN_FRAMES
+                and parallel_supported())
+    done = False
+    if parallel:
+        done = _render_events_parallel(plans, offsets, total_frames, out_l,
+                                       out_r, report, use_np, _say)
+    if not done:
+        for n_ev, ((voices, _span), start) in enumerate(zip(plans, offsets), 1):
+            _say(45 + 50 * (n_ev - 1) / max(len(plans), 1),
+                 f"Rendering note {n_ev} of {len(plans)}\u2026")
+            for note, sounds, o in voices:
+                for s in sounds:
+                    left, right, _secs = render_voice(s, note, o, report)
+                    _mix_into(out_l, out_r, left, right, start, total_frames,
+                              use_np)
 
+    _say(96, "Mixing\u2026")
     peak, pcm = _finish(out_l, out_r, opts)
     if peak * _db_to_gain(opts.headroom_db) > 1.0:
         report.note(
@@ -573,6 +1105,63 @@ def render(bank, preset, prov, opts) -> "Rendering":
     return Rendering(pcm=pcm, rate=opts.render_rate, channels=opts.channels,
                      peak_before_limit=peak, report=report,
                      seconds=total_frames / opts.render_rate)
+
+
+def _mix_into(out_l, out_r, left, right, start, total, use_np) -> None:
+    """Add one rendered buffer into the bus at `start`, trimmed to the end."""
+    n = min(len(left), total - start)
+    if n <= 0:
+        return
+    if use_np:
+        out_l[start:start + n] += _np.asarray(left[:n], dtype="float64")
+        out_r[start:start + n] += _np.asarray(right[:n], dtype="float64")
+        return
+    for i in range(n):
+        out_l[start + i] += left[i]
+        out_r[start + i] += right[i]
+
+
+def _render_events_parallel(plans, offsets, total_frames, out_l, out_r,
+                            report, use_np, say) -> bool:
+    """Render each event in a forked child. False means "do it serially".
+
+    Results are collected IN EVENT ORDER, not completion order, so the mix and
+    the report are the same whatever order the children finish in -- float
+    addition is not associative, and an audition that differed run to run
+    would be useless for the comparison it exists to support.
+    """
+    global _FORK_PLANS, _FORK_ARGS
+    try:
+        import multiprocessing
+        ctx = multiprocessing.get_context("fork")
+    except Exception:          # pragma: no cover - platform dependent
+        return False
+    spans = [min(total_frames - s, total_frames) for s in offsets]
+    _FORK_PLANS = plans
+    _FORK_ARGS = (total_frames, use_np)
+    workers = min(len(plans), (os.cpu_count() or 2))
+    try:
+        # Context-managed: the pool is gone when this block ends, whether it
+        # returned, raised, or the caller stopped caring about the result.
+        with ctx.Pool(processes=workers) as pool:
+            results = pool.map(_render_event_task, range(len(plans)))
+    except Exception:
+        # A child that dies takes the audition with it otherwise. Falling back
+        # to the serial path costs time and nothing else.
+        return False
+    finally:
+        _FORK_PLANS = None
+        _FORK_ARGS = None
+    for n_ev, ((left, right, caveats), start) in enumerate(
+            zip(results, offsets), 1):
+        say(45 + 50 * (n_ev - 1) / max(len(plans), 1),
+            f"Mixing note {n_ev} of {len(plans)}\u2026")
+        for c in caveats:
+            report.add(c)
+        if left is None:
+            continue
+        _mix_into(out_l, out_r, left, right, start, total_frames, use_np)
+    return True
 
 
 def _finish(out_l: List[float], out_r: List[float], opts) -> tuple[float, bytes]:
@@ -660,8 +1249,8 @@ def _seed_report(report: AuditionReport, prov, opts) -> None:
     _e4b_zplane_caveats(report, prov)
     report.note(
         Severity.NOT_MODELLED, "output stage",
-        "LFOs, chorus, delay, and the machines' own output stages, converters "
-        "and anti-alias filters are not modelled.")
+        "Chorus, delay, and the machines' own output stages, converters and "
+        "anti-alias filters are not modelled.")
     report.note(
         Severity.NOT_MODELLED, "interpolation",
         "The interpolation you are hearing is ours, not the sampler's — an "
