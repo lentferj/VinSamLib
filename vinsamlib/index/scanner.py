@@ -121,6 +121,16 @@ def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: s
             cls = sniff(e.ref)
             if cls is not None:
                 _scan_image_container(e.ref, cls, e.size, db, progress, seen_paths)
+            elif foreign_import.format_for(e.ref) is not None:
+                # THE SAME BRANCH THE TREE HAD, and the same bug: `sniff()`
+                # knows the volume formats we read ourselves, and answers None
+                # for an Ensoniq EPS or Roland S-7xx disc, which mpc2emu reads.
+                # Taking that None as the end of the question meant every such
+                # disc browsed perfectly and was unfindable by search -- and
+                # because this is an `elif` chain, the foreign branch below
+                # could never be reached for an image either.
+                _scan_foreign_container(e.ref, e.size, db, progress,
+                                        seen_paths)
         elif e.kind == EntryKind.OTHER_FILE and Path(e.ref).suffix.lower() in _MPC_EXT_FORMAT:
             # Same rule the tree lists by (ui/models.py): a MIDI/Plugin/
             # Audio/CV/Clip program references no sample data, so indexing it

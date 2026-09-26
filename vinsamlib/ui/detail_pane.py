@@ -160,9 +160,21 @@ class DetailPane(QWidget):
             return
         path = node.payload if node.kind == "foreign_bank" else node.payload[0]
         ordinal = None if node.kind == "foreign_bank" else node.payload[1]
-        size = node.size or (node.parent.size if node.parent else 0)
-        if size > self._PARSE_FOR_DETAIL_MAX:
-            rows = [("Name", node.label), ("Size", human_size(size))]
+        # A disc INSTRUMENT has no size of its own, and it must not borrow the
+        # disc's: every instrument on a 358 MB image then reported 341 MB,
+        # which is both wrong and identical on every row. Only a row with a
+        # size of its own -- a SoundFont, a GIG -- gets one.
+        own_size = node.size if node.kind == "foreign_bank" else 0
+        if not foreign_import.summary_is_cheap(path):
+            rows = [("Name", node.label), ("Format", node.format_label or "")]
+            if node.kind == "foreign_bank" and node.children:
+                rows.append(("Instruments", str(len(node.children))))
+            self._render_kv(title, rows, note=(
+                node.note or "") + ("<br>" if node.note else "") +
+                foreign_import.whole_disc_reason(path))
+            return
+        if own_size > self._PARSE_FOR_DETAIL_MAX:
+            rows = [("Name", node.label), ("Size", human_size(own_size))]
             if node.kind == "foreign_bank" and node.children:
                 rows.append(("Instruments", str(len(node.children))))
             self._render_kv(title, rows, note=(

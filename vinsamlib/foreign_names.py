@@ -128,6 +128,15 @@ class ListedPreset:
     name: str
     program: int = 0
     bank: int = 0
+    #: The row's OWN size in bytes, when the listing already knows
+    #: it, else None. An EPS directory entry carries its file size
+    #: and a Roland partial's is the sum of its zones' samples --
+    #: both free, both discarded before this existed, which is why
+    #: every disc row showed nothing while a 19 s whole-disc parse
+    #: ran in the background to produce figures that matched
+    #: nothing. NEVER the image's size: that bug put 341.2 MB on
+    #: all 613 rows of one disc.
+    size: Optional[int] = None
 
     @property
     def display(self) -> str:

@@ -66,6 +66,7 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
+from collections import OrderedDict
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
@@ -257,7 +258,43 @@ def format_for(path) -> Optional[str]:
     return None
 
 
+#: (path, mtime_ns, size) -> "EPS" / "Roland" / None. Bounded, and keyed on
+#: the same (path, stamp) discipline the audition and refaudio caches use, so
+#: an edited or replaced disc misses.
+#:
+#: WHY IT IS WORTH CACHING SOMETHING THIS CHEAP. One select of a disc row was
+#: measured running `sniff()` four times and the content test four times --
+#: `inspect`, `is_container`, `summary_is_cheap` and `list_presets` each ask
+#: independently, and an audition asks three more. Each is an open() and a
+#: read; on an NFS share that is latency per call, multiplied by the number
+#: of image rows in the folder.
+_FORMAT_CACHE: "OrderedDict" = OrderedDict()
+_FORMAT_CACHE_MAX = 256
+
+
+def _image_stamp(path):
+    try:
+        st = Path(path).stat()
+        return (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
 def image_content_format(path) -> Optional[str]:
+    key = _image_stamp(path)
+    if key is not None and key in _FORMAT_CACHE:
+        _FORMAT_CACHE.move_to_end(key)
+        return _FORMAT_CACHE[key]
+    answer = _image_content_format_uncached(path)
+    if key is not None:
+        _FORMAT_CACHE[key] = answer
+        _FORMAT_CACHE.move_to_end(key)
+        while len(_FORMAT_CACHE) > _FORMAT_CACHE_MAX:
+            _FORMAT_CACHE.popitem(last=False)
+    return answer
+
+
+def _image_content_format_uncached(path) -> Optional[str]:
     """``"EPS"``, ``"Roland"`` or None for a disc image.
 
     **Order is load-bearing and is not ours to reorder casually.** A disc a
@@ -276,6 +313,58 @@ def image_content_format(path) -> Optional[str]:
     """
     if not firmware_available():
         return None
+    try:
+        from ..vfs.detect import sniff
+        if sniff(str(path)) is not None:
+            return None
+    except Exception as exc:
+        _note_disc_failure(path, "vfs.detect.sniff", exc)
+        return None
+    try:
+        if mpc2emu_bridge.eps_parser.is_eps_image(str(path)):
+            return EPS_FORMAT
+        if mpc2emu_bridge.roland_parser.is_roland_image(str(path)):
+            return ROLAND_FORMAT
+    except Exception as exc:
+        _note_disc_failure(path, "content test", exc)
+        return None
+    return None
+
+
+def _roland_partial_sizes(path, parts) -> dict:
+    """Audio bytes per partial, from the two TABLES and no PCM.
+
+    Exactly the arithmetic `parse_roland_image` does on its way to loading
+    the audio, without loading it: each zone names a sample id, and the
+    sample table carries that sample's `audio_len`. Deduped, because a
+    partial can reach one sample through several zones and the figure wanted
+    is what THIS partial costs, not the sum of its references.
+
+    Measured: both tables read in 76 ms for a 4004-partial disc, against
+    ~700 ms for the whole-disc parse that used to be launched to answer the
+    same question -- and against 19 s for the EPS equivalent, which answered
+    it with nothing at all.
+    """
+    try:
+        samples = mpc2emu_bridge.roland_parser.read_roland_samples(str(path))
+    except Exception:
+        return {}
+    out = {}
+    for i, part in enumerate(parts):
+        seen, total = set(), 0
+        for zone in part.get("zones", ()) or ():
+            sid = zone.get("sample")
+            if sid is None or sid in seen:
+                continue
+            seen.add(sid)
+            rec = samples.get(sid) if isinstance(samples, dict) else None
+            if rec is None and not isinstance(samples, dict):
+                rec = samples[sid] if 0 <= sid < len(samples) else None
+            if rec:
+                total += int(rec.get("audio_len", 0) or 0)
+        if total:
+            out[i] = total
+    return out
     try:
         from ..vfs.detect import sniff
         if sniff(str(path)) is not None:
@@ -452,11 +541,22 @@ def _list_disc_presets(path) -> Optional[list]:
         return None
     try:
         if fmt == EPS_FORMAT:
-            ents = mpc2emu_bridge.eps_parser.eps_instruments(str(path), quiet=True)
-            return [foreign_names.ListedPreset(name=e.name, program=i)
+            ents = mpc2emu_bridge.eps_parser.eps_instruments(str(path),
+                                                             quiet=True)
+            # `size` is already on the directory entry and was being thrown
+            # away. Measured on the reference disc: audio is 117.4 MB of
+            # 127.2 MB of instrument files, so this is the file's size and
+            # ~92 % of it is audio -- the row says which, rather than
+            # implying an exact audio figure it did not measure.
+            return [foreign_names.ListedPreset(
+                        name=e.name, program=i,
+                        size=int(getattr(e, "size", 0) or 0) or None)
                     for i, e in enumerate(ents)]
         parts = mpc2emu_bridge.roland_parser.read_roland_partials(str(path))
-        return [foreign_names.ListedPreset(name=part.get("name", ""), program=i)
+        sizes = _roland_partial_sizes(path, parts)
+        return [foreign_names.ListedPreset(name=part.get("name", ""),
+                                           program=i,
+                                           size=sizes.get(i))
                 for i, part in enumerate(parts)]
     except Exception as exc:
         _note_disc_failure(path, "directory listing", exc)
@@ -765,6 +865,36 @@ def resolve_ordinal(bank, listed: list, ordinal: int) -> int:
 
 # ── read-only previews ─────────────────────────────────────────────────────
 
+#: Disc formats whose parse is WHOLE-DISC, so reading one instrument costs
+#: what reading all of them costs. Measured on the reference discs, one
+#: instrument at a time: Ensoniq 19.0 s, Roland 0.58 s. The difference is not
+#: size -- the Roland disc is the bigger of the two at 618 MB against 358 MB.
+_WHOLE_DISC_PARSE = frozenset({"EPS"})
+
+
+def summary_is_cheap(path) -> bool:
+    """Whether one instrument's zones can be shown on a click.
+
+    NOT a size test, which is what the Detail pane used to ask. A disc
+    preset has no size of its own, so the pane took its parent's -- the whole
+    image -- and refused every disc instrument as a "large file", quoting the
+    DISC's size as the instrument's. That number was the same 341 MB on every
+    row of the disc, which is what made it obviously wrong.
+    """
+    if Path(str(path)).suffix.lower() not in IMAGE_CONTENT_EXTS:
+        return True
+    return image_content_format(path) not in _WHOLE_DISC_PARSE
+
+
+def whole_disc_reason(path) -> str:
+    """Why an instrument on this disc cannot be summarised on a click."""
+    fmt = image_content_format(path) or "This"
+    return (f"{fmt} discs parse as a whole — reading one instrument costs "
+            f"what reading all of them costs (about 19 s on the reference "
+            f"disc), so the zone table is not drawn on a click. Import it, "
+            f"or audition it, to read its zones.")
+
+
 def summarize_foreign(path, ordinal: Optional[int] = None,
                       wav_dir: Optional[str] = None) -> XpmSummary:
     """One instrument's zones, for the Detail pane.
@@ -781,8 +911,34 @@ def summarize_foreign(path, ordinal: Optional[int] = None,
     index = 0
     if ordinal is not None and is_container(path):
         listed = list_presets(path) or []
-        index = resolve_ordinal(bank, listed, ordinal)
+        index = index_for_row(bank, listed, ordinal, path)
     return summarize_program(bank, index)
+
+
+def index_for_row(bank, listed: list, ordinal: int, path) -> int:
+    """The parsed preset to SHOW for disc row `ordinal`.
+
+    `resolve_ordinal` handles entries being DROPPED between the listing and
+    the parse. An EPS disc goes the other way: 613 listed instruments parse
+    to 2396 presets, because EOS writes each one's layer-mask variants
+    (`00`, `0*`, `*0`, `**`) as separate presets. Asked for row 2 it raised
+
+        this file parsed to 2396 presets but its header lists 613
+
+    and the Detail pane never showed that, because the pane refused every
+    disc preset as a "large file" first -- on the DISC's byte size, which it
+    had inherited. Two wrongs covering for each other.
+
+    `disc_preset_indices` already owns the positional run mapping; the first
+    index of the run is the variant EOS lists, which is the one the row
+    names.
+    """
+    if Path(str(path)).suffix.lower() in IMAGE_CONTENT_EXTS:
+        runs = disc_preset_indices(bank, listed, ordinal)
+        if runs:
+            return runs[0]
+        return 0
+    return resolve_ordinal(bank, listed, ordinal)
 
 
 def load_samples_for_test(path, ordinal: Optional[int] = None,
@@ -793,7 +949,8 @@ def load_samples_for_test(path, ordinal: Optional[int] = None,
     if ordinal is None or not is_container(path):
         return bank.samples
     listed = list_presets(path) or []
-    return _preset_samples(bank, bank.presets[resolve_ordinal(bank, listed, ordinal)])
+    return _preset_samples(
+        bank, bank.presets[index_for_row(bank, listed, ordinal, path)])
 
 
 # ── the import ─────────────────────────────────────────────────────────────
@@ -884,7 +1041,9 @@ def import_foreign(path, opts: ConversionOptions,
                         keep.append(sample)
             bank.samples = keep
         else:
-            preset = bank.presets[resolve_ordinal(bank, listed, ordinal)]
+            # index_for_row, not resolve_ordinal: an EPS disc parses to MORE
+            # presets than it lists, which resolve_ordinal refuses outright.
+            preset = bank.presets[index_for_row(bank, listed, ordinal, path)]
             preset.program_number = 0
             bank.presets = [preset]
             bank.samples = _preset_samples(bank, preset)

@@ -256,6 +256,15 @@ class SamplesPane(QWidget):
             self._model.set_zones([])
             return
         path, ordinal = node.payload
+        if not foreign_import.summary_is_cheap(path):
+            # The SAME refusal the Detail pane makes, for the same reason.
+            # Without it a click in this column started the whole-disc parse
+            # the other pane had just declined -- so the careful wording over
+            # there was undone by looking at the same row here.
+            self._title.setText(
+                f"{node.label} — {foreign_import.whole_disc_reason(path)}")
+            self._model.set_zones([])
+            return
         self._title.setText(f"Loading {node.label}…")
         self._run(foreign_import.summarize_foreign, (str(path), ordinal), gen,
                   None, node.label)

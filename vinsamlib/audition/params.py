@@ -230,7 +230,14 @@ def _foreign_route(path, ordinal) -> _Parsed:
     index = 0
     if ordinal is not None and foreign_import.is_container(path):
         listed = foreign_import.list_presets(path) or []
-        index = foreign_import.resolve_ordinal(bank, listed, ordinal)
+        # index_for_row, NOT resolve_ordinal. An Ensoniq disc parses to more
+        # presets than its header lists -- 613 instruments become 2396,
+        # because EOS writes each one's layer-mask variants separately -- and
+        # resolve_ordinal refuses that outright with "import the whole file
+        # rather than one preset of it", which is what Audition showed for
+        # every EPS instrument. The first index of the run is the variant the
+        # row names.
+        index = foreign_import.index_for_row(bank, listed, ordinal, path)
     return _Parsed(bank, bank.presets[index],
                    SourceProvenance(format=fmt, origin=str(path)),
                    source=(path, ordinal))
