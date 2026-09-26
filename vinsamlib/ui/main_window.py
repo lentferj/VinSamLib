@@ -15,10 +15,11 @@ the Explorer's search box queries it directly whenever the user types.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import time
 from typing import Optional
 
-from PySide6.QtCore import QThreadPool, QTimer, Qt
+from PySide6.QtCore import QObject, QThreadPool, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QInputDialog, QMainWindow,
                                 QMessageBox, QSplitter)
@@ -83,6 +84,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._config = config
         self.setWindowTitle("VinSamLib")
+        # A folder dragged from the file manager onto ANY part of this window
+        # is added to the library. On the window rather than on the tree: the
+        # tree is DragOnly and its viewport would swallow nothing, but the
+        # panes beside it are where a drop often lands, and "the browser
+        # window" is what a person aims at.
+        self.setAcceptDrops(True)
         # 1500x940 rather than the old 1280x800 (+17%): five columns, and the
         # placement editor's piano, were arriving cramped on a first run.
         # CLAMPED to the screen, because a fixed size larger than the display
@@ -402,15 +409,115 @@ class MainWindow(QMainWindow):
             options=QFileDialog.Option.DontUseNativeDialog)
         if not path:
             return
-        p = Path(path)
-        if p in self._config.library_roots:
-            self.statusBar().showMessage(f"{p} is already in the library")
+        self._add_library_roots([Path(path)])
+
+    def _add_library_roots(self, paths) -> int:
+        """Add folders as library roots, by their full path. Returns how many.
+
+        The one place a root is added, so the menu and a drop from the file
+        manager cannot come to disagree about what counts as addable.
+
+        EVERY REFUSAL IS NAMED. Dropping four folders and watching three
+        appear says nothing about the fourth, and "nothing happened" is the
+        answer this window is worst at giving.
+
+        Overlap is refused rather than silently allowed. A folder inside an
+        existing root, or one that swallows existing roots, would be walked
+        twice: the same bank appears under two rows, the index holds it
+        twice, and a scan pays for it twice -- which reads as a duplicate
+        bug rather than as a thing the user asked for. Compared through
+        `os.path.realpath`, so a symlink to a root is recognised as the root.
+        """
+        roots = list(self._config.library_roots)
+        real = {os.path.realpath(r): r for r in roots}
+        added, notes = [], []
+        for raw in paths:
+            p = Path(raw)
+            if not p.is_dir():
+                notes.append(f"{p.name}: not a folder")
+                continue
+            rp = os.path.realpath(p)
+            if rp in real:
+                notes.append(f"{p.name}: already in the library")
+                continue
+            inside = next((r for k, r in real.items()
+                           if rp.startswith(k.rstrip(os.sep) + os.sep)), None)
+            if inside is not None:
+                notes.append(f"{p.name}: already inside {Path(inside).name}")
+                continue
+            swallows = [r for k, r in real.items()
+                        if k.startswith(rp.rstrip(os.sep) + os.sep)]
+            if swallows:
+                notes.append(
+                    f"{p.name}: would contain "
+                    + ", ".join(Path(s).name for s in swallows))
+                continue
+            # Absolute, as the user asked -- but NOT resolved: a deliberate
+            # symlink into a library is a path they chose, and rewriting it
+            # to its target would quietly change what their config says.
+            p = p.absolute()
+            self._config.library_roots.append(p)
+            real[rp] = p
+            added.append(p)
+        if added:
+            self._config.last_library_dir = added[-1].parent
+            self._config.save()
+            for p in added:
+                self._model.add_root(p)
+            self._start_scan(added)
+        what = (f"Added {len(added)} folder(s) to the library"
+                if added else "Nothing added")
+        if notes:
+            what += " — " + "; ".join(notes)
+        self.statusBar().showMessage(what, 12000)
+        return len(added)
+
+    # -- folders dropped from a file manager ------------------------------------
+
+    @staticmethod
+    def _dropped_dirs(mime) -> list:
+        """Local directories in a drag's payload, in order, deduplicated.
+
+        Static and mime-only so the decision can be checked without a real
+        drag, which cannot be synthesised reliably offscreen."""
+        out, seen = [], set()
+        if mime is None or not mime.hasUrls():
+            return out
+        for url in mime.urls():
+            local = url.toLocalFile()
+            if not local:
+                continue           # a non-file URL: nothing to add
+            path = Path(local)
+            if not path.is_dir():
+                continue
+            key = os.path.realpath(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(path)
+        return out
+
+    def dragEnterEvent(self, event) -> None:
+        # Accept ONLY when there is a folder in the payload. Accepting
+        # anything with urls and then refusing at the drop gives the cursor a
+        # copy sign over a window that will not take it.
+        if self._dropped_dirs(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        # Fires on every mouse move; same decision, no extra work beyond the
+        # is_dir() stat the enter already paid for.
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        dirs = self._dropped_dirs(event.mimeData())
+        if not dirs:
+            event.ignore()
             return
-        self._config.library_roots.append(p)
-        self._config.last_library_dir = p.parent
-        self._config.save()
-        self._model.add_root(p)
-        self._start_scan([p])
+        event.acceptProposedAction()
+        self._add_library_roots(dirs)
 
     def _remove_library_folder(self) -> None:
         """File > Remove Library Folder…: picks a folder from the current
