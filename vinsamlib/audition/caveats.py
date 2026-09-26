@@ -30,10 +30,20 @@ class Severity(enum.Enum):
     a new severity cannot be added without deciding where it belongs.
     """
 
-    MEASURED = "measured on hardware"
-    FITTED = "fitted or derived"
-    UNMEASURED = "not measured"
-    NOT_MODELLED = "not modelled at all"
+    # The text answers "so how much should I trust this?", which is the only
+    # question a severity is asked. "UNMEASURED (not measured)" said the word
+    # back to the reader and left them none the wiser -- which is exactly the
+    # complaint that produced this.
+    MEASURED = "read from a measurement of the machine"
+    FITTED = "derived from a measurement, through a formula"
+    UNMEASURED = "no measurement exists — this number was chosen, not read"
+    NOT_MODELLED = "not reproduced here at all"
+
+    @property
+    def heading(self) -> str:
+        """The name as a reader sees it. `NOT_MODELLED` is an identifier, and
+        showing it verbatim put an underscore in the middle of a sentence."""
+        return self.name.replace("_", " ")
 
 
 #: Display order, best first. A tuple so the order is explicit rather than
@@ -120,7 +130,7 @@ class AuditionReport:
             if not first:
                 out.append("")
             first = False
-            out.append(f"{severity.name} ({severity.value}):")
+            out.append(f"{severity.heading} ({severity.value}):")
             for c in group:
                 out.append(f"  - {c.subject}: {c.text}")
         return "\n".join(out) + "\n"

@@ -96,6 +96,44 @@ def check_audio_output() -> Tuple[bool, str]:
     return True, f"{dev.description()} — {rate} Hz, {channels} ch"
 
 
+def volume_gain(percent) -> float:
+    """A 0-100 setting as a linear amplitude multiplier.
+
+    Through Qt's own perceptual curve, so the control behaves like a volume
+    control rather than like a multiplier: halfway down is 0.15 of full
+    amplitude, which is what a listener expects, where a plain 0.5 is barely
+    quieter at all.
+    """
+    pct = max(0, min(100, int(percent or 0))) / 100.0
+    if not _HAVE_MULTIMEDIA:
+        return pct * pct * pct          # a rough cube, same shape, no Qt
+    return max(0.0, float(QAudio.convertVolume(
+        pct, QAudio.VolumeScale.LogarithmicVolumeScale,
+        QAudio.VolumeScale.LinearVolumeScale)))
+
+
+def scaled_pcm(pcm: bytes, gain: float) -> bytes:
+    """`pcm` at `gain`, for the routes that cannot be told a volume.
+
+    `QAudioSink` takes a volume; `aplay` does not. Rather than let the two
+    routes play at different levels -- which would look like a defect in
+    whichever one the user is on -- the external route scales the samples it
+    is about to write to its temporary file. The USER'S file is never scaled:
+    see `write_wav`.
+    """
+    if gain >= 0.999:
+        return pcm
+    if gain <= 0.0:
+        return b"\x00" * len(pcm)
+    import array
+    a = array.array("h")
+    a.frombytes(pcm)
+    for i, v in enumerate(a):
+        s = int(v * gain)
+        a[i] = -32768 if s < -32768 else (32767 if s > 32767 else s)
+    return a.tobytes()
+
+
 def _no_device_reason() -> str:
     """Why there is no device, in the terms the user can act on.
 
@@ -211,7 +249,7 @@ def negotiate_format() -> Optional[Tuple[int, int]]:
     return rate, channels
 
 
-def write_wav_only(path, rendering) -> None:
+def write_wav_only(path, rendering, gain: float = 1.0) -> None:
     """The RIFF alone, with no report sidecar.
 
     Split out for the external-player route: that writes to a temporary file
@@ -227,7 +265,8 @@ def write_wav_only(path, rendering) -> None:
             w.setnchannels(rendering.channels)
             w.setsampwidth(2)
             w.setframerate(rendering.rate)
-            w.writeframes(rendering.pcm)
+            w.writeframes(rendering.pcm if gain >= 0.999
+                          else scaled_pcm(rendering.pcm, gain))
 
 
 def write_wav(path, rendering):
@@ -266,13 +305,14 @@ class AuditionPlayer(QObject):
     #: development host, so it is a real state and not a defensive one.
     failed = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, volume: int = 100):
         super().__init__(parent)
         self._sink = None
         self._buffer = None
         self._proc = None
         self._tmp = None
         self._route = "none"
+        self._volume = volume
 
     @property
     def playing(self) -> bool:
@@ -314,6 +354,9 @@ class AuditionPlayer(QObject):
                     or int(fmt.channelCount()) < rendering.channels):
                 return False
         self._sink = QAudioSink(dev, fmt, self)
+        # Set BEFORE start(): a volume applied after the sink is running is
+        # audible as a jump on the first note.
+        self._sink.setVolume(volume_gain(self._volume))
         self._buffer = QBuffer(self)
         self._buffer.setData(QByteArray(rendering.pcm))
         self._buffer.open(QIODevice.OpenModeFlag.ReadOnly)
@@ -331,7 +374,7 @@ class AuditionPlayer(QObject):
         fd, tmp = tempfile.mkstemp(prefix="vinsamlib-audition-", suffix=".wav")
         os.close(fd)
         try:
-            write_wav_only(tmp, rendering)
+            write_wav_only(tmp, rendering, gain=volume_gain(self._volume))
         except OSError:
             _unlink(tmp)
             return False
