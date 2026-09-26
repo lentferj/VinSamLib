@@ -893,6 +893,7 @@ both halves true: that it sounds, and that it never claims to be the hardware.
 | AUD9 | numpy is a pure accelerator: byte-identical output, never a gate | `manual_audition_acceleration` |
 | AUD10 | the dialog renders as a readable layout, not only without raising | `manual_audition_dialog_render` |
 | AUD11 | the external-player route plays, stops, reports a refusal, leaks no temp file | `manual_audition_external_player` |
+| AUD12 | note syntax: chords sound together, per-entry holds move note-off, every refusal names its token | `manual_audition_note_syntax` |
 
 **AUD3 is expected to fail, and the failure is the finding.** A plain
 two-section cascade puts the 4-pole −3 dB point at 0.803·f₀ against the
@@ -915,12 +916,19 @@ In PySide6 6.11 on Linux that is **PipeWire or PulseAudio, and nothing else**:
 rejected, they are silently ignored and fall through to PulseAudio. There is
 no ALSA backend and no JACK backend to select.
 
-The development desktop runs `jackd -dalsa -dhw:USB,0 -r48000`, has no
-PipeWire installed at all, and no PulseAudio daemon (`$XDG_RUNTIME_DIR/pulse`
-is empty; `pa_context_connect()` fails). So `QMediaDevices.audioOutputs()`
-is **empty on the desktop too**, not only offscreen — while `aplay -D default`
-plays perfectly through this machine's Loopback→`alsa_in`→JACK route. The one
-component that cannot reach the working audio path is Qt.
+When this was measured, the development desktop ran
+`jackd -dalsa -dhw:USB,0 -r48000` with no PipeWire installed and no
+PulseAudio daemon, so `QMediaDevices.audioOutputs()` was **empty on the
+desktop too**, not only offscreen — while `aplay -D default` played perfectly
+through its Loopback→`alsa_in`→JACK route. The one component that could not
+reach the working audio path was Qt.
+
+**That host moved to PipeWire later the same day, and Qt now finds three
+devices on it.** The measurement above is kept because the *finding* is about
+the toolkit, not the machine: any JACK or bare-ALSA host still gets nothing
+from `QAudioSink`, and what changed is which side of that line this
+particular desktop sits on. The fallback below now correctly stands aside
+here, which is the behaviour it was built for.
 
 **Why Qt alone, when Firefox and every player manage it.** The route is
 configured in `~/.asoundrc`, which is a **libasound** config, not a service:
@@ -977,10 +985,27 @@ silence, so it proves the plumbing and **not** audibility. The by-ear row
 below is still open and still means what it says.
 
 **Audio confirmed by ear: STILL NOT CLAIMED.** A 440 Hz test tone was played
-through this route on the development host on 2026-09-26 and `aplay` exited
-0, which says the device accepted the frames — not that anyone's monitors
-were up. It wants the same statement the K2000R and S3000XL rows carry: a
-person, named presets, and what they heard.
+through the external route on 2026-09-26 (`aplay` exited 0), and after the
+host's move to PipeWire the same tone played through **`QAudioSink` itself**,
+reaching `IdleState` and tearing down cleanly — the first time that code has
+ever run anywhere. Both say the device accepted the frames. Neither says
+anyone's monitors were up. This row still wants what the K2000R and S3000XL
+rows carry: a person, named presets, and what they heard.
+
+One thing the PipeWire move did retire: `QAudio.State` versus the
+non-existent `QAudioSink.State` was found by reading the binding, precisely
+because no machine here could reach the state handler. It has now been
+reached, and it is correct.
+
+**AUD11 forces both routes rather than taking whichever the host offers.**
+When Qt gained devices here, the external-route test would have silently
+become a second test of the Qt route — green, still named for the external
+one, checking nothing it claimed to. `_harness.no_qt_audio` forces the
+condition at the Qt boundary so both routes are exercised on any host. The
+same day, `manual_audition_no_audio_device` **did** fail this way: it had
+asserted "this sandbox is expected to have no audio device" as a fact about
+the machine, and the test named for the no-device case could no longer reach
+it. A precondition a test borrows from its host stops holding without notice.
 
 What that means for the matrix: a desktop run of AUD4's presets **cannot
 cover this row as the code stands**, so it is not a pending task but a

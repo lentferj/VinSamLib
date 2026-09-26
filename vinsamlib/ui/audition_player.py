@@ -105,8 +105,11 @@ def _no_device_reason() -> str:
     second case cheaply enough to be worth it.
     """
     if sys.platform.startswith("linux"):
-        return ("Qt reaches only PipeWire or PulseAudio — not ALSA or JACK "
-                "directly — so a JACK-only or bare-ALSA setup shows no device")
+        # State the rule, not an assumption about this machine: on a PipeWire
+        # host with a genuinely absent device, "so your JACK setup shows none"
+        # would be a confident wrong explanation.
+        return ("no audio output device — on Linux Qt reaches only PipeWire "
+                "or PulseAudio, not ALSA or JACK directly")
     return "no audio output device"
 
 
