@@ -44,7 +44,7 @@ class SVF:
     (spec §4.6).
     """
 
-    __slots__ = ("rate", "_g", "_k", "_ic1", "_ic2")
+    __slots__ = ("rate", "_g", "_k", "_a1", "_a2", "_a3", "_ic1", "_ic2")
 
     def __init__(self, rate: int):
         self.rate = int(rate)
@@ -52,6 +52,7 @@ class SVF:
         self._k = 1.0
         self._ic1 = 0.0
         self._ic2 = 0.0
+        self._recompute()
 
     def set(self, f0_hz: float, q: float) -> None:
         nyquist = 0.5 * self.rate
@@ -59,26 +60,86 @@ class SVF:
         q = max(float(q), 0.05)
         self._g = math.tan(math.pi * f0 / self.rate)
         self._k = 1.0 / q
+        self._recompute()
+
+    def _recompute(self) -> None:
+        """The coefficients, derived once per control block instead of once
+        per SAMPLE.
+
+        They depend only on ``_g`` and ``_k``, which only ``set()`` changes --
+        yet ``process()`` used to recompute them, including a DIVISION, for
+        every sample of every section: 8.8 million times in a 128 MB preset.
+        Identical arithmetic on identical operands, so the output is
+        bit-for-bit what it was; only the count changes.
+        """
+        g, k = self._g, self._k
+        self._a1 = 1.0 / (1.0 + g * (g + k))
+        self._a2 = g * self._a1
+        self._a3 = g * self._a2
 
     def process(self, x: float) -> tuple[float, float, float, float]:
-        """Returns ``(low, high, band, notch)`` for one input sample."""
-        g, k = self._g, self._k
-        a1 = 1.0 / (1.0 + g * (g + k))
-        a2 = g * a1
-        a3 = g * a2
+        """Returns ``(low, high, band, notch)`` for one input sample.
+
+        Kept as the reference shape and as the four-tap answer; the renderer
+        uses the per-tap methods below, which are this function with the three
+        taps nobody asked for left out.
+        """
         v3 = x - self._ic2
-        v1 = a1 * self._ic1 + a2 * v3
-        v2 = self._ic2 + a2 * self._ic1 + a3 * v3
+        v1 = self._a1 * self._ic1 + self._a2 * v3
+        v2 = self._ic2 + self._a2 * self._ic1 + self._a3 * v3
         self._ic1 = 2.0 * v1 - self._ic1
         self._ic2 = 2.0 * v2 - self._ic2
         low = v2
         band = v1
-        high = x - k * v1 - v2
+        high = x - self._k * v1 - v2
         notch = high + low
         return low, high, band, notch
 
+    # -- one method per tap ---------------------------------------------------
+    #
+    # FOUR COPIES OF THE SAME THREE LINES, ON PURPOSE. `process()` computed all
+    # four taps, allocated a tuple and let the caller index one -- three
+    # multiplies, two adds and an allocation thrown away per sample per
+    # section. Factoring the shared part back into a helper would put the call
+    # overhead straight back, which is the thing being removed.
+    #
+    # Duplication that cannot be refactored has to be PINNED instead:
+    # manual_audition_filter_taps asserts each of these against `process()`
+    # sample by sample, so the four cannot drift apart silently.
+
     def process_lp(self, x: float) -> float:
-        return self.process(x)[0]
+        v3 = x - self._ic2
+        v1 = self._a1 * self._ic1 + self._a2 * v3
+        v2 = self._ic2 + self._a2 * self._ic1 + self._a3 * v3
+        self._ic1 = 2.0 * v1 - self._ic1
+        self._ic2 = 2.0 * v2 - self._ic2
+        return v2
+
+    def process_hp(self, x: float) -> float:
+        v3 = x - self._ic2
+        v1 = self._a1 * self._ic1 + self._a2 * v3
+        v2 = self._ic2 + self._a2 * self._ic1 + self._a3 * v3
+        self._ic1 = 2.0 * v1 - self._ic1
+        self._ic2 = 2.0 * v2 - self._ic2
+        return x - self._k * v1 - v2
+
+    def process_bp(self, x: float) -> float:
+        v3 = x - self._ic2
+        v1 = self._a1 * self._ic1 + self._a2 * v3
+        v2 = self._ic2 + self._a2 * self._ic1 + self._a3 * v3
+        self._ic1 = 2.0 * v1 - self._ic1
+        self._ic2 = 2.0 * v2 - self._ic2
+        return v1
+
+    def process_notch(self, x: float) -> float:
+        v3 = x - self._ic2
+        v1 = self._a1 * self._ic1 + self._a2 * v3
+        v2 = self._ic2 + self._a2 * self._ic1 + self._a3 * v3
+        self._ic1 = 2.0 * v1 - self._ic1
+        self._ic2 = 2.0 * v2 - self._ic2
+        # notch = high + low, in that order -- float addition is not
+        # associative and the test compares against process() exactly.
+        return (x - self._k * v1 - v2) + v2
 
 
 class Cascade:
@@ -96,22 +157,29 @@ class Cascade:
         self.sections = [SVF(rate) for _ in range(max(0, sections))]
         self._idx = {"lp": 0, "hp": 1, "bp": 2, "notch": 3}[mode] \
             if mode != "bypass" else 0
+        # Decided ONCE, here, rather than per sample. `active` was a property
+        # evaluated 4.4 million times in one render, and the tap was chosen by
+        # indexing a freshly built tuple every sample of every section; both
+        # are answers that cannot change after construction.
+        self._active = mode != "bypass" and bool(self.sections)
+        self._chain = tuple(
+            getattr(s, f"process_{mode}") for s in self.sections) \
+            if self._active else ()
 
     @property
     def active(self) -> bool:
-        return self.mode != "bypass" and bool(self.sections)
+        return self._active
 
     def set(self, f0_hz: float, q: float) -> None:
         for s in self.sections:
             s.set(f0_hz, q)
 
     def process(self, x: float) -> float:
-        if not self.active:
+        if not self._active:
             return x
-        y = x
-        for s in self.sections:
-            y = s.process(y)[self._idx]
-        return y
+        for step in self._chain:
+            x = step(x)
+        return x
 
 
 def topology_for(filter_type: int) -> Tuple[str, int]:
