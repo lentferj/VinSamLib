@@ -127,8 +127,26 @@ first place.
 staged preset in New Bank) and choose **Audition**: VinSamLib renders the
 preset's notes and plays them, so *does this bank sound remotely like the
 source?* can be asked before a 300 MB image is written and carried across the
-room. The notes, velocity, hold and gap are set in Settings (default
-`C3,G3,C4` at velocity 100).
+room. What it plays, the velocity, the default hold and the gap are set in
+Settings.
+
+The note list takes four shapes, and any entry can be any of them:
+
+| Entry | What it plays |
+|---|---|
+| `A4` | one note, held for the default time |
+| `A4_100` | one note, held 100 ms instead |
+| `(A3,C4,E4)` | three notes struck **together** |
+| `(A3,C4,E4)_2500` | the same chord, held 2500 ms |
+
+Names use the C3 = MIDI 60 convention shown everywhere else in the app, and
+bare MIDI numbers work too. The default list is
+`A2,A3,A4,(A3,C4,E4),(C3,E3,G3)` at velocity 100 with a 800 ms hold: three
+octaves of A to expose keymap seams and root-key boundaries, then two triads,
+because a single note cannot reveal what happens when several of a preset's
+layers sound at once — which is where level summing and pan placement become
+audible. Chords add a caveat of their own: they are summed complete, while
+the sampler's voice budget and stealing order are not modelled.
 
 > **This is a model of the preset's parameters. It is not a model of the
 > sampler, and it will not sound like the hardware.**

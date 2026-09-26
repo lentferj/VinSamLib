@@ -177,18 +177,31 @@ class Config:
     #: one, and most users are not auditing loops. Nothing is ever modified —
     #: see banks/loopcheck.py for why this reports and never repairs.
     loop_click_check: bool = False
-    #: Notes the Audition action plays, in order. Comma-separated; names use the
+    #: What the Audition action plays, in order. Comma-separated; names use the
     #: C3 = 60 convention this project shows everywhere, and bare MIDI numbers
-    #: work too. Three notes across two octaves is enough to hear a keymap seam
-    #: without making the user wait.
-    audition_notes: str = "C3,G3,C4"
+    #: work too. An entry may also be a chord in parentheses, and any entry may
+    #: carry its own hold in milliseconds after an underscore:
+    #:
+    #:     A4              one note, held for `audition_hold_seconds`
+    #:     A4_100          one note, held 100 ms instead
+    #:     (A3,C4,E4)      three notes struck together
+    #:     (A3,C4,E4)_2500 the same chord, held 2500 ms
+    #:
+    #: The default walks three octaves of A to expose keymap seams and root-key
+    #: boundaries, then plays two triads: single notes cannot reveal what
+    #: happens when several of a preset's layers sound at once, which is where
+    #: level summing and pan placement become audible.
+    audition_notes: str = "A2,A3,A4,(A3,C4,E4),(C3,E3,G3)"
     #: Velocity every auditioned note is played at. One value rather than a
     #: list: the velocity LAYER a preset picks is the thing being auditioned,
     #: and varying it per note would make two variables move at once.
     audition_velocity: int = 100
-    #: Note-on to note-off, seconds. Long enough for a decay to settle, short
-    #: enough that a four-note audition is not a wait.
-    audition_hold_seconds: float = 1.5
+    #: Note-on to note-off, seconds -- the DEFAULT hold, which any entry in
+    #: `audition_notes` may override with its own `_milliseconds` suffix. Long
+    #: enough for a decay to settle, short enough that the five-event default
+    #: list is not a wait. A saved config keeps whatever value it holds, so
+    #: changing this default does not move anyone's existing setting.
+    audition_hold_seconds: float = 0.8
     #: Silence between notes, seconds.
     audition_gap_seconds: float = 0.3
     # Main-window size, remembered on close. None until the first quit, so a

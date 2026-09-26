@@ -193,7 +193,8 @@ class SettingsDialog(QDialog):
         layout.addWidget(QLabel("Audition:"))
         aud_form = QFormLayout()
         self._audition_notes_edit = QLineEdit(config.audition_notes)
-        self._audition_notes_edit.setPlaceholderText("C3,G3,C4")
+        self._audition_notes_edit.setPlaceholderText(
+            "A2,A3,A4,(A3,C4,E4),(C3,E3,G3)")
         self._audition_notes_edit.textChanged.connect(self._validate_notes)
         aud_form.addRow("Notes:", self._audition_notes_edit)
         self._audition_velocity_spin = QSpinBox()
@@ -205,7 +206,8 @@ class SettingsDialog(QDialog):
         self._audition_hold_spin.setSingleStep(0.1)
         self._audition_hold_spin.setSuffix(" s")
         self._audition_hold_spin.setValue(float(config.audition_hold_seconds))
-        aud_form.addRow("Hold (note-on to note-off):", self._audition_hold_spin)
+        aud_form.addRow("Default hold (note-on to note-off):",
+                        self._audition_hold_spin)
         self._audition_gap_spin = QDoubleSpinBox()
         self._audition_gap_spin.setRange(0.0, 5.0)
         self._audition_gap_spin.setSingleStep(0.1)
@@ -217,7 +219,10 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._audition_notes_status)
         audition_hint = QLabel(
             "Right-click a preset and choose Audition to hear these notes. "
-            "C3 = MIDI 60; bare numbers work too. This plays the preset's "
+            "C3 = MIDI 60; bare numbers work too. Put notes in parentheses to "
+            "strike them together — (A3,C4,E4) — and add _milliseconds to any "
+            "entry to override the default hold: A4_100, (A3,C4,E4)_2500. "
+            "This plays the preset's "
             "parameters, not the sampler — layering, level, pan, tuning, the "
             "amp and filter envelopes and a resonant filter are modelled from "
             "what each format was measured to do; the machines' own "
@@ -283,8 +288,8 @@ class SettingsDialog(QDialog):
             self._audition_notes_status.setText(f"✗ {ex}")
             self._audition_notes_status.setStyleSheet("color: #c0392b;")
             return
-        self._audition_notes_status.setText(
-            f"✓ {len(notes)} note(s): " + ", ".join(str(n) for n in notes))
+        from ..audition import describe_events
+        self._audition_notes_status.setText(f"✓ {describe_events(notes)}")
         self._audition_notes_status.setStyleSheet(
             "color: palette(placeholdertext); font-size: 11px;")
 

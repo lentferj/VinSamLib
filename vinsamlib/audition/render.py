@@ -493,34 +493,53 @@ def render_voice(snd: voice_mod.Sounding, note: int, opts,
 
 def render(bank, preset, prov, opts) -> "Rendering":
     """Render a whole audition. See ``audition.render`` for the public API."""
-    from . import Rendering  # late import: __init__ owns the dataclass
+    # Late imports: __init__ owns the dataclasses, and imports this module.
+    from . import Rendering
+    from . import as_events as _as_events
 
     report = AuditionReport()
     _seed_report(report, prov, opts)
     fmt = getattr(prov, "format", "") or ""
     max_sounding = voice_mod.ceiling_for(fmt)
 
-    # Pre-compute the per-note spans so the bus can be sized in one pass.
+    # Pre-compute the per-EVENT spans so the bus can be sized in one pass.
+    # An event is one note or a chord; every note in a chord starts at the
+    # same frame, and the event is as long as its longest voice.
+    events = _as_events(opts.notes)
     plans = []
-    for note in opts.notes:
-        o = _RenderOpts(opts, note=note, preset=preset, fmt=fmt)
-        sounds = voice_mod.sounding(preset, note, opts.velocity, bank=bank,
-                                    report=report,
-                                    max_sounding=max_sounding)
-        if not sounds:
-            report.note(
-                Severity.NOT_MODELLED, "silent note",
-                f"Nothing sounds for MIDI note {note} at velocity "
-                f"{opts.velocity}: no zone covers it. The keymap is quieter "
-                f"than the note list.")
-        span = max(opts.hold_seconds,
-                   *( _voice_seconds(s, o, report) for s in sounds)) if sounds \
-            else opts.hold_seconds
-        plans.append((note, sounds, span, o))
+    for ev in events:
+        hold = ev.held_for(opts.hold_seconds)
+        span = hold
+        voices = []
+        for note in ev.notes:
+            o = _RenderOpts(opts, note=note, preset=preset, fmt=fmt,
+                            hold_seconds=hold)
+            sounds = voice_mod.sounding(preset, note, opts.velocity, bank=bank,
+                                        report=report,
+                                        max_sounding=max_sounding)
+            if not sounds:
+                report.note(
+                    Severity.NOT_MODELLED, "silent note",
+                    f"Nothing sounds for MIDI note {note} at velocity "
+                    f"{opts.velocity}: no zone covers it. The keymap is "
+                    f"quieter than the note list.")
+            else:
+                span = max(span,
+                           *(_voice_seconds(s, o, report) for s in sounds))
+            voices.append((note, sounds, o))
+        plans.append((voices, span))
+
+    if any(ev.is_chord for ev in events):
+        report.note(
+            Severity.NOT_MODELLED, "chords",
+            "Notes sounded together are summed, each with its own full set of "
+            "layers. The sampler's voice budget and its stealing order are "
+            "not modelled, so a chord that overruns the machine's polyphony "
+            "will be heard here complete and on the hardware truncated.")
 
     total_frames = 0
     offsets = []
-    for _, _, span, _o in plans:
+    for _voices, span in plans:
         offsets.append(total_frames)
         total_frames += int(math.ceil((span + opts.gap_seconds) * opts.render_rate))
     # Trailing gap is not silence worth keeping in the file.
@@ -530,19 +549,20 @@ def render(bank, preset, prov, opts) -> "Rendering":
     out_l = [0.0] * total_frames
     out_r = [0.0] * total_frames
 
-    for (note, sounds, _span, o), start in zip(plans, offsets):
-        for s in sounds:
-            left, right, _secs = render_voice(s, note, o, report)
-            for i, v in enumerate(left):
-                j = start + i
-                if j >= total_frames:
-                    break
-                out_l[j] += v
-            for i, v in enumerate(right):
-                j = start + i
-                if j >= total_frames:
-                    break
-                out_r[j] += v
+    for (voices, _span), start in zip(plans, offsets):
+        for note, sounds, o in voices:
+            for s in sounds:
+                left, right, _secs = render_voice(s, note, o, report)
+                for i, v in enumerate(left):
+                    j = start + i
+                    if j >= total_frames:
+                        break
+                    out_l[j] += v
+                for i, v in enumerate(right):
+                    j = start + i
+                    if j >= total_frames:
+                        break
+                    out_r[j] += v
 
     peak, pcm = _finish(out_l, out_r, opts)
     if peak * _db_to_gain(opts.headroom_db) > 1.0:
@@ -688,13 +708,30 @@ def _e4b_zplane_caveats(report: AuditionReport, prov) -> None:
 # this shallow wrapper, which delegates everything else to the frozen object.
 
 class _RenderOpts:
-    __slots__ = ("_opts", "_note", "_preset", "_fmt")
+    __slots__ = ("_opts", "_note", "_preset", "_fmt", "_hold")
 
-    def __init__(self, opts, *, note: int = 60, preset=None, fmt: str = ""):
+    def __init__(self, opts, *, note: int = 60, preset=None, fmt: str = "",
+                 hold_seconds=None):
         object.__setattr__(self, "_opts", opts)
         object.__setattr__(self, "_note", note)
         object.__setattr__(self, "_preset", preset)
         object.__setattr__(self, "_fmt", fmt)
+        object.__setattr__(self, "_hold", hold_seconds)
+
+    @property
+    def hold_seconds(self) -> float:
+        """The event's own hold, or the list default.
+
+        Overridden HERE rather than at each of the seven read sites, because
+        the envelope, the filter envelope, the tail budget and the note
+        spacing all have to agree about where note-off is. Two of them
+        disagreeing is a click at the release, which is the kind of defect
+        this whole feature exists to hear.
+        """
+        hold = object.__getattribute__(self, "_hold")
+        if hold is not None:
+            return hold
+        return object.__getattribute__(self, "_opts").hold_seconds
 
     def __getattr__(self, name):
         return getattr(object.__getattribute__(self, "_opts"), name)
