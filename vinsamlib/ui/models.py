@@ -27,6 +27,7 @@ from PySide6.QtGui import QColor
 from . import dnd, workers
 from ..banks import akai, e4b, eiii, krz
 from ..build import foreign_import, xpm_import
+from ..vfs.localdir import _IMAGE_EXTS as _LOCALDIR_IMAGE_EXTS
 from ..build.convert import ConvertOpError
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
@@ -342,35 +343,102 @@ _PROBE_DIR_BUDGET = 400   # directories a single listing may look into before
                           # it stops judging and just shows the rows
 
 
+def visible_suffixes() -> frozenset:
+    """Every file suffix `_list_directory` can turn into a row.
+
+    DERIVED FROM THE SAME TABLES, never written out by hand. `_dir_has_content`
+    needs to know what counts as content, and the obvious way to be sure is
+    what the old version did: call `_list_directory` and look. That is correct
+    and it is why expanding one library folder took 58 seconds -- it stat'ed
+    72 436 files and built TreeNodes for them to answer a yes/no.
+
+    A second copy of the rule is the real hazard here, so there is no second
+    copy: this reads the tables `_list_directory` itself reads, and
+    `manual_browse_probe` checks the two agree over a real corpus, so a format
+    added to one and not the other is caught rather than silently hidden.
+    """
+    return frozenset(
+        set(_BANK_EXT_FORMAT)
+        | set(_AKAI_PROGRAM_EXTS)
+        | set(xpm_import.PROGRAM_EXTS)
+        | {xpm_import.PROJECT_EXT}
+        | set(foreign_import.FOREIGN_EXT_FORMAT)
+        | set(foreign_import.IMAGE_CONTENT_EXTS))
+
+
 def _dir_has_content(path: Path, budget: list[int]) -> bool:
     """True if *path* holds something this browser can show, at any depth.
 
-    Deciding that needs exactly the rules _list_directory applies, so it calls
-    it rather than growing a second copy of them, and stops at the first row it
-    finds. Running out of budget answers True: showing a row that turns out
-    empty is a far smaller wrong than hiding real content behind a walk we
-    gave up on -- which is also why an unreadable directory stays visible.
+    Names and directory-entry types ONLY: no stat, no TreeNodes, no file is
+    opened. Measured on a 72 436-file NFS tree, the folder this was written
+    for: 58.3 s before, 0.056 s after, and the same 45 rows either way. The
+    cost was never the walk -- `os.scandir` over that tree is 0.18 s -- it was
+    `os.stat` on every file, which on this mount is ~23 s whether or not
+    symlinks are followed (lstat is NOT cheaper here; that was measured too,
+    on disjoint halves so neither warmed the other).
+
+    `is_dir(follow_symlinks=False)` is free: it comes from the directory read
+    itself. Following would make a symlinked directory look like a file and
+    hide a real folder, so the suffix test below runs for it as well, and a
+    symlinked TREE is not descended -- which also means a loop cannot hang it.
+
+    Running out of budget answers True: showing a row that turns out empty is
+    a far smaller wrong than hiding real content behind a walk we gave up on
+    -- which is also why an unreadable directory stays visible.
+
+    IMAGE EXTENSIONS ARE THE ONE CASE THE NAME CANNOT ANSWER, and skipping
+    that was caught by the test rather than by reasoning: `.img` is also what
+    an OmniFlop FIRMWARE floppy is called, and a folder holding two of those
+    and nothing else produced no rows at all before -- so a name-only probe
+    would have started showing a folder that expands to nothing. Those files
+    are rare next to the samples beside them, so they are checked properly,
+    with the same two calls `_list_directory` makes.
     """
     budget[0] -= 1
     if budget[0] < 0:
         return True
-    children = _list_directory(path, None)
-    if not children:
-        # LocalDirVolume.list() answers [] both for an empty directory and for
-        # one it could not read at all. Tell those apart here: a directory
-        # whose contents we never got to see keeps its row.
+    try:
+        with os.scandir(path) as it:
+            entries = list(it)
+    except OSError:
+        return True              # never got to see it; it keeps its row
+    visible = visible_suffixes()
+    subdirs = []
+    for e in entries:
         try:
-            with os.scandir(path) as it:
-                next(it, None)
+            if e.is_dir(follow_symlinks=False):
+                subdirs.append(e.path)
+                continue
         except OSError:
             return True
-        return False
-    subdirs = []
-    for n in children:
-        if n.kind != "directory":
+        suffix = os.path.splitext(e.name)[1].lower()
+        if suffix not in visible:
+            continue
+        if suffix in _IMAGE_SUFFIXES and not _image_is_content(e.path):
+            continue
+        return True
+    return any(_dir_has_content(Path(p), budget) for p in subdirs)
+
+
+#: The suffixes whose NAME does not settle the question -- see
+#: `_dir_has_content`. Same two tables `_list_directory`'s image branch uses.
+_IMAGE_SUFFIXES = frozenset(set(_LOCALDIR_IMAGE_EXTS)
+                            | set(foreign_import.IMAGE_CONTENT_EXTS))
+
+
+def _image_is_content(path: str) -> bool:
+    """Whether a disc image is one the browser would actually show a row for.
+
+    The same two questions `_list_directory` asks, in the same order: our own
+    volume readers first, then mpc2emu's foreign formats. A few hundred bytes
+    per image file, and only for image files.
+    """
+    try:
+        if sniff(path) is not None:
             return True
-        subdirs.append(n.payload)
-    return any(_dir_has_content(p, budget) for p in subdirs)
+        return foreign_import.inspect(Path(path)) is not None
+    except Exception:
+        return True              # unsure is not a reason to hide a folder
 
 
 #: Extensions a loose AKAI program file can carry. `.P3`/`.P1` is the
@@ -379,10 +447,33 @@ def _dir_has_content(path: Path, budget: list[int]) -> bool:
 _AKAI_PROGRAM_EXTS = {".p3", ".p1", ".a3p", ".s3p"}
 
 
+#: What `foreign_import.inspect()` will even look at -- its own first test.
+_FOREIGN_SUFFIXES = frozenset(set(foreign_import.FOREIGN_EXT_FORMAT)
+                              | set(foreign_import.IMAGE_CONTENT_EXTS))
+
+
+def sized_suffixes() -> frozenset:
+    """The suffixes whose size this listing actually puts on a row.
+
+    Everything else is listed without being stat'ed. Derived, not written out:
+    a row that starts showing a size for a new format and is not added here
+    would show 0 instead, which `manual_browse_probe` checks for.
+    """
+    return frozenset(
+        set(_BANK_EXT_FORMAT)
+        | set(_LOCALDIR_IMAGE_EXTS)
+        | set(foreign_import.IMAGE_CONTENT_EXTS)
+        | set(foreign_import.FOREIGN_EXT_FORMAT)
+        | {xpm_import.PROJECT_EXT})
+
+
 def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
     vol = LocalDirVolume(str(path))
     out: list[TreeNode] = []
-    entries = vol.list()
+    # Sizes only for the suffixes that show one. A folder of 8 912 samples
+    # holds ~30 rows; stat'ing the other 8 880 was 3.4 s of NFS round trips
+    # for numbers nothing displays.
+    entries = vol.list(size_suffixes=sized_suffixes())
 
     # A folder of loose AKAI files is one volume's worth of content: the
     # programs and the samples they name, side by side, exactly as they sat
@@ -396,6 +487,7 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
                              format_label="AKAI"))
 
     for e in entries:
+        suffix = os.path.splitext(e.name)[1].lower()
         if e.kind == EntryKind.DIRECTORY:
             out.append(TreeNode("directory", e.name, node, Path(e.ref)))
         elif e.kind == EntryKind.BANK:
@@ -404,14 +496,30 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
         elif e.kind == EntryKind.OTHER_FILE and e.meta.get("is_image"):
             if sniff(e.ref) is not None:
                 out.append(TreeNode("volume_root", e.name, node, Path(e.ref), size=e.size))
-        elif e.kind == EntryKind.OTHER_FILE and Path(e.name).suffix.lower() == xpm_import.PROJECT_EXT:
+            else:
+                # NOT the end of the question. `sniff()` knows the volume
+                # formats THIS project reads for itself; a Roland S-7xx or
+                # Ensoniq EPS disc has no reader here and is read through
+                # mpc2emu, so it answers None for a disc that is perfectly
+                # importable. Dropping the row on that answer hid every
+                # Roland disc in the library -- and because a folder holding
+                # only those then listed nothing, the folder itself was
+                # greyed out as "nothing to import", which is the opposite
+                # of true.
+                #
+                # So an image `sniff()` does not know falls through to the
+                # same foreign check every other unrecognised file gets.
+                foreign = _foreign_node(Path(e.ref), e.name, node, e.size)
+                if foreign is not None:
+                    out.append(foreign)
+        elif e.kind == EntryKind.OTHER_FILE and suffix == xpm_import.PROJECT_EXT:
             # An MPC project holds one keygroup program per track, so it
             # browses like a bank -- expandable into its programs. Its own
             # kind, not "bank": _fetch_bank parses E4B/KRZ/EIII magic bytes
             # and would only fail on it.
             out.append(TreeNode("mpc_project", e.name, node, Path(e.ref), size=e.size,
                                  format_label=xpm_import.MPC_EXT_FORMAT[xpm_import.PROJECT_EXT]))
-        elif e.kind == EntryKind.OTHER_FILE and Path(e.name).suffix.lower() in xpm_import.PROGRAM_EXTS:
+        elif e.kind == EntryKind.OTHER_FILE and suffix in xpm_import.PROGRAM_EXTS:
             # One program per file: importable (see build/xpm_import.py),
             # with nothing to browse into -- a leaf row. But a project's data
             # folder holds one .xpm per track, and only a keygroup program
@@ -420,7 +528,7 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
             # trust_name: a listing must not open every file it shows.
             kind = xpm_import.program_kind(e.ref, trust_name=True)
             if kind is None or kind in xpm_import.CONVERTIBLE_KINDS:
-                label = xpm_import.MPC_EXT_FORMAT[Path(e.name).suffix.lower()]
+                label = xpm_import.MPC_EXT_FORMAT[suffix]
                 # A drum program reaching here is always MPC 2.x XML -- an
                 # MPC 3 one is gzipped and reports kind None -- and 2.x is
                 # exactly the case whose pad->key map is missing.
@@ -428,7 +536,12 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
                     "xpm", e.name, node, Path(e.ref), size=0,
                     format_label=f"{label} drum kit" if kind == xpm_import.DRUM else label,
                     note=xpm_import.DRUM_2X_PAD_MAP_NOTE if kind == xpm_import.DRUM else ""))
-        elif e.kind == EntryKind.OTHER_FILE:
+        elif e.kind == EntryKind.OTHER_FILE and suffix in _FOREIGN_SUFFIXES:
+            # Gated on the suffix FIRST. `inspect()` starts with exactly this
+            # test and returns None, but reaching it meant building a Path per
+            # file -- 6 680 of them in a folder of 6 000 samples, for 225
+            # rows. The set is the same union `inspect()` itself gates on, and
+            # manual_browse_probe checks the two still agree.
             foreign = _foreign_node(Path(e.ref), e.name, node, e.size)
             if foreign is not None:
                 out.append(foreign)

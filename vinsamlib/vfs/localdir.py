@@ -32,7 +32,24 @@ class LocalDirVolume(Volume):
     def __init__(self, root: str):
         self.path = root
 
-    def list(self, folder: Optional[Entry] = None) -> list[Entry]:
+    def list(self, folder: Optional[Entry] = None,
+             size_suffixes: Optional[frozenset] = None) -> list[Entry]:
+        """Entries under `folder`, or the volume root.
+
+        `size_suffixes` names the file suffixes whose SIZE and MTIME the
+        caller actually uses; everything else is listed with size 0 and no
+        mtime, and is never stat'ed. Default None means "stat everything",
+        which is what the index scanner wants -- it needs a size for every
+        container it indexes.
+
+        WHY IT IS WORTH A PARAMETER. `os.stat` is the whole cost of listing a
+        sample folder: one of this library's expansion folders holds 8 912
+        entries of which ~30 can become rows, and stat'ing the other 8 880
+        took 3.4 seconds on an NFS mount. Measured on that mount, following
+        symlinks makes no difference -- `os.lstat` costs the same as
+        `os.stat` there, on disjoint halves so neither warmed the other -- so
+        the fix is not to stat cheaply but not to stat at all.
+        """
         base = folder.ref if folder is not None else self.path
         out: list[Entry] = []
         try:
@@ -44,18 +61,25 @@ class LocalDirVolume(Volume):
         except OSError:
             return out
         for child in children:
+            suffix = os.path.splitext(child.name)[1].lower()
             try:
                 is_dir = child.is_dir()
-                st = child.stat()
+                # A directory is always stat'ed: there are few of them, and
+                # their mtime is what a rescan check reads.
+                if is_dir or size_suffixes is None or suffix in size_suffixes:
+                    st = child.stat()
+                    size = 0 if is_dir else st.st_size
+                    mtime = st.st_mtime
+                else:
+                    size, mtime = 0, None
             except OSError:      # a broken symlink, or it went away mid-listing
                 continue
-            suffix = os.path.splitext(child.name)[1].lower()
             out.append(Entry(
                 name=child.name,
                 kind=_classify(suffix, is_dir),
-                size=0 if is_dir else st.st_size,
+                size=size,
                 ref=child.path,
-                meta={"mtime": st.st_mtime, "is_image": suffix in _IMAGE_EXTS},
+                meta={"mtime": mtime, "is_image": suffix in _IMAGE_EXTS},
             ))
         return out
 
