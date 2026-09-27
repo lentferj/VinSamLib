@@ -281,6 +281,38 @@ def shot_settings(app, win) -> None:
     dlg.deleteLater()
 
 
+def shot_settings_audition(app, win) -> None:
+    """06b_settings_audition -- the same dialog, scrolled to the Audition group.
+
+    A second picture rather than a taller one: fully expanded the dialog wants
+    ~1090 px and adjustSize() will not grow a window past a fraction of screen
+    height, so one shot cannot hold both ends of it. The Audition fields are
+    the half the README's audition section points at.
+    """
+    from dataclasses import replace
+    from PySide6.QtWidgets import QScrollArea
+    from vinsamlib.config import Config
+    from vinsamlib.ui.settings_dialog import SettingsDialog
+    # The picture must agree with the README, which quotes the DEFAULT note
+    # list and hold; the demo config carries whatever this machine had.
+    defaults = Config()
+    cfg = replace(win._config,
+                  audition_notes=defaults.audition_notes,
+                  audition_velocity=defaults.audition_velocity,
+                  audition_hold_seconds=defaults.audition_hold_seconds,
+                  audition_gap_seconds=defaults.audition_gap_seconds,
+                  audition_volume=defaults.audition_volume)
+    dlg = SettingsDialog(cfg)
+    dlg.resize(560, dlg.sizeHint().height())
+    dlg.show()
+    _settle(app)
+    scroll = dlg.findChild(QScrollArea)
+    scroll.ensureWidgetVisible(dlg._audition_volume_spin, 0, 40)
+    _settle(app)
+    _grab(dlg, "06b_settings_audition")
+    dlg.deleteLater()
+
+
 def shot_akai_partitions(app, win) -> None:
     """14_akai_partitions / 15_akai_partition_preview -- the AKAI hierarchy.
 
@@ -374,6 +406,7 @@ def shot_convert_options(app, win) -> None:
 ALL = {"02_new_bank": shot_new_bank,
        "05_convert_options": shot_convert_options,
        "06_settings": shot_settings,
+       "06b_settings_audition": shot_settings_audition,
        "12_bank_placement": shot_placement,
        "13_favourites": shot_favourites,
        "14_akai_partitions": shot_akai_partitions}

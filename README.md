@@ -21,6 +21,12 @@ Roland S-7xx sampler discs (experimental), a folder of loose WAVs,
 and mpc2emu's vintage resample / sample-count reduction pipeline on
 anything's way into a bank.
 
+Before you carry anything to a machine, **[audition](#audition--hear-a-preset-before-you-carry-it)**
+a preset: VinSamLib renders its parameters — layers, levels, pan, tuning,
+envelopes, filter, LFO — and plays them, or writes them to a WAV. It is a
+model of the preset, not of the sampler, and it says so above every audition
+and names every approximation it applied.
+
 > **Legal:** [DISCLAIMER.md](DISCLAIMER.md) · [LICENSE](LICENSE)
 
 ---
@@ -98,8 +104,10 @@ E4B/EIII and KRZ alike), **E4B/EIII** preset-level zone/velocity/
 bit-depth detail in the Detail pane (KRZ's own detail view is
 self-contained), building an EIII bank at all, XPM import, sample-folder
 import, **browsing or importing the soft-sampler formats (SF2, SFZ,
-EXS24, TAL-Sampler, GIG) — without mpc2emu those do not appear in the
-Explorer at all**, converting an AKAI program, and vintage conversion.
+EXS24, TAL-Sampler, GIG) and the Ensoniq EPS/ASR and Roland S-7xx discs —
+without mpc2emu those do not appear in the Explorer at all**, converting an
+AKAI program, vintage conversion, and **Audition**, which renders from
+mpc2emu's parsed model rather than from our own readers.
 Settings shows exactly which of these is unavailable and why if mpc2emu
 isn't configured.
 
@@ -107,13 +115,17 @@ isn't configured.
 
 Point VinSamLib at any number of folders — loose `.e4b`/`.KRZ` files,
 EMU3 CD/HD images, ISO 9660 discs, FAT12/16/32 floppy or hard-disk
-images, Akai sampler discs, folders of Akai MPC programs and projects —
-and it lazily walks
+images, Akai sampler discs, Ensoniq EPS/ASR and Roland S-7xx discs,
+SoundFont/SFZ/EXS24/TAL/GIG instruments, folders of Akai MPC programs
+and projects — and it lazily walks
 the tree, showing banks, discs, folders, presets, and programs in one
 unified Explorer. A background scanner indexes
 everything into a local search database, so typing in the search box
 finds a preset by name anywhere in the whole library, instantly, without
-waiting for the tree to be expanded down to it.
+waiting for the tree to be expanded down to it. **Whatever the tree can show,
+the index can find**: the two decide a file's format through the same code, so
+a format cannot end up visible in one and absent from the other — which is
+exactly what had happened to the Ensoniq and Roland discs.
 
 ### Adding folders to the library
 
@@ -131,84 +143,20 @@ a root is recognised as that root.
 
 ### Audition a preset before you carry it
 
-Every defect found by ear this month needed media carried to a machine: a
-KRZ conversion 12 dB quiet, a KRZ release 1.87× fast, an AKAI velocity
-filter that read as bypass, an MPC drum kit on the wrong keys. The only way
-to notice was to load it and hear it — which is how it went unnoticed in the
-first place.
+Every defect this project found by ear needed media carried to a machine
+first, which is why they went unnoticed for as long as they did. **Audition**
+gives a first pass without leaving the app. Right-click a preset in the
+Explorer, or a staged preset in New Bank, and choose **Audition**: it renders
+the
+preset's notes — every overlapping layer, its level and pan, tuning,
+envelopes, filter and LFO — and plays them, through Qt's audio output or, on a
+machine Qt cannot reach, an external player. It is **a model of the preset's
+parameters, not of the sampler**, and the report names every approximation it
+applied. Needs mpc2emu for the parsed model; needs no audio device to render.
 
-**Audition** gives a first pass. Right-click a preset in the Explorer (or a
-staged preset in New Bank) and choose **Audition**: VinSamLib renders the
-preset's notes and plays them, so *does this bank sound remotely like the
-source?* can be asked before a 300 MB image is written and carried across the
-room. What it plays, the velocity, the default hold and the gap are set in
-Settings.
-
-The note list takes four shapes, and any entry can be any of them:
-
-| Entry | What it plays |
-|---|---|
-| `A4` | one note, held for the default time |
-| `A4_100` | one note, held 100 ms instead |
-| `(A3,C4,E4)` | three notes struck **together** |
-| `(A3,C4,E4)_2500` | the same chord, held 2500 ms |
-
-Names use the C3 = MIDI 60 convention shown everywhere else in the app, and
-bare MIDI numbers work too. The default list is
-`A2,A3,A4,(A3,C4,E4),(C3,E3,G3)` at velocity 100 with a 800 ms hold: three
-octaves of A to expose keymap seams and root-key boundaries, then two triads,
-because a single note cannot reveal what happens when several of a preset's
-layers sound at once — which is where level summing and pan placement become
-audible. Chords add a caveat of their own: they are summed complete, while
-the sampler's voice budget and stealing order are not modelled.
-
-> **This is a model of the preset's parameters. It is not a model of the
-> sampler, and it will not sound like the hardware.**
-
-That line is shown above every audition, and the report underneath says which
-parts are measured on hardware, which are fitted, which were never measured,
-and which are not modelled at all — appended at the point each approximation
-is applied, never from a per-format table. What *is* modelled: layering (every
-overlapping zone, not the first), per-zone level and pan, tuning, the amp
-envelope (including velocity-to-volume and the two curve laws), the resonant
-filter with its envelope, keytracking and velocity modulation, and an **LFO**
-routed to cutoff, resonance, pan or volume. What is not: the machines' own
-converters, output stages, anti-alias filters, chorus, delay, polyphony
-limits, and an LFO's delay, fade-in or tempo sync.
-
-Those four LFO destinations were chosen by counting the library rather than
-by guessing: across 32 558 E4B voices, 7 230 KRZ voices and all 453 064 MPC
-keygroups, cutoff is the most used on the hardware formats (7.5 % of E4B
-voices) while LFO-to-volume — the one that sounds most obvious — appears on
-none of them and is common only on MPC.
-
-It renders from **mpc2emu's parsed model**, never from VinSamLib's own
-readers, so any format mpc2emu can read — including the Roland and Ensoniq
-formats it adds as media formats — auditions with no work here. **Audition
-needs mpc2emu**; without a configured checkout the menu action is offered
-disabled, with that reason. It needs no audio device to render: **Save as
-WAV…** writes the audio and a `.txt` sidecar of the report, which is the path
-that works headless.
-
-**Playback takes whichever of two routes works.** Qt's own audio output is
-used wherever it finds a device — the system audio on macOS and Windows, and
-on Linux **PipeWire or PulseAudio**, which is all Qt supports: it has no JACK
-backend and the shipped PySide6 has no ALSA one either. On a JACK-only or
-bare-ALSA machine Qt therefore sees no device at all, even though `aplay`
-plays perfectly. Rather than refuse there, VinSamLib hands the rendered audio
-to an external player (`aplay`, `ffplay`, `mpv`, `paplay` or `pw-play`;
-`afplay` on macOS), reaching the sound card the same way every other program
-on such a machine does. Settings says which route you are on, and if a player
-is present but cannot open the device, the Play button reports the player's
-own reason instead of falling silent.
-
-**Save as WAV…** remains the route that needs nothing at all, and nothing
-about rendering or the report depends on any of this.
-
-Audition covers E4B, KRZ, EIII, AKAI and MPC (XPM) sources today. One known
-finding is recorded rather than papered over: a plain 4-pole cascade does not
-reproduce the K2000's documented −3 dB point, and the test that measures it is
-excused in `tests/expected_failures.txt` with that reason.
+**Full explanation, including the note-list syntax, the report, the session
+cache and what is deliberately not modelled:
+[Audition](#audition--hear-a-preset-before-you-carry-it).**
 
 ### The four hardware formats, and what each one needs
 
@@ -363,6 +311,16 @@ Two consequences worth knowing before you trust the output:
   into one program and splits keys from the patch, while this makes one
   preset per partial.
 
+Browsing such a disc costs what browsing any other image costs. An instrument
+row carries **its own** audio size, not the whole disc's — an earlier version
+quoted the image's 111.9 MB against every one of its presets, which made a row
+say something false about what it would cost a sampler — and expanding a disc
+reads its directory rather than parsing the whole image. The instruments are
+indexed like everything else, so they are found by the search box and by the
+format filters; both the tree and the indexer decide a file's format the same
+way, which is what had kept these discs out of search while their rows were
+visible in the tree.
+
 These parsers live on an mpc2emu branch rather than its main line, so a
 checkout without them simply shows no such discs; Settings reports it the
 same way it reports the other capabilities.
@@ -444,7 +402,15 @@ Right-click (or double-click) behavior depends on what you've selected:
 | Bank (E4B / KRZ / EIII) | Expand into its presets | **"Add favourites from a list to New Bank…"** — paste the preset numbers you noted on the hardware |
 | `.sf2` / `.gig` (many instruments) | Expand into its instruments | "Import all of …" |
 | `.sfz` / `.exs` / `.talsmpl`, or one instrument | Import (opens the conversion dialog) | "Import …" — works on a multi-selection |
+| Ensoniq EPS/ASR or Roland S-7xx disc image | Expand into its instruments | "Import …" on one instrument, or "Import all of …" |
 | Library root (top-level folder) | — | "Remove … from Library…" |
+
+**Audition** is offered on exactly one selected preset, program, MPC program
+or disc/soft-sampler instrument, and plays it without building anything — see
+[Audition](#audition--hear-a-preset-before-you-carry-it). It is the one action
+whose refusals are **named disabled entries** rather than a silent absence, so
+"no audio device", "only ROM samples" and "this program's audio is on another
+disc" are answered in the menu where you asked.
 
 Real **EIII / ESI-32** bank data — which commonly shares an EMU3-
 filesystem disc alongside E4B content, and which older versions of this
@@ -486,6 +452,15 @@ where they share.
 A row showing **no audio** is a real answer, not a missing one: a preset
 whose programs reference only the sampler's own ROM genuinely needs none,
 and that is also why it cannot be converted to another machine.
+
+A rarer case looks nothing like that one and is easy to mistake for a bug. A
+**multi-disc KRZ set** keeps its object table on disc 1 and the audio on the
+next volume, so the bank parses, every reference resolves to a real sample
+object, and the row quotes a size in KB — but the PCM is not in the file.
+Convert and Audition both drop such a program **out of the menu, per program,
+with that reason on it**, rather than letting it fail in a modal after the
+options dialog has been filled in; in the bank that prompted this, one program
+was affected and the other eleven were intact.
 
 ### Detail Pane
 
@@ -1245,7 +1220,7 @@ at A#5. Faithful, and right for a real kit whose GM positions a pattern
 was written against. Rarely what you want for a **melodic** program on
 pads — piano chords, say — which this lays out on consecutive keys
 instead. (This is mpc2emu's `--chromatic-pads`; the map itself is
-described under [MPC Import](#browse-and-import-an-mpc-project-needs-mpc2emu).)
+described under [MPC Import](#mpc-import-xpm--xty--xpj).)
 
 **Split velocity layers into separate presets.** Each velocity layer
 becomes a preset of its own at full velocity — one instrument turned
@@ -1878,7 +1853,13 @@ numbers written to the bank.
 
 ### Settings
 
-![Settings dialog showing a found mpc2emu checkout with its live status line, the New Bank size-warning thresholds for E4B and KRZ, and the K2000 object-memory (PRAM) budget](docs/screenshots/06_settings.png)
+![Settings dialog showing a found mpc2emu checkout with its live status line, the New Bank size-warning thresholds for E4B and KRZ, the K2000 object-memory (PRAM) budget, the S3000XL object budget, the autosave interval and the diagnostics switch](docs/screenshots/06_settings.png)
+
+The dialog **scrolls**: fully expanded its sections want more height than a
+window is allowed to take, and the shortfall would otherwise come out of the
+group bodies and render their rows overlapping. Everything described below is
+in it, including the Audition group, which is pictured under
+[Audition](#audition--hear-a-preset-before-you-carry-it).
 
 **File → Settings…** — the mpc2emu checkout path, with a live status
 line: whether the path itself is even a usable mpc2emu checkout, and
@@ -1924,6 +1905,21 @@ on one 32 MB machine — whether it moves with fitted memory is untested,
 and the pool is shared with whatever is already loaded, so treat it as a
 floor. New Bank's meter shows `N / 1006 objects` beside the file count.
 
+**Audition** — what the [Audition](#audition--hear-a-preset-before-you-carry-it)
+action plays, and how loud. **Notes** is the note list (single notes, chords in
+parentheses, an optional `_milliseconds` hold on either); it is validated as
+you type, so the field cannot accept a list the renderer would reject.
+**Velocity** is the one velocity every note is played at — the velocity *layer*
+a preset picks is part of what is being auditioned, so it is one value rather
+than a list. **Default hold (note-on to note-off)** and **Gap between notes** set the
+hold for an entry that does not carry its own, and the silence between
+them.
+**Playback volume** is a playback trim only: it never reaches the rendered
+audio, the peak the report quotes, or the file Save as WAV… writes. Below the
+fields, Settings reports whether audition is available at all — the mpc2emu
+modules it needs — and **which of the two playback routes** this machine is on,
+Qt's own output or an external player. Takes effect on OK, no restart needed.
+
 **Check loops for audible clicks** — off by default. With it on, the
 Detail pane notes any loop that steps audibly for whatever preset you
 select, without building anything. It is off because it reads the audio
@@ -1965,6 +1961,240 @@ main queue and the per-bank contents list in Pending for Image.
 
 ---
 
+## Audition — hear a preset before you carry it
+
+Every defect found by ear in September needed media carried to a machine: a
+KRZ conversion 12 dB quiet, a KRZ release 1.87× fast, an AKAI velocity filter
+that read as bypass, an MPC drum kit on the wrong keys. The only way to notice
+any of them was to load the file and hear it — which is how each went
+unnoticed in the first place. **Audition** puts a first pass of that loop
+inside the app: right-click a preset in the Explorer, or a staged preset in
+New Bank, and choose **Audition**. VinSamLib renders the preset's notes and
+plays them, so *does this sound remotely like the source?* can be asked before
+a 300 MB image is written and carried across the room.
+
+### What it is, and what it is not
+
+> **This is a model of the preset's parameters. It is not a model of the
+> sampler, and it will not sound like the hardware.**
+
+That line is shown above every audition, unconditionally, because everything
+below it is only useful if it is read in that light. Underneath it the report
+lists the approximations the render actually applied, each under one of four
+headings:
+
+| Severity | What it means |
+|---|---|
+| **MEASURED** | read from a measurement of the machine |
+| **FITTED** | derived from a measurement, through a formula |
+| **UNMEASURED** | no measurement exists — this number was chosen, not read |
+| **NOT MODELLED** | not reproduced here at all |
+
+**Caveats are appended where the approximation is applied, never from a
+per-format table.** A table is a second thing to maintain and goes stale the
+day a law changes; a caveat raised inside the function that converts a filter
+corner cannot be wrong about whether that conversion ran. The practical
+consequence is that the report is about *this* preset: a filter caveat only
+appears if this preset has a filter, and an LFO caveat only if an LFO actually
+runs. UNMEASURED is not a statement about the format — E4B, KRZ, AKAI and MPC
+all carry measured laws for most of the chain — it names the individual number
+that was chosen rather than read, resonance being the usual one.
+
+### What it plays: the note list
+
+The note list takes four shapes, and any entry can be any of them:
+
+| Entry | What it plays |
+|---|---|
+| `A4` | one note, held for the default time |
+| `A4_100` | one note, held 100 ms instead |
+| `(A3,C4,E4)` | three notes struck **together** |
+| `(A3,C4,E4)_2500` | the same chord, held 2500 ms |
+
+Names use the C3 = MIDI 60 convention shown everywhere else in the app, and
+bare MIDI numbers work too. A malformed entry is refused by name — in Settings
+as you type it, so the field cannot accept a list the renderer would reject —
+and a single hold is capped at 60 s, because `A4_80000` is otherwise 80
+seconds of one note and the only symptom is an audition that looks hung.
+
+The default list is `A2,A3,A4,(A3,C4,E4),(C3,E3,G3)` at velocity 100 with a
+800 ms hold: three octaves of A to expose keymap seams and root-key
+boundaries, then two triads, because a single note cannot reveal what happens
+when several of a preset's layers sound at once — which is where level summing
+and pan placement become audible. Notes play **sequentially**, with a
+configurable gap; stacking them would hide exactly the per-key differences the
+feature exists to expose. Chords carry a caveat of their own: they are summed
+complete, while the sampler's voice budget and its stealing order are not
+modelled.
+
+The list, the velocity, the default hold, the gap and the playback volume all
+live in **File ▸ Settings…**, under *Audition*, where the line under the
+fields reads the list back as the renderer will take it — how many events, how
+many notes, how many of those are chords, and the MIDI numbers each resolves
+to:
+
+![The Audition group in Settings: the default note list, velocity 100, a 0.80 s default hold, a 0.30 s gap and 100 % playback volume, with the validation line reading the list back as 5 events, 9 notes, 2 chords](docs/screenshots/06b_settings_audition.png)
+
+### What is modelled, and what is not
+
+**Modelled:** layering (every overlapping key/velocity zone, not the first
+match), per-zone level and pan, tuning from root key, coarse and fine tune,
+alternating loops baked as the sampler would play them, the amp envelope
+including velocity-to-volume and both curve laws, the resonant filter with its
+own envelope, filter keytracking and velocity-to-filter at both ends of its
+range, and an **LFO** routed to cutoff, resonance, pan or volume.
+
+**Not modelled:** the machines' own converters, output stages and anti-alias
+filters; chorus, delay and every other effect; polyphony limits and voice
+stealing; an LFO's delay, fade-in, key-sync or tempo-sync, and a second LFO
+routed where the first already goes. The interpolation you hear is **ours**
+— an E4XT and an S3000XL each have their own artefacts and neither is
+modelled — and the report says so on every audition rather than only when it
+is likely to matter.
+
+Which LFO destinations to model was decided **by counting the library rather
+than by guessing** — over 32 558 E4B voices, 7 230 KRZ voices and all 453 064
+MPC keygroups:
+
+| LFO destination | E4B | KRZ | MPC |
+|---|---|---|---|
+| filter cutoff | 7.51 % | 2.55 % | 6.69 % |
+| pan | 1.67 % | 2.49 % | 14.84 % |
+| volume | 0.00 % | 0.06 % | 12.07 % |
+| filter Q | 0.10 % | 0.00 % | — |
+
+Cutoff is both the most used on the hardware formats and the cheapest to add,
+since the filter already recomputes its coefficients once per control block for
+its envelope. Volume is the one that sounds most obvious and is absent outside
+MPC — the first guess had it the other way round. These counts are the whole
+library for a reason: an earlier sample of about 130 voices supported the
+conclusion that the hardware formats carry no LFO depths at all, which the
+full count contradicts outright. The full-depth figure for LFO-to-volume is 12 dB
+and is **chosen, not measured**; the report says so. A `random` LFO shape is a
+deterministic sample-and-hold, so two renders of one preset are comparable.
+
+### The report window, the notice, and opting out
+
+By default an audition opens a window carrying the honesty header, the report,
+a **Play / Replay / Stop** transport and **Save as WAV…**. Once you are
+familiar with a format that window is in the way of the thing you came for, so
+it can be switched off — in the window itself, or from **View ▸ Show Audition
+Report**. With it off an audition plays straight away behind a small
+*"Auditioning <preset>"* notice that closes itself when the sound ends.
+
+Opting out is a way to skip a window, never a way to lose information:
+
+* the notice does not vanish on a failure — a player that cannot open the
+  device leaves its reason on screen;
+* **Show report** on the notice opens the full window for that same audition
+  and **hands the running player over**, so the sound does not stop to show
+  you the caveats;
+* the transport says what is actually happening — **Replay** while a sound is
+  playing, **Play** before it starts and after it ends;
+* when there is no playback route at all the report window is shown regardless
+  of the setting, because then it is the only thing there is, and it holds
+  Save as WAV…;
+* starting a new audition silences the previous one rather than playing two at
+  once, and says so on the window it silenced.
+
+### While it renders
+
+A big multisample takes seconds to render, and a line in the status bar is not
+enough: until the progress window existed, an audition looked like it did
+nothing at all and then a window arrived. Every audition now opens
+*"Preparing audition of <preset>"* immediately, naming the phase it is in and
+carrying **Cancel** — the honest answer to "this is taking too long" is a way
+to stop it.
+
+The last **20 renders of the session** are cached, so auditioning the same
+preset again starts playing at once, with no worker and no progress window.
+The cache is in memory only and never touches disk. Its key carries **every
+input the renderer reads** — the whole note list with per-entry holds, the
+velocity, the gap, the device rate, and the identity of the source, a
+file-backed one by path, mtime and size — because a stale audition is the one
+bug nobody would catch: it sounds like a preset, just not this one.
+
+### Playback takes whichever of two routes works
+
+Qt's own audio output is used wherever it finds a device: the system audio on
+macOS and Windows, and on Linux **PipeWire or PulseAudio**, which is all Qt
+supports — it has no JACK backend, and the shipped PySide6 has no ALSA one
+either. On a JACK-only or bare-ALSA machine Qt therefore sees no device at
+all, even though `aplay` plays perfectly.
+
+Rather than refuse there, VinSamLib hands the rendered audio to an external
+player (`aplay`, `ffplay`, `mpv`, `paplay` or `pw-play`; `afplay` on macOS),
+reaching the sound card the same way every other program on such a machine
+does. Settings names which of the two routes you are on, and if a player is
+present but cannot open the device, Play reports **the player's own reason**
+instead of falling silent.
+
+**Playback volume** (Settings, 0–100 %) is a playback trim and nothing more:
+it never reaches the rendered audio, the peak level the report quotes, or the
+file **Save as WAV…** writes. Those three describe the *preset*, and a number
+that moved because a slider moved would make the report a statement about the
+slider.
+
+### Save as WAV…, and rendering without an audio device
+
+Rendering needs no audio device. **Save as WAV…** writes the audio and a
+sibling `.txt` sidecar holding the report, which is the path that works
+headless and the one the test suite asserts on. Where there is no playback
+route, the Audition menu entry still opens — named *"no audio device, saves to
+WAV"* rather than greyed out with no explanation.
+
+### Speed: numpy is an accelerator, never a requirement
+
+The pure-Python renderer is complete on its own. With **numpy** installed the
+sample read, the envelopes and the mix are vectorised, and on a machine that
+can `fork`, the note events render **in parallel**, each in a child that
+inherits the parsed bank and the decoded samples copy-on-write. Measured end
+to end on library presets: **3.96 s → 1.11 s** and **1.86 s → 0.43 s**, of
+which numpy is worth 2.2–2.9× and the fork 1.3–1.6× on top.
+
+```
+pip install -e '.[speed]'      # numpy; the feature works without it
+VINSAMLIB_NO_NUMPY=1           # force the pure-Python path even when it is installed
+```
+
+**View ▸ Audition renderer: …** names the path in use, in one place, written
+once, because the two paths are no longer required to produce bit-identical
+audio and someone comparing two machines has to be able to tell which one took
+which path. They are held to two numbers instead: the
+difference at least 80 dB below the signal **and** no sample off by more than
+4 LSB (measured on real presets: 114–122 dB down, 1 LSB). Parallel rendering
+is held to the stricter bar and is byte-identical to serial, because results
+are collected in **event order** — float addition is not associative, and an
+audition that differed run to run could not be compared against anything.
+
+### What can be auditioned
+
+Audition renders from **mpc2emu's parsed model**, never from VinSamLib's own
+byte-level readers, so every source that reaches that model auditions with no
+per-format work: E4B, EIII, KRZ, AKAI programs, MPC `.xpm`/`.xty` programs and
+the programs inside an `.xpj`, the soft-sampler formats (SF2, SFZ, EXS24,
+TAL-Sampler, GIG), and one instrument of an Ensoniq EPS/ASR or Roland S-7xx
+disc. The suite exercises E4B, KRZ, EIII, AKAI and MPC per release against the
+real corpus; the others share the same single code path.
+
+**Audition needs mpc2emu** for that model. Without a configured checkout the
+menu entry is offered *disabled, with the reason on it* — and the same is true
+of every other refusal, so "why can I not audition this" is answered where the
+question is asked: a KRZ program that references only the K2000's ROM sounds
+genuinely has no audio to render, and a program whose samples live on another
+disc of a multi-disc set says exactly that, per program, rather than in a
+modal after you asked.
+
+**What has been heard.** Two MPC keygroup programs were auditioned against
+the same programs on the MPC itself on 2026-09-26 — one three-layer stacking
+program judged *"very close to the MPC original"*, one pad judged fine. That
+is the whole of the by-ear evidence, and it is recorded in the release matrix
+as such. Everything else about this feature is measured against the model, not
+against a machine; the limits are collected under
+[Known Limitations](#audition--a-model-of-the-preset-not-of-the-sampler).
+
+---
+
 ## Fixed defects — check what you built earlier
 
 Defects that are **fixed** but whose output is still on your disk. Each
@@ -1976,6 +2206,31 @@ material with a current mpc2emu and VinSamLib.
 
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
+
+### If you REPAIRED a clicking loop in an E4B or EIII bank before 2026-09-21, check it
+
+Only the two point-moving repairs, only the little-endian formats, and only
+for anyone who used an **experimental** feature — but it is the same shape as
+every other entry here, so it belongs in the same list.
+
+`banks/loopcheck.py` threads a `big_endian` flag through everything it reads,
+except that **Snap to zero crossings** and **Nudge the loop end** took the
+`True` default at three internal sites. E4B and EIII samples are
+little-endian, so for those two formats the repair searched for zero crossings
+in byte-swapped data and compared a big-endian slope target against
+little-endian candidates: the point it moved the loop to was chosen from
+numbers that were not the audio. The result is not corruption — the bank is
+valid and plays — the repair simply had no reason to land where it did, so the
+click it was applied for may be unchanged or worse.
+
+**Which of your files:** E4B or EIII banks where you ran **Check Loops…** and
+accepted *Snap to zero crossings* or *Nudge the loop end*. **KRZ is
+unaffected** (it really is big-endian), the **detector** was never affected —
+what it reported was right all along — and **Cross-fade the wrap** does not
+use those two functions. Fixed 2026-09-21; re-run the repair, or rebuild the
+bank from the source and leave the loop alone. The label on the feature has
+not changed: no sampler has yet played a loop repaired this way — see
+[Repairing a clicking loop](#️-repairing-a-clicking-loop--experimental-not-hardware-confirmed).
 
 ### If you CONVERTED anything before 2026-09-19, reconvert it — a week of hardware listening found nine more
 
@@ -2007,7 +2262,7 @@ object bytes verbatim and never re-authors an envelope.
 **Two more from the same week are documented where they apply**, because
 they are not conversion-wide: MPC **drum kits landed on the wrong keys**
 until 2026-09-14 (the `<PadNoteMap>` was believed absent — see [MPC
-Import](#browse-and-import-an-mpc-project-needs-mpc2emu)), and an AKAI
+Import](#mpc-import-xpm--xty--xpj)), and an AKAI
 volume written before 2026-09-13 could carry **audio at a rate the
 sampler cannot play**, shipping +802 cents sharp (see [Akai S1000 /
 S3000](#akai-s1000--s3000)).
@@ -2631,6 +2886,24 @@ practice: mpc2emu's writer emits one voice per window, so an imported folder
 is a *single* voice holding every zone — 156 of them in one measured case —
 and every row was locked. The control worked only on hand-authored banks.
 
+### Audition — a model of the preset, not of the sampler
+
+[Audition](#audition--hear-a-preset-before-you-carry-it) is documented in full
+above, including what it does and does not model. What belongs here is the
+short list of ways it can be **wrong rather than merely incomplete**, since
+every one of them sounds like a statement about your preset:
+
+| Limit | Status |
+|---|---|
+| It has been heard twice | ⚠️ two MPC keygroup programs were compared by ear against the MPC itself (2026-09-26) and judged "very close" and "fine". That is the entire external evidence that any of this sounds right. Everything else is measured against the model, and a model can be internally consistent and still not be the machine |
+| The 4-pole filter misses the K2000's own numbers | ⚠️ a plain two-section cascade puts the −3 dB point at 0.803·f₀ where the K2000's documentation says 0.774, with −6.11 dB at f₀. The test that measures it is **left failing**, with that reason recorded in `tests/expected_failures.txt`, rather than widened until it passes. Either the documented figures describe a different topology or the cascade is not it; until that is settled, a filtered audition is slightly brighter than the machine |
+| Resonance is the most invented number in the chain | ⚠️ KRZ inverts through a measured law; **E4B, AKAI and MPC have no measured Q law anywhere**, so a documented curve onto Q 0.707…8 is used and reported as UNMEASURED. Q is clamped so the filter cannot self-oscillate, which would be ours and not the machine's |
+| The filter keytrack pivot is not recorded by any format here | ⚠️ one named constant at MIDI 60. A wrong pivot is inaudible on the note you test and wrong across the keyboard, so the report raises it whenever keytracking is non-zero |
+| AKAI attack is a default, not a reading | ⚠️ the AKAI attack law fits neither candidate model and is unresolved upstream; the audition uses a default and says so. It is the first thing a listener hears on a percussive program |
+| LFO delay, fade-in, key-sync and tempo-sync are not applied | ⚠️ an LFO starts immediately, at full depth, unsynced; a second LFO routed where the first already goes is not heard. The full-depth figure for LFO-to-volume, 12 dB, is **chosen, not measured** |
+| Polyphony, voice stealing and every effect are absent | ⚠️ a chord is summed complete however many voices it needs, and chorus, delay and the machines' own output stages, converters and anti-alias filters are not modelled at all. A preset that leans on its effects will sound bare |
+| The two render paths are not bit-identical | ⚠️ deliberately: numpy and pure Python are held to 80 dB / 4 LSB of each other rather than to equality (measured: 114–122 dB, 1 LSB). **View ▸ Audition renderer: …** names which path a machine is using, because two machines can differ |
+
 ### Akai S1000 / S3000
 
 **Playback rates: 22050 and 44100, and nothing else.** The sampler's
@@ -2756,6 +3029,7 @@ libraries before a fifth publisher's disc surfaced it.
 | Feature | Status |
 |---|---|
 | Real hardware confirmation — E4B / EIII | ✅ **confirmed 2026-07-28** on real E-mu E4XT hardware (via ZuluSCSI): building a bank, sending it through Pending for Image, and building/appending it onto a real EMU3 disk image — including the new EIII-on-image capability — all load and play correctly, for every vintage resample profile and reduce combination in the project's own HW confirmation matrix (`tests/manual_hw_convert_matrix.py`) |
+| Audition — does it sound like the source | ⚠️ **by ear only, and only twice** (2026-09-26): two MPC keygroup programs auditioned against the same programs on the MPC, judged "very close to the MPC original" and "fine". No hardware-format audition has yet been compared against its machine, and playing digital silence through a device — which the suite does — proves the plumbing and nothing about audibility. The open half of this row is what would lift it: one preset per format, heard beside the machine that wrote it |
 | Real hardware confirmation — KRZ / K2000R | ✅ **confirmed 2026-09-18** — VinSamLib-assembled KRZ banks, written to a FAT16 card image and loaded on a real K2000. The listening is what found four defects: every conversion played **12 dB quiet** (the writer pre-attenuated and the reader added exactly as much back, so a round trip could never see it), a one-shot's release cut notes off, releases ran 1.87x fast, and — a day later, by eye on a demo plot — the **decay** ran ~4x fast at sustain 0, the one stage three separate release investigations that same evening all missed, because every one of them measures the fall *after* note-off. All four fixed upstream and rebuilt |
 
 ---
@@ -2778,6 +3052,13 @@ vinsamlib/
 │   ├── akai.py                 # Byte-verbatim AKAI S1000/S3000 volume reader/assembler
 │   ├── loopcheck.py            # Finds loops that click, and the three repairs
 │   └── summary.py              # Zone/velocity/bit-depth/sample-rate summaries for the UI
+├── audition/                    # Render a preset's parameters to audio. Imports no Qt
+│   ├── params.py               # Any source -> (Bank, Preset, provenance), via mpc2emu's model
+│   ├── voice.py                # Which zones sound for a (note, velocity)
+│   ├── envelope.py             # Amp and filter envelopes from the model's curves
+│   ├── filter.py               # TPT state-variable filter, cascaded to 4/6/8 poles
+│   ├── render.py               # The pipeline: numpy path, fork-parallel events, progress
+│   └── caveats.py              # The four severities, and the report the dialog shows
 ├── build/
 │   ├── convert.py              # mpc2emu resample/reduce wrapper (ConversionOptions)
 │   ├── xpm_import.py           # MPC .xpm/.xty/.xpj -> E4B/KRZ/EIII, sharing convert.py's pipeline
@@ -2788,6 +3069,7 @@ vinsamlib/
 │   ├── refaudio.py             # What a row costs a sampler, deduped per source bank
 │   ├── project.py              # .vslproj save/load, references vs carried bytes
 │   ├── calllog.py              # The opt-in record of every mpc2emu call
+│   ├── firmware_sim.py         # Whether a source->target path converts the way the DEVICE would
 │   ├── akai_image.py           # AKAI media: partition planning, RAM and object budgets
 │   └── images.py               # create_image()/append_banks() over mpc2emu's writers
 ├── vfs/                        # Read-side filesystem support mpc2emu itself never needed
@@ -2814,6 +3096,8 @@ vinsamlib/
     ├── favourites_dialog.py     # Paste hardware preset numbers, preview what they resolve to
     ├── sample_rename_dialog.py  # Rename the samples inside a staged bank
     ├── sample_names_widget.py   # The naming-scheme row both dialogs share
+    ├── audition_dialog.py       # The report, the transport, the auto-closing notice, Save as WAV
+    ├── audition_player.py       # Qt audio output, the external-player fallback, the volume trim
     ├── loop_repair_dialog.py    # Clicking loops, worst first, and the repair choice
     ├── convert_options_dialog.py # Shared resample/reduce dialog
     ├── format_convert_dialog.py  # + target-format picker, subclasses the above
@@ -2872,6 +3156,7 @@ library browser — the whole left half of this table is its own code.
 | MPC import — `.xpm`, `.xty`, `.xpj` | **yes** | `check_xpm_import_support` |
 | Import Sample Folder… | **yes** | `check_sample_dir_import_support` |
 | **SF2 / SFZ / EXS24 / TAL / GIG** — browse, index, search, import | **yes** | `check_foreign_import_support` — without it these rows are absent from the Explorer entirely, rather than present and broken |
+| **Ensoniq EPS/ASR and Roland S-7xx discs** — browse, index, search, import | **yes** | the parsers are derived from the samplers' own firmware and live on an mpc2emu *branch*; without them these discs are absent from the Explorer entirely |
 | **Audition** a preset (render + play) | **yes** | `check_audition_support` — the model, parsers and processors; the audio device is probed separately and only gates playback, not rendering |
 
 Two entries are easy to misread, so they are spelled out:

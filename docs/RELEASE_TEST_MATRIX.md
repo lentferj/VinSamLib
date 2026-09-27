@@ -1012,12 +1012,13 @@ silence, so it proves the plumbing and **not** audibility. The by-ear row
 below is still open and still means what it says.
 
 **AUDIO CONFIRMED BY EAR, 2026-09-26.** Jan auditioned an MPC keygroup
-program — `Canedrive Analogue Synths/Synth-Sp Neptune-Combo 3.xpm`, three
-layers sounding together at velocity 100 — and compared it against the same
-program on the MPC itself: **"very close to the MPC original"**. That is the
-first time anyone has heard this feature and said so. A second program,
-**"Ambient Pad"**, was auditioned the same evening and was also **fine** --
-one result is an anecdote, two on different material start to be a row.
+program from a commercial synth expansion -- three layers sounding together at
+velocity 100 -- and compared it against the same program on the MPC itself:
+**"very close to the MPC original"**. That is the first time anyone has heard
+this feature and said so. A second program, an ambient pad, was auditioned the
+same evening and was also **fine** -- one result is an anecdote, two on
+different material start to be a row. (Both are named in the gitignored
+session notes; this file is tracked, so it names neither.)
 
 Earlier the same day two 440 Hz test tones went out, one through `aplay` and
 one through `QAudioSink` after the host moved to PipeWire. Those said a device
