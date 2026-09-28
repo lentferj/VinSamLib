@@ -950,12 +950,45 @@ desktop too**, not only offscreen — while `aplay -D default` played perfectly
 through its Loopback→`alsa_in`→JACK route. The one component that could not
 reach the working audio path was Qt.
 
-**That host moved to PipeWire later the same day, and Qt now finds three
-devices on it.** The measurement above is kept because the *finding* is about
-the toolkit, not the machine: any JACK or bare-ALSA host still gets nothing
-from `QAudioSink`, and what changed is which side of that line this
-particular desktop sits on. The fallback below now correctly stands aside
-here, which is the behaviour it was built for.
+**That host moved to PipeWire later the same day, and Qt found three devices
+on it.** The measurement above is kept because the *finding* is about the
+toolkit, not the machine: any JACK or bare-ALSA host still gets nothing from
+`QAudioSink`, and what changed is which side of that line this particular
+desktop sits on. The fallback below then correctly stood aside, which is the
+behaviour it was built for.
+
+⚠ **AND IT MOVED BACK, 2026-09-27: `pipewire-pulse` was removed from the
+host, and Qt sees zero devices again.** Measured, not inferred, and it took
+two separate causes to explain one symptom -- worth writing down because
+either alone would have been a wrong diagnosis:
+
+* `PulseAudioService: pa_context_connect() failed`. `libQt6Multimedia.so.6`
+  LINKS `libpulse.so.0`, and libpulse is still installed, so the backend
+  loads fine and fails at CONNECT: there is no PulseAudio daemon behind it
+  any more. Nothing about the failure names the missing piece.
+* The other backend cannot stand in. `QT_AUDIO_BACKEND=pipewire` answers
+  *"PipeWire audio backend requested. not available"* even with PipeWire
+  running and `libpipewire-0.3.so.0` installed. The backend is `dlopen`ed and
+  resolves 32 `pw_*` symbols; **`pw_check_library_version` is the one this
+  machine's libpipewire 0.3.65 does not export**, and one missing symbol
+  takes the whole backend out. Supplying the unversioned `libpipewire-0.3.so`
+  soname on `LD_LIBRARY_PATH` does NOT change the answer -- tested as a pair,
+  with and without, because one run cannot tell "fixed it" from "did
+  nothing".
+
+So on this bench the Qt route is currently unreachable by both roads at once,
+and **the external-player route is the only one**. Verified end to end the
+same afternoon: a 0.6 s 440 Hz tone through `AuditionPlayer` returned
+`route: external` and emitted `finished` cleanly. That says the plumbing
+works; the by-ear row above is what says anything sounds right.
+
+What this costs the matrix: **AUD-QT (the `QAudioSink` path) cannot be
+exercised on this host until `pipewire-pulse` is reinstalled or libpipewire is
+new enough for Qt.** The tests do not silently drift into testing the other
+route instead -- `manual_audition_external_player` and
+`manual_audition_no_audio_device` force their own preconditions through
+`_harness.no_qt_audio` rather than reading the host, which is exactly the
+failure this project hit on 2026-09-26 and fixed.
 
 **Why Qt alone, when Firefox and every player manage it.** The route is
 configured in `~/.asoundrc`, which is a **libasound** config, not a service:

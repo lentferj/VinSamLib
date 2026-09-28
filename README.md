@@ -76,6 +76,77 @@ examples of corrections that shaped the final design, in
 
 ---
 
+## Quick start
+
+**Requirements:** Python **3.11 or newer**, and PySide6 — the only hard
+dependency, pinned to the version this is developed against. Linux, macOS and
+Windows.
+
+```bash
+git clone https://github.com/lentferj/VinSamLib.git
+cd VinSamLib
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .                  # PySide6 comes with it
+pip install -e '.[speed]'         # optional: numpy, which only makes Audition faster
+```
+
+**Run it** — either form, they are the same program:
+
+```bash
+vinsamlib                                # the console script pip installs
+.venv/bin/python -m vinsamlib.app        # the same program, no activation needed
+```
+
+**Then, in the app:**
+
+1. **Point it at your samplers' content.** Drag folders onto the window, or
+   **File ▸ Add Library Folder…**. Loose banks, disc and floppy images, MPC
+   backups, soft-sampler instruments — a folder of any of them. A background
+   scanner indexes what it finds; you can browse before it finishes.
+2. **Optionally, add mpc2emu.** Clone
+   [mpc2emu](https://github.com/lentferj/mpc2emu) anywhere, then
+   **File ▸ Settings…** and give VinSamLib its path — changing it needs a
+   restart. Settings then states, in that dialog, exactly which features that
+   checkout does and does not provide. **Without it VinSamLib is still a full
+   E4B/KRZ/AKAI bank builder and library browser**; what it adds is
+   conversion between formats, the image *writers*, and the import formats —
+   the whole list is under
+   [What it is, and what needs mpc2emu](#what-it-is-and-what-needs-mpc2emu),
+   and as a table under
+   [What needs mpc2emu, at a glance](#what-needs-mpc2emu-at-a-glance).
+3. **Build something.** Drag presets into **New Bank**, then *Save as…* for a
+   plain bank file, or send it to **Pending for Image** and build a real,
+   loadable disc or floppy image.
+
+**Before you write media you care about**, read
+[Use at your own risk](#️-use-at-your-own-risk--back-up-first) above — it is
+short, and it is there because this program writes to disk images in place.
+
+**Where it keeps its own things**, so you know what to back up and what to
+delete:
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| settings | `~/.config/vinsamlib/config.toml` | `~/Library/Application Support/vinsamlib/` | `%APPDATA%\vinsamlib\` |
+| search index | `~/.local/share/vinsamlib/` | same as above | `%LOCALAPPDATA%\vinsamlib\` |
+
+Both honour `XDG_CONFIG_HOME` / `XDG_DATA_HOME`. Deleting the index costs
+only a rescan; deleting the settings file loses your library folder list.
+
+**On Linux, audition playback may need a word of explanation** if you hear
+nothing: Qt reaches only PipeWire and PulseAudio, and a machine can have
+working audio that Qt cannot see — in which case VinSamLib plays through an
+external player instead, and Settings says which route you are on. See
+[Playback takes whichever of two routes works](#playback-takes-whichever-of-two-routes-works).
+
+**The test suite is not in the repository.** `tests/` is deliberately
+untracked: every test here is driven by hand against the author's own library
+of real sampler media, which cannot be published. Where this README cites a
+test by name, that is a statement about how a claim was checked, not a file
+you can run after cloning.
+
+---
+
 ## Features
 
 ### What it is, and what needs mpc2emu
@@ -2117,10 +2188,27 @@ bug nobody would catch: it sounds like a preset, just not this one.
 ### Playback takes whichever of two routes works
 
 Qt's own audio output is used wherever it finds a device: the system audio on
-macOS and Windows, and on Linux **PipeWire or PulseAudio**, which is all Qt
-supports — it has no JACK backend, and the shipped PySide6 has no ALSA one
-either. On a JACK-only or bare-ALSA machine Qt therefore sees no device at
-all, even though `aplay` plays perfectly.
+macOS and Windows, and on Linux **PipeWire or PulseAudio**, the only two
+backends Qt has — there is no JACK one and no ALSA one. Both of those can be
+unreachable in ways that have nothing to do with this program, so it is worth
+knowing what "no audio device" actually means before concluding the feature is
+broken:
+
+* **PulseAudio** is reached over a socket, so it needs the *daemon*, which on
+  a PipeWire system means the `pipewire-pulse` compatibility layer. Without it
+  Qt reports `pa_context_connect() failed` — `libpulse` is still linked and
+  still there, which is why this fails at connect time rather than at load
+  time.
+* **PipeWire** is `dlopen`ed, and PySide6 6.11 resolves 32 `pw_*` symbols
+  including **`pw_check_library_version`**. A libpipewire that does not export
+  it — Debian 12's 0.3.65, for one — makes the whole backend unavailable, and
+  Qt says only *"PipeWire audio backend requested. not available"* whether or
+  not PipeWire itself is running perfectly.
+
+Both were true on this project's own desktop on 2026-09-27: PipeWire running,
+`pipewire-pulse` removed, libpipewire too old for Qt — `QMediaDevices.audioOutputs()`
+empty, while `aplay` played perfectly. A JACK-only or bare-ALSA machine lands
+in the same place by a different road.
 
 Rather than refuse there, VinSamLib hands the rendered audio to an external
 player (`aplay`, `ffplay`, `mpv`, `paplay` or `pw-play`; `afplay` on macOS),
