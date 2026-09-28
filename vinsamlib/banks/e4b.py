@@ -754,6 +754,21 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
     them; taking the first source's is what mpc2emu's own multi-source
     tooling (bank_splitter) does for equivalent bank-wide chunks.
     """
+    # PER SELECTION, OR BANK-WIDE. `zone_placement` and `voice_velocity` may
+    # be a single dict -- one map for every preset, which is what a project
+    # written before 2026-09-28 carries and what every other caller still
+    # passes -- or a LIST aligned to `selections`, one map per staged item.
+    #
+    # The list form exists because the dict form cannot express "narrow this
+    # preset and leave that one", however the caller keys it: a placement is
+    # looked up by the SOURCE SAMPLE's name, and two presets sharing a sample
+    # share the entry. Jan staged one preset twice, narrowed a copy, and both
+    # changed.
+    def _map_for(which, i):
+        if isinstance(which, (list, tuple)):
+            return which[i] if i < len(which) else {}
+        return which or {}
+
     if not selections:
         raise ValueError("no presets selected")
     if len(selections) > MAX_PRESETS:
@@ -769,14 +784,16 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
     new_preset_names: list[str] = []
     new_preset_progs: list[int] = []
 
-    for src, preset in selections:
+    for sel_i, (src, preset) in enumerate(selections):
+        placement_here = _map_for(zone_placement, sel_i)
+        velocity_here = _map_for(voice_velocity, sel_i)
         body = bytearray(preset.body)
         # zone offset -> the voice that owns it, so a placement edit can widen
         # that voice's own key window. Built once per preset rather than
         # searched per zone.
         vel_wanted: dict = {}
         owner: dict[int, int] = {}
-        if zone_placement or voice_velocity:
+        if placement_here or velocity_here:
             for v_start, table_start, n in _walk_voices(preset.body,
                                                          preset.num_voices):
                 for k in range(n):
@@ -797,7 +814,7 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
             # SamplePlacementDialog returns, and applied before the dedupe
             # decision is even consulted -- it rewrites zone bytes in this
             # preset's own body and cannot affect which samples are distinct.
-            move = (zone_placement or {}).get(samp.name)
+            move = placement_here.get(samp.name)
             if move is not None and zone_off in owner:
                 _apply_placement(body, owner[zone_off], zone_off, *move)
             # Velocity belongs to the VOICE, so this patches whatever voice
@@ -812,7 +829,7 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
             # of its own instead. Applied in place only when the voice already
             # holds nothing else, which the split pass also handles -- it
             # simply produces one group.
-            vel = (voice_velocity or {}).get(samp.name)
+            vel = velocity_here.get(samp.name)
             if vel is not None and zone_off in owner:
                 # Applied as typed; see _apply_velocity for why an inverted
                 # window is preserved rather than tidied up.

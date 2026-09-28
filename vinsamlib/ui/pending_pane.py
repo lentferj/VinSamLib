@@ -73,7 +73,8 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         if fmt not in ("E4B", "KRZ", "EIII", "AKAI"):
             raise ValueError(f"Pending for Image doesn't support building a {fmt} queue")
         fn = _ASSEMBLE_FNS[fmt]
-        selections = [(bank, preset) for bank, preset, _name in entry["items"]]
+        selections = [(bank, preset)
+                      for bank, preset, _name, *_ in entry["items"]]
         name = _sanitize_bank_name(entry["name"])
         if fmt == "AKAI":
             # An AKAI volume is a set of files, so what goes to the image
@@ -465,7 +466,7 @@ class PendingBanksPane(QWidget):
         shared: dict[tuple, int] = {}
         try:
             from ..banks import summary
-            for bank, preset, _name in entry.get("items", []):
+            for bank, preset, _name, *_ in entry.get("items", []):
                 ps = summary.summarize_preset(bank, preset)
                 for nm, size in ps.sample_sizes.items():
                     shared[(nm, size)] = size
@@ -542,7 +543,7 @@ class PendingBanksPane(QWidget):
         if entry is None:
             return
         for preset_tuple in entry["items"]:
-            bank, preset, name = preset_tuple
+            bank, preset, name = preset_tuple[0], preset_tuple[1], preset_tuple[2]
             audio = self._preset_audio(bank, preset)
             if audio is None:
                 label = name
@@ -707,7 +708,8 @@ class PendingBanksPane(QWidget):
             self.statusMessage.emit("Select a pending bank first")
             return
         entry = self._pending[row]
-        sources = [(bank, preset) for bank, preset, _name in entry["items"]]
+        sources = [(bank, preset)
+                   for bank, preset, _name, *_ in entry["items"]]
         fmt = entry["format"]
         opts = ConvertOptionsDialog.get_options(
             self, initial=entry.get("convert_opts"),

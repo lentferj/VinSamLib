@@ -286,7 +286,7 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
 
     def _items_json(items: list, fmt: Optional[str]) -> list:
         rows = []
-        for bank, preset, name in items:
+        for bank, preset, name, *_edits in items:
             f = fmt or _guess_format(bank)
             rows.append({"bank": _bank_entry(bank, f),
                          "preset": _preset_ref(preset, f),
