@@ -481,6 +481,7 @@ class ConvertOptionsDialog(QDialog):
         lab1.setWordWrap(True)
         lab1.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(lab1)
+        self._mpc_only_widgets = [self._chromatic_pads_box, lab1]
 
         self._split_vel_box = QCheckBox(
             "Split velocity layers into separate presets")
@@ -495,6 +496,7 @@ class ConvertOptionsDialog(QDialog):
         lab2.setWordWrap(True)
         lab2.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(lab2)
+        self._velocity_layer_widgets = [self._split_vel_box, lab2]
 
         row = QHBoxLayout()
         self._lfo_bpm_box = QCheckBox("Synced MPC LFOs assume")
@@ -510,6 +512,7 @@ class ConvertOptionsDialog(QDialog):
         row.addWidget(self._lfo_bpm_spin)
         row.addStretch()
         outer.addLayout(row)
+        self._mpc_only_widgets += [self._lfo_bpm_box, self._lfo_bpm_spin]
         lab3 = QLabel(
             "An MPC LFO can be locked to the project tempo, and the XPM does "
             "not store what that tempo was — so a synced rate can only be "
@@ -520,6 +523,8 @@ class ConvertOptionsDialog(QDialog):
         lab3.setWordWrap(True)
         lab3.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(lab3)
+        self._mpc_only_widgets.append(lab3)
+        self._source_group = group
         return group
 
     def _refresh_krz_layers_availability(self) -> None:
@@ -907,6 +912,60 @@ class ConvertOptionsDialog(QDialog):
         self._shrink_to_spin.setVisible(index == 0)
         self._shrink_by_spin.setVisible(index == 1)
 
+    def apply_source_capabilities(self, source_format: str) -> None:
+        """Hide the controls this SOURCE cannot be acted on by.
+
+        Not cosmetics. Jan, importing a Roland disc: "Lay MPC drum pads
+        out..", "Split Velocity Layers ..", "Synced MPC LFOs assume.." -- that
+        has no relevance for Roland and EPS. A control that cannot do anything
+        is not neutral: it is a question the dialog asks and then ignores, and
+        the reader has to work out which ones those are every time.
+
+        Two capabilities, each decided by what the SOURCE can carry:
+
+        * **MPC-only** -- the pad map and the synced-LFO tempo are properties
+          of an XPM. Nothing else here has either.
+        * **VELOCITY LAYERS** -- splitting them and reducing them both need a
+          source that has them. MEASURED on the reference discs rather than
+          assumed: of 2 396 EPS presets and 4 004 Roland presets, **not one**
+          carries a zone with a restricted velocity range. An import with
+          `reduce_velocity_layers_pct=50` is byte-identical to one without
+          (488 624 bytes, same md5), which is the pair that proves it.
+
+        Reduce KEY ZONES stays, because it is not inert: the same import at
+        50% came out 250 612 bytes against 488 624. Rate ceiling and vintage
+        resample stay for the same reason, both measured.
+
+        An empty source group hides itself -- an empty box is the same
+        unanswered question with a frame around it.
+        """
+        fmt = (source_format or "").strip()
+        if not fmt:
+            return                      # mixed or unknown: assume nothing
+        mpc = fmt.upper() == "MPC"
+        # Velocity layers: only the two disc formats are known NOT to carry
+        # them. Every other source is left alone -- absence of a measurement
+        # is not a measurement of absence.
+        from ..build import foreign_import
+        has_velocity_layers = fmt not in (foreign_import.EPS_FORMAT,
+                                          foreign_import.ROLAND_FORMAT)
+        for w in getattr(self, "_mpc_only_widgets", []):
+            w.setVisible(mpc)
+        for w in getattr(self, "_velocity_layer_widgets", []):
+            w.setVisible(has_velocity_layers)
+        # A hidden control must not still be ACTING. Hiding a checked box
+        # would carry its value into the conversion with nothing on screen
+        # saying so -- the same shape as the bug that started this.
+        if not mpc:
+            self._chromatic_pads_box.setChecked(False)
+            self._lfo_bpm_box.setChecked(False)
+        if not has_velocity_layers:
+            self._split_vel_box.setChecked(False)
+            self._velocity_group.setChecked(False)
+        group = getattr(self, "_source_group", None)
+        if group is not None and not mpc and not has_velocity_layers:
+            group.setVisible(False)
+
     def _build_reduce_group(self) -> QGroupBox:
         # Not checkable itself -- reduce is a distinct feature from
         # resample, not a sub-option of it, so this outer box is just a
@@ -921,6 +980,8 @@ class ConvertOptionsDialog(QDialog):
         self._velocity_group, self._velocity_slider = self._build_reduce_subgroup(
             "Reduce Velocity Layers by")
         outer.addWidget(self._velocity_group)
+        self._velocity_layer_widgets.append(self._velocity_group)
+        self._reduce_group = group
 
         return group
 

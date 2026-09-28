@@ -152,6 +152,12 @@ class BankPane(QWidget):
     #: repairs applied. New Bank rows are not TreeNodes, so this carries the
     #: ``(bank, preset_obj, name)`` tuple the list already stores.
     auditionStagedRequested = Signal(object, object, str, object)
+    #: Zones of a just-ADDED preset that can be played past the E4XT's
+    #: playback-rate ceiling, in mpc2emu's diagnostic detail shape. Emitted
+    #: only for a plain add: an import has already been through their
+    #: writer, which reports the same thing, and two boxes about one fact is
+    #: worse than none.
+    ceilingZonesAdded = Signal(list)
 
     def __init__(self, config: Optional[Config] = None, parent=None):
         super().__init__(parent)
@@ -444,6 +450,10 @@ class BankPane(QWidget):
                  for (bank, preset_obj), d in zip(payload, descriptor)]
         event.acceptProposedAction()
         _added, dupes = self._add_items(items)
+        # A drop is a plain add like any other, and was the one route that
+        # would still have gone unchecked.
+        if _added and self._format == "E4B":
+            self._report_ceiling_zones(items)
         if dupes:
             self.statusMessage.emit(
                 f"Already in New Bank, skipped: {', '.join(dupes)}")
@@ -514,7 +524,8 @@ class BankPane(QWidget):
     # -- public entry point for the Explorer's right-click "Add to New Bank" ----
 
     def add_presets(self, items: list[tuple[Any, Any, str, str]],
-                    restoring: bool = False) -> bool:
+                    restoring: bool = False,
+                    check_ceiling: bool = True) -> bool:
         """items: list of (bank, preset_obj, format, name) -- the in-process
         equivalent of a drag-drop, for callers that aren't dragging (the
         Explorer tree's context menu). Same format-lock rules as a drop.
@@ -545,6 +556,8 @@ class BankPane(QWidget):
             self.statusMessage.emit(f"This bank is already {self._format} — can't add a {fmt} preset")
             return False
         added, dupes = self._add_items(items, restoring=restoring)
+        if added and check_ceiling and fmt == "E4B" and not restoring:
+            self._report_ceiling_zones(items)
         if added:
             names = ", ".join(f'"{name}"' for name in added)
             msg = f"Added {names} to New Bank"
@@ -555,6 +568,22 @@ class BankPane(QWidget):
             self.statusMessage.emit(
                 f"Already in New Bank, skipped: {', '.join(dupes)}")
         return bool(added)
+
+    def _report_ceiling_zones(self, items: list) -> None:
+        """Emit the over-ceiling zones of the presets just added.
+
+        Read with our OWN E4B code, deliberately: a plain add needs no
+        mpc2emu, so a check that did would be absent exactly where it is
+        wanted. `banks/e4b.py` carries the offsets and the measured rate.
+        """
+        findings: list = []
+        for bank, preset, _fmt, _name in items:
+            try:
+                findings.extend(e4b.zones_above_playback_ceiling(bank, preset))
+            except Exception:
+                continue        # never let a warning stop an add
+        if findings:
+            self.ceilingZonesAdded.emit(findings)
 
     def _add_items(self, items: list[tuple[Any, Any, str, str]],
                     restoring: bool = False) -> tuple[list[str], list[str]]:
@@ -1348,6 +1377,105 @@ class BankPane(QWidget):
                 out[idx] = (min(prev[0], lo), prev[1], max(prev[2], hi),
                             prev[3], prev[4], prev[5])
         return out
+
+    def narrow_zones_to_ceiling(self, findings: list) -> tuple:
+        """Narrow staged zones that play past the E4XT's rate ceiling.
+
+        `findings` are mpc2emu's `E4B_ZONE_ABOVE_PLAYBACK_CEILING` details.
+        Each names ONE zone per preset -- its worst -- with the exact
+        `highest_safe_key` for that zone, computed from the zone's own root,
+        coarse and fine tune. We deliberately do not recompute it: our
+        container reader knows a zone's lo/root/hi but not its tune, so a
+        number of our own would be a key or two out, and the writer's is
+        exact.
+
+        Matched to a staged sample by `(lo, root, hi)`, because the detail
+        dict carries no `sample_name` -- asked for in the handoff. Ambiguous
+        in principle, unambiguous wherever the triple is unique, and a row
+        that does not match is reported rather than guessed at.
+
+        ⚠ **A PLACEMENT IS BANK-WIDE, NOT PER PRESET.** `assemble()` looks
+        `zone_placement` up by the SOURCE SAMPLE's name, so narrowing a sample
+        narrows it in every staged preset that uses it. Jan found this by
+        staging the same preset twice, narrowing one copy and finding both
+        changed -- and in a bank whose fifteen presets share four samples,
+        that is the normal case rather than a contrived one. The caller says
+        so; fixing it properly means keying placement per preset, which is a
+        change to a shipped, hardware-exercised feature and not this button's
+        to make.
+
+        What this DOES refuse is the corrupting half: a row's root is
+        first-wins across the staged presets sharing that sample, so writing
+        it back for a sample placed at a different root elsewhere would
+        TRANSPOSE those other zones. Such a finding is skipped and counted.
+
+        Returns `(applied, unmatched, siblings)`: how many samples were
+        narrowed, how many findings were skipped or matched nothing, and how
+        many further over-zones the writer counted but did not name. The last
+        one is the honest half -- the writer reports one zone per preset, so
+        clearing what it named may leave others, and `zones_over` is the only
+        thing that says so.
+        """
+        # EVERY staged item, never the selection: these findings are about the
+        # import that just landed, and whatever the user happens to have
+        # highlighted is unrelated to it.
+        rows = self._placement_rows(list(self._items))
+        by_triple: dict = {}
+        for r in rows:
+            by_triple.setdefault((r["lo"], r["root"], r["hi"]), []).append(r)
+        applied = unmatched = siblings = 0
+        # STRICTEST WINS, per sample. A placement is keyed by the sample's
+        # name and moves every zone using it, so several findings on one
+        # sample are ONE decision -- and the preset that prompted all this
+        # has exactly that shape: three voices on `HARD syn C4 RP`, safe at
+        # 118, 118 and 117, because the third voice carries a tune offset.
+        # Writing them in turn left the last one winning, which would have
+        # cleared two zones and left the third a key over while reporting
+        # three narrowed. The minimum clears all three.
+        wanted: dict = {}
+        for det in findings:
+            try:
+                lo = int(det["lo_key"]); hi = int(det["hi_key"])
+                root = int(det["root_key"]); safe = int(det["highest_safe_key"])
+            except (KeyError, TypeError, ValueError):
+                unmatched += 1
+                continue
+            siblings += max(0, int(det.get("zones_over") or 1) - 1)
+            hits = by_triple.get((lo, root, hi)) or []
+            if not hits:
+                unmatched += 1
+                continue
+            for r in hits:
+                if (r["root"], r["lo"], r["hi"]) != (root, lo, hi):
+                    # THE ROW MUST DESCRIBE EXACTLY THE ZONE THE FINDING DOES.
+                    # A row is deduped by sample name across every staged
+                    # preset, carrying min(lo), max(hi) and a first-wins root,
+                    # so when two presets place one name differently the row
+                    # describes neither. Writing it back would move both.
+                    #
+                    # Not hypothetical: in ONE library here, seven sample
+                    # NAMES appear in two banks at different roots -- e.g.
+                    # (0, 24, 29) in one and (0, 36, 41) in the other, an
+                    # octave apart. Stage a preset from each and this would
+                    # transpose one of them to fix a zone in the other.
+                    unmatched += 1
+                    continue
+                if safe < lo:
+                    # Narrowing past the zone's own start would delete it.
+                    # Nothing here is entitled to do that on the user's
+                    # behalf; report it as unmatched so the sentence above
+                    # the box stays true.
+                    unmatched += 1
+                    continue
+                prev = wanted.get(r["orig"])
+                if prev is None or safe < prev[2]:
+                    wanted[r["orig"]] = (r["lo"], r["root"], safe)
+        for name, move in wanted.items():
+            self._zone_placement[name] = move
+            applied += 1
+        if applied:
+            self._refresh()
+        return applied, unmatched, siblings
 
     def _adjust_placement(self) -> None:
         items = self._selected_presets()

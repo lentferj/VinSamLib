@@ -178,6 +178,7 @@ class MainWindow(QMainWindow):
         self._explorer.importForeignRequested.connect(self._import_requests)
         self._bank_pane.importRequested.connect(self._import_requests)
         self._bank_pane.auditionStagedRequested.connect(self._audition_staged)
+        self._bank_pane.ceilingZonesAdded.connect(self._on_ceiling_zones_added)
         self._explorer.removeLibraryRootRequested.connect(self._remove_library_root)
         self._explorer.auditionRequested.connect(self._audition_node)
 
@@ -375,6 +376,18 @@ class MainWindow(QMainWindow):
         dupe_check_action.setChecked(True)
         dupe_check_action.toggled.connect(self._toggle_dupe_check)
         view_menu.addAction(dupe_check_action)
+
+        self._ceiling_warn_action = QAction(
+            "Warn About Zones Above the E4XT's Rate Ceiling", self,
+            checkable=True)
+        self._ceiling_warn_action.setChecked(
+            bool(getattr(self._config, "warn_playback_ceiling", True)))
+        self._ceiling_warn_action.setStatusTip(
+            "An E4XT runs off the end of a sample above an absolute playback "
+            "rate. Commercial banks are often authored past it on keys nobody "
+            "plays, so this can be turned off.")
+        self._ceiling_warn_action.toggled.connect(self._set_ceiling_warning)
+        view_menu.addAction(self._ceiling_warn_action)
 
         view_menu.addSeparator()
         self._audition_report_action = QAction(
@@ -971,7 +984,11 @@ class MainWindow(QMainWindow):
                      for i, (_bank, p) in enumerate(pairs)]
         self._bank_pane.add_presets(
             [(bank, preset, opts.target_format, name)
-             for (bank, preset), name in zip(pairs, names)])
+             for (bank, preset), name in zip(pairs, names)],
+            # A conversion: mpc2emu's writer has already reported any zone
+            # over the rate ceiling, and two boxes about one fact is worse
+            # than none.
+            check_ceiling=False)
         self._warn_polyphony(risks or [], "Import MPC Program")
 
     def _warn_polyphony(self, risks: list, title: str) -> None:
@@ -1034,6 +1051,19 @@ class MainWindow(QMainWindow):
     #: of its own rather than a paragraph: the fix is one number.
     _SHRINK_UNREACHABLE = "SHRINK_TARGET_UNREACHABLE"
 
+    #: mpc2emu's "this zone can be played past the E4XT's rate ceiling". Like
+    #: the shrink one, it publishes the number that fixes it --
+    #: `highest_safe_key`, exact for the zone it names -- so the remedy is a
+    #: button rather than a sentence asking the user to open Adjust Placement
+    #: and work it out. Their writer's own comment anticipates this UI.
+    #:
+    #: It is NOT applied automatically. Across 113 commercial E4B banks here,
+    #: 10.8% of presets carry a zone above the ceiling AS AUTHORED -- the keys
+    #: are at the top of the keyboard and nobody plays them -- so clamping on
+    #: import would silently edit a tenth of a bought library to fix something
+    #: inaudible.
+    _CEILING_CODE = "E4B_ZONE_ABOVE_PLAYBACK_CEILING"
+
     def _with_pending_shrink(self, opts):
         """Apply a target the user raised from the warning box, once.
 
@@ -1066,7 +1096,13 @@ class MainWindow(QMainWindow):
                      if r.get("code") == self._SHRINK_UNREACHABLE
                      and isinstance(r.get("detail"), dict)
                      and r["detail"].get("reached_bytes")]
-        if not (reachable and getattr(self, "_last_import", None) is not None):
+        ceiling = [r["detail"] for r in risks
+                   if r.get("code") == self._CEILING_CODE
+                   and isinstance(r.get("detail"), dict)
+                   and r["detail"].get("highest_safe_key") is not None]
+        offer_shrink = bool(reachable
+                            and getattr(self, "_last_import", None) is not None)
+        if not (offer_shrink or ceiling):
             # THE ORDINARY PATH STAYS THE ORDINARY CALL. Replacing this with a
             # constructed box unconditionally broke every test that triggers a
             # warning -- they stub QMessageBox.warning, which a constructed
@@ -1080,7 +1116,7 @@ class MainWindow(QMainWindow):
         box.setWindowTitle(title)
         box.setText(detail)
         raise_btn = None
-        if True:
+        if offer_shrink:
             # The biggest of them: raising to the largest unreachable floor is
             # the only single target that clears every preset in the bank.
             target = max(int(r["detail"]["reached_bytes"]) for r in reachable)
@@ -1088,10 +1124,156 @@ class MainWindow(QMainWindow):
                 f"Raise target to {human_size(target)} and re-import",
                 QMessageBox.ButtonRole.ActionRole)
             box.setDefaultButton(raise_btn)
+        narrow_btn = None
+        if ceiling:
+            keys = sorted({int(d["highest_safe_key"]) for d in ceiling})
+            where = (f"key {keys[0]}" if len(keys) == 1
+                     else f"their highest safe keys ({keys[0]}–{keys[-1]})")
+            narrow_btn = box.addButton(
+                f"Narrow {len(ceiling)} zone(s) to {where}",
+                QMessageBox.ButtonRole.ActionRole)
         box.addButton(QMessageBox.StandardButton.Ok)
         box.exec()
         if raise_btn is not None and box.clickedButton() is raise_btn:
             self._retry_with_shrink_target(target)
+        elif narrow_btn is not None and box.clickedButton() is narrow_btn:
+            self._narrow_zones_to_ceiling(ceiling)
+
+    def _set_ceiling_warning(self, on: bool) -> None:
+        """View menu, and the warning box's own way out, write the same
+        setting -- one state, so the menu never disagrees with what the box
+        just did."""
+        self._config.warn_playback_ceiling = bool(on)
+        self._config.save()
+        if hasattr(self, "_ceiling_warn_action"):
+            self._ceiling_warn_action.blockSignals(True)
+            self._ceiling_warn_action.setChecked(bool(on))
+            self._ceiling_warn_action.blockSignals(False)
+        self.statusBar().showMessage(
+            "Rate-ceiling warnings on" if on else
+            "Rate-ceiling warnings off — View menu turns them back on", 8000)
+
+    def _on_ceiling_zones_added(self, findings: list) -> None:
+        """A plain Add found zones past the E4XT's rate ceiling.
+
+        The same box and the same Narrow button an IMPORT gets, because it is
+        the same fact about the same bytes -- only the route differed, and
+        until now so did whether anyone told you.
+
+        Off by choice rather than by nagging: the box carries "Don't warn
+        again", which writes the View-menu setting. The rate is a property of
+        the library (43.9% of presets in one synth library here, 0% in an
+        orchestral one), so somebody working in the wrong kind would otherwise
+        answer this on every other preset.
+        """
+        if not findings or not getattr(self._config, "warn_playback_ceiling", True):
+            return
+        # ONE LINE PER SAMPLE, not per zone. A preset stacks voices, and
+        # every voice has its own zone on the same sample -- the one that
+        # prompted this has three, so the box said the same sentence three
+        # times with the safe key differing by one, which reads as a bug
+        # rather than as a preset with three layers. Same rule the conversion
+        # warnings already follow for identical findings.
+        grouped: dict = {}
+        for d in findings:
+            name = (d.get("sample_name") or "?").strip()
+            cur = grouped.get(name)
+            # The STRICTEST safe key, because narrowing is per sample and the
+            # strictest is the only one that clears every zone using it.
+            if cur is None or int(d["highest_safe_key"]) < int(cur["highest_safe_key"]):
+                d = dict(d)
+                d["zone_count"] = (cur or {}).get("zone_count", 0) + 1
+                grouped[name] = d
+            else:
+                cur["zone_count"] = cur.get("zone_count", 1) + 1
+        worst = sorted(grouped.values(),
+                       key=lambda d: -int(d.get("keys_over") or 0))
+        lines = []
+        for d in worst[:5]:
+            n = int(d.get("zone_count") or 1)
+            zones = "" if n == 1 else f" in {n} of its voices"
+            lines.append(
+                f"'{(d.get('sample_name') or '?').strip()}'{zones} plays keys "
+                f"{int(d['highest_safe_key']) + 1}–{d['hi_key']} past the "
+                f"E4XT's rate ceiling ({d['sample_rate']} Hz, root "
+                f"{d['root_key']}); the highest key that plays correctly is "
+                f"{d['highest_safe_key']}.")
+        extra = len(grouped) - len(lines)
+        detail = "\n\n".join(lines)
+        if extra > 0:
+            detail += f"\n\n… and {extra} more sample(s) of the same kind."
+        detail += (
+            "\n\nTHIS IS HOW THE SOURCE BANK WAS AUTHORED. Adding a preset "
+            "copies its bytes verbatim — nothing here has changed a zone, a "
+            "root key or a sample rate, so what this describes was already "
+            "true of the bank you added it from, and is true of it on the "
+            "machine today.\n\n"
+            # ENDS HERE. The prevalence measurement and the "not damaged"
+            # reassurance were both true and both belong in the README, not
+            # in a box somebody is reading in order to get on with something
+            # else. Jan, 2026-09-28: "this is too much for a warning window".
+            "Above that rate the voice runs past the end of its sample into "
+            "neighbouring sample RAM. The keys it affects are at the very top "
+            "of the keyboard, above where such a preset is normally played, "
+            "which is why it often goes unnoticed.")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Zones above the E4XT's rate ceiling")
+        box.setText(detail)
+        # The button counts SAMPLES, because that is what a placement edit
+        # moves -- one per sample, at its strictest safe key.
+        keys = sorted({int(d["highest_safe_key"]) for d in grouped.values()})
+        where = (f"key {keys[0]}" if len(keys) == 1
+                 else f"their highest safe keys ({keys[0]}–{keys[-1]})")
+        narrow_btn = box.addButton(
+            f"Narrow {len(grouped)} sample(s) to {where}",
+            QMessageBox.ButtonRole.ActionRole)
+        never_btn = box.addButton("Don't warn again",
+                                  QMessageBox.ButtonRole.DestructiveRole)
+        # NOT "OK". Two of the three buttons here DO something, and the third
+        # is the one most people will press -- "OK" reads as consent to
+        # whatever was just described rather than as "change nothing", which
+        # on a box about zones the vendor authored is exactly backwards.
+        keep_btn = box.addButton("Leave the zones as they are",
+                                 QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(keep_btn)
+        box.setEscapeButton(keep_btn)
+        box.exec()
+        if box.clickedButton() is narrow_btn:
+            self._narrow_zones_to_ceiling(findings)
+        elif box.clickedButton() is never_btn:
+            self._set_ceiling_warning(False)
+
+    def _narrow_zones_to_ceiling(self, findings: list) -> None:
+        """Apply the writer's own `highest_safe_key` to the staged zones.
+
+        Through the SAME placement machinery Adjust Placement… uses, so the
+        edit is the one the bank already knows how to carry and is applied
+        where every other placement edit is applied -- at assemble time,
+        against the source sample's name.
+
+        Says what it did, including what it did NOT do: mpc2emu reports one
+        zone per preset, its worst, so a preset with several over-zones is
+        only partly answered by this and the count of the rest is the only
+        honest thing to show.
+        """
+        applied, unmatched, siblings = \
+            self._bank_pane.narrow_zones_to_ceiling(findings)
+        parts = []
+        if applied:
+            # SAMPLES, and bank-wide: a placement is keyed by the sample's
+            # name, so this moved it in every staged preset that uses it. Not
+            # a detail to leave for someone to discover -- Jan discovered it.
+            parts.append(f"narrowed {applied} sample(s) to their highest safe "
+                         f"key, in every staged preset using them")
+        if unmatched:
+            parts.append(f"{unmatched} left alone (no match, or the sample "
+                         f"sits at another root in another staged preset)")
+        if siblings:
+            parts.append(f"{siblings} further over-zone(s) were counted but "
+                         f"not named by the converter, and are untouched")
+        self.statusBar().showMessage(
+            "; ".join(parts) or "nothing to narrow", 12000)
 
     def _retry_with_shrink_target(self, target_bytes: int) -> None:
         """Re-run the last import with the shrink target raised.
@@ -1228,7 +1410,10 @@ class MainWindow(QMainWindow):
             return
         bank, preset = result
         name = label or Path(dir_path).name or preset.name.strip() or "Imported Samples"
-        self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
+        self._bank_pane.add_presets([(bank, preset, opts.target_format, name)],
+                                    # mpc2emu's writer already reported any
+                                    # over-ceiling zone for this conversion.
+                                    check_ceiling=False)
         self._warn_polyphony(risks or [], "Import Sample Folder")
 
     def _on_sample_dir_import_error(self, message: str) -> None:
@@ -1453,7 +1638,11 @@ class MainWindow(QMainWindow):
                      for i, (_bank, preset) in enumerate(pairs)]
         self._bank_pane.add_presets(
             [(bank, preset, opts.target_format, name)
-             for (bank, preset), name in zip(pairs, names)])
+             for (bank, preset), name in zip(pairs, names)],
+            # A conversion: mpc2emu's writer has already reported any zone
+            # over the rate ceiling, and two boxes about one fact is worse
+            # than none.
+            check_ceiling=False)
 
     def _on_foreign_import_error(self, message: str) -> None:
         self.statusBar().showMessage(workers.last_error_line(message))
@@ -1565,7 +1754,10 @@ class MainWindow(QMainWindow):
             return
         bank, preset = result
         name = self._bank_pane.unique_name(_via_mpc2emu(node.label))
-        self._bank_pane.add_presets([(bank, preset, opts.target_format, name)])
+        self._bank_pane.add_presets([(bank, preset, opts.target_format, name)],
+                                    # mpc2emu's writer already reported any
+                                    # over-ceiling zone for this conversion.
+                                    check_ceiling=False)
 
     def _on_preset_convert_error(self, message: str) -> None:
         last_line = workers.last_error_line(message)

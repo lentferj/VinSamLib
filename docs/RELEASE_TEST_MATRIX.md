@@ -982,9 +982,18 @@ same afternoon: a 0.6 s 440 Hz tone through `AuditionPlayer` returned
 `route: external` and emitted `finished` cleanly. That says the plumbing
 works; the by-ear row above is what says anything sounds right.
 
-What this costs the matrix: **AUD-QT (the `QAudioSink` path) cannot be
-exercised on this host until `pipewire-pulse` is reinstalled or libpipewire is
-new enough for Qt.** The tests do not silently drift into testing the other
+✅ **REOPENED THE SAME DAY BY THE SECOND REMEDY, 2026-09-28.** libpipewire
+was upgraded 0.3.65 -> 1.4.2 (bookworm-backports), which exports
+`pw_check_library_version`; `QMediaDevices` now lists the interface and
+`playback_route()` returns `("qt", ...)` with **no pipewire-pulse installed**
+(`/run/user/1002/pulse` empty). That is Qt's NATIVE PipeWire backend running
+here for the first time, and it confirms the symbol was the whole cause. The
+paragraph above is kept because the finding is about the toolkit: PySide6
+6.11 reaches PipeWire only through a libpipewire that exports that symbol.
+
+What this cost the matrix while it lasted: **AUD-QT (the `QAudioSink` path)
+could not be exercised on this host until `pipewire-pulse` was reinstalled or
+libpipewire was new enough for Qt.** The tests do not silently drift into testing the other
 route instead -- `manual_audition_external_player` and
 `manual_audition_no_audio_device` force their own preconditions through
 `_harness.no_qt_audio` rather than reading the host, which is exactly the

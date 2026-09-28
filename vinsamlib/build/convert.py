@@ -87,6 +87,20 @@ class ConversionOptions:
     # then written normally -- an ordinary conversion with an unusual parser.
     # See build/firmware_sim.py, which exists to keep the two apart.
     match_device_import: bool = False
+    #: The simulating reader is the ONLY reader this source has -- an Ensoniq
+    #: or Roland disc, whose layout is undocumented -- as opposed to a device
+    #: import the user CHOSE over an ordinary conversion, which is the AKAI
+    #: arm and the paragraph above.
+    #:
+    #: BOTH set `match_device_import`, because both select mpc2emu's
+    #: simulating parser. Only the chosen one means "produce what the machine
+    #: would produce", so only that one drops this project's processing. The
+    #: paragraph above has said since it was written that a disc import "is an
+    #: ordinary conversion with an unusual parser"; without this field nothing
+    #: in the code could tell the two apart, and a disc import silently threw
+    #: away every resample, rate ceiling and memory target the user had set --
+    #: from a dialog that offered them live. Jan, 2026-09-28: honour them.
+    firmware_reader_only: bool = False
     resample_profile: Optional[str] = None        # "emulator2" | "emax1" | None (off)
     no_bandpass: bool = False
     resample_keep_gain: bool = False
@@ -871,6 +885,12 @@ def _strip_processing_for_device_match(
     dropped is reported as a risk.
     """
     if not getattr(opts, "match_device_import", False):
+        return opts
+    # The flag has two meanings and only one of them strips. See
+    # `firmware_reader_only`: a disc whose only reader is firmware-derived is
+    # an ordinary conversion with an unusual parser, and its options are the
+    # user's to set.
+    if getattr(opts, "firmware_reader_only", False):
         return opts
     # THE DIALOG IS NOT THE GUARANTEE. A restored session, a matrix test or
     # any direct caller can set this with a target no simulation writes, and

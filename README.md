@@ -443,6 +443,34 @@ laws measured on an E4XT and an S3000XL. Applying those to Roland material
 is a guess with no reference, not an improvement, and offering it under the
 word "better" would promise what nobody here can demonstrate.
 
+**The conversion options still apply on those two paths**, and that is the
+difference between them and the AKAI one above. "Firmware" names the
+**reader** for a disc — the only reader it has, since neither layout is
+documented — not a request to reproduce a machine's whole conversion. Only
+the AKAI *"convert as the firmware would"* arm, which you choose over an
+alternative, skips them. Until 2026-09-28 the dialog offered those controls
+on a disc import and the pipeline discarded all sixteen of them, reporting it
+after the fact — the two halves had read one flag two different ways.
+
+**The dialog now offers a disc import only the controls that can act on it**,
+and which those are was measured rather than reasoned about. Importing one
+EPS instrument to E4B, each against the same baseline of 488 624 bytes:
+
+| Option | On an EPS or Roland import |
+|---|---|
+| Limit Maximum Sample Rate (22 050) | **acts** — 281 348 bytes |
+| Reduce Key Zones by 50 % | **acts** — 250 612 bytes |
+| Vintage Resample | **acts** — 352 888 bytes |
+| Reduce Velocity Layers by 50 % | **cannot act** — byte-identical output |
+| Split velocity layers into separate presets | **cannot act** — same reason |
+| MPC pad map, synced-LFO tempo | **cannot act** — properties of an `.xpm` |
+
+The velocity rows are not a limitation of the reducer but of the material:
+across the reference discs, **none** of 2 396 EPS presets and **none** of
+4 004 Roland presets carries a zone with a restricted velocity range. Those
+controls, and the two MPC ones, are therefore left out of the dialog for
+these sources rather than shown and quietly ignored.
+
 Where a path is not ready, the option is **disabled with mpc2emu's own
 reason**, never left out — someone who asks to convert as the firmware would
 and silently receives an ordinary conversion has no way to tell.
@@ -1505,6 +1533,93 @@ collapsed with a multiplier in first-seen order (`5 × DECAY1 needs
 how many others there are and that they are no worse, and a line naming
 one preset and one key sorts after the general ones because it is the
 more specific answer.
+
+Two findings publish the number that fixes them, so the box offers a
+**button** rather than a sentence asking you to retype it: a shrink target
+that could not be reached offers *"Raise target to N and re-import"*, and a
+zone that plays past the E4XT's playback-rate ceiling offers **"Narrow N
+zone(s) to key X"**.
+
+**The same check now runs when you merely *add* a preset**, not only when you
+convert one. Until 2026-09-28 it did not, and the asymmetry was invisible:
+"Import via mpc2emu…" went through their writer, which checks, while "Add to
+New Bank" copied the bytes through our own assembler, which did not — so
+whether you were told about a zone depended on which menu entry you used, for
+the same preset. VinSamLib now reads it itself (`banks/e4b.py`, which needs no
+mpc2emu, because a plain add needs none) and a test asserts our answer matches
+mpc2emu's zone for zone, so the two readings cannot drift apart.
+
+It can be switched off in **View ▸ Warn About Zones Above the E4XT's Rate
+Ceiling**, and the warning box carries **"Don't warn again"**, which writes
+that same setting. Both exist because of the measurement below: how often this
+fires is a property of the *library*, not of the format.
+
+The box says three things deliberately. It **states that the source bank was
+authored this way** — on this path that is a fact rather than a hedge, since
+adding a preset copies its bytes verbatim and nothing here has touched a zone,
+a root key or a sample rate. It reports **one line per sample**, naming how
+many of the preset's voices use it, because a preset that stacks three voices
+on one sample would otherwise say the same sentence three times with the safe
+key differing by one, which reads as a bug rather than as a layered preset.
+And its third button is **"Leave the zones as they are"**, not *OK* — the
+other two act, and *OK* reads as consent to what was just described.
+
+⚠ **Narrowing is bank-wide, not per preset.** A placement edit is keyed by the
+source sample's name — the same mechanism **Adjust Placement…** uses — so
+narrowing a sample narrows it in **every staged preset that uses it**. In a
+bank whose fifteen presets share four samples that is the normal case, not a
+corner one, and the status line says so after the edit. It is also **sticky**: narrow a preset, add
+an untreated copy afterwards, and that one is narrowed too — the map belongs
+to the bank, not to the item, so the order you add things in makes no
+difference.
+
+What it refuses is the corrupting version. A placement row is deduped by
+sample *name* across every staged preset, carrying the lowest low key, the
+highest high key and a first-wins root, so when two presets place one name
+differently the row describes neither. The button therefore acts only where
+the staged row matches the finding's zone exactly, and counts the rest as
+left alone. That case is real, not theoretical: in one library here **seven
+sample names appear in two different banks at roots an octave apart** — e.g.
+keys 0–29 rooted at 24 in one bank and 0–41 rooted at 36 in the other — so
+staging a preset from each and narrowing would otherwise transpose one of them
+to fix a zone in the other. Per-preset narrowing would mean keying
+placement per preset, which is a change to a shipped, hardware-exercised
+feature rather than something this button should do quietly.
+
+Narrowing is **per sample and takes the strictest safe key** of the zones
+using it. That is not a detail: a placement edit moves every zone that shares
+a sample, so on that three-voice preset — safe at 118, 118 and 117, the third
+voice carrying a tune offset — anything but the minimum clears two zones and
+leaves the third one key over while reporting three narrowed.
+
+That remedy is worth knowing about, because it is **not** applied
+automatically and the reason is measured. Above an absolute playback rate the
+E4XT runs off the end of a sample into neighbouring sample RAM — measured on
+real hardware 2026-09-20: a 44.1 kHz sample plays cleanly to +45 semitones and
+breaks at +46, and halving the rate buys a full octave. But commercial banks
+are routinely authored past it — and **which** ones is not evenly spread. Over
+five libraries in this project's own collection, 1 605 presets:
+
+| Library | Presets over the ceiling | Worst |
+|---|---|---|
+| a techno synth library | **43.9 %** (265 / 604) | 22 keys |
+| a second synth library | **21.9 %** (89 / 406) | 38 keys |
+| orchestral strings, vol. 1 | 0.4 % (1 / 284) | 1 key |
+| orchestral strings, vol. 2 | 0 % (0 / 193) | — |
+| orchestral strings, vol. 3 | 0 % (0 / 118) | — |
+
+So it tracks **authoring style**, not vendors as such: synth libraries that
+map one short sample across a wide zone running to key 127 trip it constantly,
+while orchestral libraries that multisample into many narrow zones essentially
+never do. (Five libraries, one collection, loose `.e4b` files only — disc
+images were not scanned, so treat it as the shape of the thing rather than a
+population estimate.) The affected keys are the top of the keyboard, above
+what most controllers reach and above where the material is played, which is
+why nobody has ever noticed. Clamping them on import would silently edit a
+tenth of a bought library to fix something inaudible, so the button narrows
+only when you press it, applies the writer's own exact safe key through the
+same placement machinery **Adjust Placement…** uses, and says afterwards how
+many further over-zones the converter counted but did not name.
 
 An older mpc2emu checkout without `models/diagnostics.py` simply keeps the
 previous behaviour: the conversion runs and produces the same file, it

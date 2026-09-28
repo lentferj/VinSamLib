@@ -177,6 +177,20 @@ class Config:
     #: one, and most users are not auditing loops. Nothing is ever modified —
     #: see banks/loopcheck.py for why this reports and never repairs.
     loop_click_check: bool = False
+    #: Warn when a preset added to New Bank carries a zone that can be played
+    #: past the E4XT's playback-rate ceiling. ON by default, because the
+    #: alternative is what prompted it: the same preset IMPORTED through
+    #: mpc2emu is checked by their writer and the same preset merely ADDED was
+    #: checked by nothing, so whether you were told depended on which menu
+    #: entry you used.
+    #:
+    #: Off is a real answer, not a nuisance setting. Measured across this
+    #: author's own library the rate is a property of the LIBRARY, not of the
+    #: format: two synth libraries run 43.9% and 21.9% of presets, three
+    #: orchestral ones 0.4%, 0% and 0%. Somebody working in the first kind is
+    #: told something they already know on nearly every other preset, and the
+    #: warning box carries its own way out because of that.
+    warn_playback_ceiling: bool = True
     #: Whether the Audition report window opens every time.
     #:
     #: The report is the feature's honesty surface -- what is measured, what
@@ -259,6 +273,8 @@ class Config:
         debug_mpc2emu_log = bool(data.get("debug_mpc2emu_log",
                                           defaults.debug_mpc2emu_log))
         loop_click_check = bool(data.get("loop_click_check", defaults.loop_click_check))
+        warn_playback_ceiling = bool(data.get("warn_playback_ceiling",
+                                              defaults.warn_playback_ceiling))
         audition_show_report = bool(data.get(
             "audition_show_report", defaults.audition_show_report))
         audition_volume = max(0, min(100, int(data.get(
@@ -278,6 +294,7 @@ class Config:
                     autosave_seconds=autosave_seconds,
                     debug_mpc2emu_log=debug_mpc2emu_log,
                     loop_click_check=loop_click_check,
+                    warn_playback_ceiling=warn_playback_ceiling,
                     audition_show_report=audition_show_report,
                     audition_volume=audition_volume,
                     audition_notes=audition_notes,
@@ -329,6 +346,8 @@ class Config:
         lines.append(f"autosave_seconds = {self.autosave_seconds}")
         lines.append(f"debug_mpc2emu_log = {str(bool(self.debug_mpc2emu_log)).lower()}")
         lines.append(f"loop_click_check = {str(self.loop_click_check).lower()}")
+        lines.append("warn_playback_ceiling = "
+                     f"{str(self.warn_playback_ceiling).lower()}")
         lines.append(f"audition_show_report = {str(self.audition_show_report).lower()}")
         lines.append(f"audition_volume = {int(self.audition_volume)}")
         lines.append(f"audition_notes = {_toml_str(self.audition_notes)}")

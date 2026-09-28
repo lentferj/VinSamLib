@@ -68,8 +68,10 @@ _DISC_READER_WARNING = (
     "{article} {fmt} disc has no documented layout, so everything known "
     "about it was read out of the samplers' own import routines — which is "
     "why there is no second, better conversion to offer and no choice to "
-    "make here. This import converts as the firmware would, which for these "
-    "formats is the only definition of correct available.")
+    "make here — this reads the disc as the firmware does. That is a "
+    "statement about the READER: the options below still apply, and the "
+    "controls this source cannot be acted on by have been left out "
+    "rather than shown and ignored.")
 
 _DEVICE_MATCH_WARNING = (
     "Converting as the firmware would: this writes what the sampler's own "
@@ -139,8 +141,14 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # chooser is gone for those sources -- there is no second mode to
         # choose -- but the fact was worth keeping: it is the reason the
         # result is what it is, and it used to be carried by a radio label.
-        if not warning_text and source_format in (foreign_import.EPS_FORMAT,
-                                                  foreign_import.ROLAND_FORMAT):
+        # PRECEDENCE, not a fallback. This was `if not warning_text`, and the
+        # foreign-import call site passes a generic line for every non-MPC
+        # source -- so the sentence written for exactly these two formats
+        # never appeared on them, and the dialog explained nothing about the
+        # one path where the question "why is there no choice here?" is
+        # actually asked.
+        if source_format in (foreign_import.EPS_FORMAT,
+                             foreign_import.ROLAND_FORMAT):
             article = "An" if source_format[:1].upper() in "AEIOU" else "A"
             warning_text = _DISC_READER_WARNING.format(
                 article=article, fmt=source_format)
@@ -235,6 +243,11 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # assigned, so the per-target hide never landed and a single-mode
         # path drew a chooser for a choice it does not have.
         self._refresh_device_arm()
+        # LAST, once every group exists: drop the controls this source cannot
+        # be acted on by. See ConvertOptionsDialog.apply_source_capabilities --
+        # the MPC pad map and synced-LFO tempo are XPM properties, and the two
+        # disc formats carry no velocity layers at all (measured).
+        self.apply_source_capabilities(source_format)
 
     # ── import method ──────────────────────────────────────────────────────
 
@@ -389,6 +402,15 @@ class FormatConvertDialog(ConvertOptionsDialog):
             return True
         return self._sole_mode_is_firmware()
 
+    def _device_radio_chosen(self) -> bool:
+        """Did the user actively pick the device arm, over an alternative?
+
+        The narrower half of `_device_match_selected`, and the one that means
+        "produce what the machine would produce".
+        """
+        radio = getattr(self, "_device_radio", None)
+        return bool(radio is not None and radio.isChecked() and radio.isEnabled())
+
     def _sole_mode_is_firmware(self) -> bool:
         """Per PATH, never per source.
 
@@ -435,9 +457,18 @@ class FormatConvertDialog(ConvertOptionsDialog):
             self._max_rate_spin.setValue(_KRZ_SANE_MAX_RATE_HZ)
 
     def _to_options(self) -> ConversionOptions:
+        # Two flags, because "firmware import" names two different things.
+        # `match_device_import` picks mpc2emu's simulating parser -- the only
+        # reader an Ensoniq or Roland disc has. `firmware_reader_only` says
+        # that is ALL it means here, so the pipeline does not also throw away
+        # the options this dialog just offered: those paths draw no chooser,
+        # so nobody asked for the device's own conversion, and the dialog has
+        # deliberately kept its options live for them all along.
         return dataclasses.replace(super()._to_options(),
                                     target_format=self._format_box.currentText(),
-                                    match_device_import=self._device_match_selected())
+                                    match_device_import=self._device_match_selected(),
+                                    firmware_reader_only=self._sole_mode_is_firmware()
+                                    and not self._device_radio_chosen())
 
     @staticmethod
     def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,

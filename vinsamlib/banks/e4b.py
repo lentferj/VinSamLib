@@ -44,6 +44,7 @@ Sample body:
 
 from __future__ import annotations
 
+import math
 import re
 import struct
 
@@ -267,6 +268,101 @@ class E4BFile:
     e4ma_body: bytes
     emst_body: bytes
     warnings: list[str] = field(default_factory=list)
+
+
+#: Sample rate, little-endian uint32 at byte 54 of the E3S1 header. Mirrors
+#: `parsers/e4b_parser.py:291`; `manual_ceiling_check_agrees` asserts our
+#: reading matches theirs preset for preset, so the two cannot drift.
+SAMPLE_RATE_OFF = 54
+
+#: Voice tuning, at the same offsets mpc2emu calls `vpar[35]`/`vpar[36]` --
+#: `vpar` is the voice block from its own start, which is why their
+#: `vpar[14]`/`vpar[17]` are this file's VOICE_LO_KEY/VOICE_HI_KEY.
+VOICE_COARSE_TUNE, VOICE_FINE_TUNE = 35, 36
+
+#: Per-zone fine tune, int16 BE at zone entry + 12, in 1/64 semitone. Read
+#: only for a voice with MORE THAN ONE zone: a single-zone voice carries its
+#: tuning in the voice fields above, which is hardware-confirmed upstream
+#: (2026-07-26) and not a guess of ours.
+ZONE_FINE_TUNE = 12
+
+#: The rate above which an E4XT stops playing a sample and runs off its end
+#: into neighbouring sample RAM. NOT a limit in semitones -- that is only how
+#: it looks on 44.1 kHz material.
+#:
+#: MEASURED on Jan's E4XT 2026-09-20, four presets over identical PCM:
+#: root 48/60/72 at 44100 Hz all clean to +45 and broken at +46, and root 60
+#: at 22050 Hz clean to +57 -- one absolute rate, bracketed to
+#: (593 337, 628 618] Hz. 625 000 is mpc2emu's fitted value inside that
+#: bracket and this is a deliberate COPY of it, not a second opinion: the
+#: check has to run with no mpc2emu (a plain Add needs none), and a test
+#: asserts the two constants are equal whenever mpc2emu is importable.
+E4XT_MAX_PLAYBACK_RATE_HZ = 625000.0
+
+
+def sample_rate(samp: "E4BSample") -> int:
+    """The sample's own rate in Hz, or 0 when the header is too short."""
+    body = getattr(samp, "body", b"") or b""
+    if len(body) < SAMPLE_RATE_OFF + 4:
+        return 0
+    return struct.unpack_from("<I", body, SAMPLE_RATE_OFF)[0]
+
+
+def _signed(b: int) -> int:
+    return b - 256 if b > 127 else b
+
+
+def zones_above_playback_ceiling(bank: "E4BFile", preset: "E4BPreset") -> list:
+    """Zones this preset can play past the E4XT's rate ceiling.
+
+    One record per zone, in mpc2emu's `E4B_ZONE_ABOVE_PLAYBACK_CEILING`
+    detail shape, so the UI that already acts on theirs needs no second
+    code path -- plus the `sample_name` their record does not carry.
+
+    WHY THIS EXISTS AT ALL: the same preset added straight to New Bank and
+    imported through mpc2emu is the same bytes, but only the import runs
+    their writer, so only the import was ever checked. Jan, 2026-09-28:
+    "just adding SYNCO X now still doesn't give a warning, import does".
+
+    Exact rather than approximate, which is the whole reason for the three
+    offsets above: the shift is the voice's coarse tune plus the zone's own
+    fine tune, and ignoring it puts the answer a key or two out -- on the
+    preset that prompted this, two voices give 118 and the third 117.
+    """
+    out: list = []
+    body = getattr(preset, "body", None)
+    if not body:
+        return out
+    for v_start, table_start, n in _walk_voices(body, preset.num_voices):
+        vlo = body[v_start + VOICE_LO_KEY]
+        vhi = body[v_start + VOICE_HI_KEY]
+        coarse = _signed(body[v_start + VOICE_COARSE_TUNE])
+        v_fine = _signed(body[v_start + VOICE_FINE_TUNE]) * 100.0 / 64.0
+        for k in range(n):
+            eo = table_start + k * ZONE_ENTRY
+            if eo + ZONE_ENTRY > len(body):
+                break
+            idx = struct.unpack_from(">H", body, eo + 10)[0]
+            samp = bank.samples.get(idx)
+            if samp is None:
+                continue
+            rate = sample_rate(samp)
+            if not rate:
+                continue
+            lo = max(vlo, body[eo + ZONE_LO_KEY])
+            hi = min(vhi, body[eo + ZONE_HI_KEY])
+            root = body[eo + ZONE_ROOT_KEY]
+            fine = (struct.unpack_from(">h", body, eo + ZONE_FINE_TUNE)[0]
+                    * 100.0 / 64.0) if n > 1 else v_fine
+            shift = coarse + fine / 100.0
+            headroom = 12.0 * math.log2(E4XT_MAX_PLAYBACK_RATE_HZ / float(rate))
+            safe = int(math.ceil(root - shift + headroom)) - 1
+            if hi > safe:
+                out.append({"sample_name": samp.name, "lo_key": lo,
+                            "hi_key": hi, "root_key": root,
+                            "highest_safe_key": safe, "sample_rate": rate,
+                            "keys_over": hi - safe, "zones_over": 1})
+    return out
 
 
 def _apply_placement(body: bytearray, voice_start: int, zone_off: int,
