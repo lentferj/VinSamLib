@@ -11,21 +11,21 @@ anything. Skips any container whose (size, mtime) already matches what's
 indexed, so a second scan of an unchanged library is fast.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import os
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional  # noqa: UP035
 
 from .db import IndexDB
 from ..banks import akai as vs_akai
 from ..banks import e4b, eiii, krz, summary
-from ..build import foreign_import, refaudio, xpm_import
+from ..build import foreign_import, refaudio, xpm_import  # noqa: F401
 from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
 
-ProgressCB = Optional[Callable[[str], None]]
+ProgressCB = Optional[Callable[[str], None]]  # noqa: UP045
 # The MPC's three containers (see build/xpm_import.py, which owns the
 # mapping): ".xpj" is a project, which the Explorer browses like a bank; the
 # other two are single programs.
@@ -67,13 +67,18 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
         prefix = str(root).rstrip("/") + "/"
         if any(p.startswith(prefix) or p == str(root) for p in seen_paths):
             continue
-        had = sum(1 for p in db.all_container_paths()
-                  if p.startswith(prefix) or p == str(root))
+        had = sum(
+            1
+            for p in db.all_container_paths()
+            if p.startswith(prefix) or p == str(root)
+        )
         if had:
             quiet.append(str(root))
             if progress is not None:
-                progress(f"{root} returned nothing but holds {had} indexed "
-                         f"item(s) — keeping them; it is unreachable, not empty")
+                progress(
+                    f"{root} returned nothing but holds {had} indexed "
+                    f"item(s) — keeping them; it is unreachable, not empty"
+                )
 
     for path in db.all_container_paths():
         if path in seen_paths:
@@ -89,15 +94,23 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
         # away, or a search would keep offering instruments that can no
         # longer be imported -- the one case where the file is untouched and
         # the row still has to go.
-        foreign_gone = (foreign_import.format_for(p) is not None
-                        and not foreign_import.available())
-        if not p.exists() or foreign_gone or (
+        foreign_gone = (
+            foreign_import.format_for(p) is not None and not foreign_import.available()
+        )
+        if (
+            not p.exists()
+            or foreign_gone
+            or (
                 p.suffix.lower() in xpm_import.PROGRAM_EXTS
-                and not xpm_import.holds_convertible_program(path)):
+                and not xpm_import.holds_convertible_program(path)
+            )
+        ):
             db.forget_container(path)
 
 
-def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: set) -> None:
+def _scan_directory(
+    path: Path, db: IndexDB, progress: ProgressCB, seen_paths: set
+) -> None:  # noqa: C901
     try:
         vol = LocalDirVolume(str(path))
         entries = vol.list()
@@ -108,8 +121,11 @@ def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: s
     # _list_directory). It has to index the same way, or a program sitting
     # in such a folder browses perfectly and is unfindable by search --
     # which is what it did until this was written.
-    if any(os.path.splitext(e.name)[1].lower() in _AKAI_PROGRAM_EXTS
-           for e in entries if e.kind != EntryKind.DIRECTORY):
+    if any(
+        os.path.splitext(e.name)[1].lower() in _AKAI_PROGRAM_EXTS
+        for e in entries
+        if e.kind != EntryKind.DIRECTORY
+    ):
         _scan_akai_dir(path, db, progress, seen_paths)
 
     for e in entries:
@@ -129,23 +145,30 @@ def _scan_directory(path: Path, db: IndexDB, progress: ProgressCB, seen_paths: s
                 # disc browsed perfectly and was unfindable by search -- and
                 # because this is an `elif` chain, the foreign branch below
                 # could never be reached for an image either.
-                _scan_foreign_container(e.ref, e.size, db, progress,
-                                        seen_paths)
-        elif e.kind == EntryKind.OTHER_FILE and Path(e.ref).suffix.lower() in _MPC_EXT_FORMAT:
+                _scan_foreign_container(e.ref, e.size, db, progress, seen_paths)
+        elif (
+            e.kind == EntryKind.OTHER_FILE
+            and Path(e.ref).suffix.lower() in _MPC_EXT_FORMAT
+        ):
             # Same rule the tree lists by (ui/models.py): a MIDI/Plugin/
             # Audio/CV/Clip program references no sample data, so indexing it
             # would only pad search results. Projects are always indexed --
             # what they hold is decided on expansion, not here.
-            if (Path(e.ref).suffix.lower() == xpm_import.PROJECT_EXT
-                    or xpm_import.holds_convertible_program(e.ref)):
+            if (
+                Path(e.ref).suffix.lower() == xpm_import.PROJECT_EXT
+                or xpm_import.holds_convertible_program(e.ref)
+            ):
                 _scan_xpm_container(e.ref, e.size, db, progress, seen_paths)
-        elif (e.kind == EntryKind.OTHER_FILE
-                and foreign_import.format_for(e.ref) is not None):
+        elif (
+            e.kind == EntryKind.OTHER_FILE
+            and foreign_import.format_for(e.ref) is not None
+        ):
             _scan_foreign_container(e.ref, e.size, db, progress, seen_paths)
 
 
-def _scan_akai_dir(path: Path, db: IndexDB, progress: ProgressCB,
-                    seen_paths: set) -> None:
+def _scan_akai_dir(
+    path: Path, db: IndexDB, progress: ProgressCB, seen_paths: set
+) -> None:
     """A folder of loose AKAI files, indexed as one bank of programs.
 
     Only the program files are read -- their samples can run to gigabytes
@@ -167,16 +190,25 @@ def _scan_akai_dir(path: Path, db: IndexDB, progress: ProgressCB,
     except Exception as ex:
         db.finish_container(cid, error=str(ex))
         return
-    item_id = db.add_item(cid, None, "bank", path.name, native_id=path.name,
-                           format="AKAI", ordinal=0)
+    item_id = db.add_item(
+        cid, None, "bank", path.name, native_id=path.name, format="AKAI", ordinal=0
+    )
     for i, prog in enumerate(bank.programs):
-        db.add_item(cid, item_id, "preset", prog.name.strip() or "(untitled)",
-                    native_id=prog.filename or prog.name, format="AKAI", ordinal=i)
+        db.add_item(
+            cid,
+            item_id,
+            "preset",
+            prog.name.strip() or "(untitled)",
+            native_id=prog.filename or prog.name,
+            format="AKAI",
+            ordinal=i,
+        )
     db.finish_container(cid)
 
 
-def _scan_bank_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
-                          seen_paths: set) -> None:
+def _scan_bank_container(
+    path: str, size: int, db: IndexDB, progress: ProgressCB, seen_paths: set
+) -> None:
     seen_paths.add(path)
     try:
         mtime = Path(path).stat().st_mtime
@@ -209,8 +241,9 @@ def _scan_bank_container(path: str, size: int, db: IndexDB, progress: ProgressCB
     db.finish_container(cid)
 
 
-def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
-                         seen_paths: set) -> None:
+def _scan_xpm_container(
+    path: str, size: int, db: IndexDB, progress: ProgressCB, seen_paths: set
+) -> None:
     # Indexed by filename only, not parsed -- unlike a bank, an MPC file's
     # "content" (presets) needs mpc2emu's own xpm_parser plus its
     # referenced WAV/AIFF files to enumerate at all, and doing that for
@@ -251,8 +284,17 @@ def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
     # is tens of rows, not thousands, and it only happens where someone is
     # looking.
     audio = None
-    item_id = db.add_item(cid, None, kind, name, native_id=name, format=fmt,
-                           size=size, ordinal=0, audio_bytes=audio)
+    item_id = db.add_item(
+        cid,
+        None,
+        kind,
+        name,
+        native_id=name,
+        format=fmt,
+        size=size,
+        ordinal=0,
+        audio_bytes=audio,
+    )
     if audio is not None:
         db.set_container_audio_bytes(cid, audio)
     if kind == "mpc_project":
@@ -260,13 +302,21 @@ def _scan_xpm_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
             # native_id is the name, not the position: a parse drops a program
             # that turned out to hold no samples, so the row a hit resolves to
             # is found by name (see ui/search_resolve.py), never by index.
-            db.add_item(cid, item_id, "mpc_program", program, native_id=program,
-                         format=fmt, ordinal=i)
+            db.add_item(
+                cid,
+                item_id,
+                "mpc_program",
+                program,
+                native_id=program,
+                format=fmt,
+                ordinal=i,
+            )
     db.finish_container(cid)
 
 
-def _scan_foreign_container(path: str, size: int, db: IndexDB, progress: ProgressCB,
-                            seen_paths: set) -> None:
+def _scan_foreign_container(
+    path: str, size: int, db: IndexDB, progress: ProgressCB, seen_paths: set
+) -> None:
     """Index a soundfont-style import source (SF2, SFZ, EXS24, TAL, GIG).
 
     Cheaper than the MPC case above, and by a wider margin: an MPC project
@@ -283,7 +333,7 @@ def _scan_foreign_container(path: str, size: int, db: IndexDB, progress: Progres
         return
     verdict = foreign_import.inspect(path)
     if verdict is None:
-        return                      # not one of ours (a macOS ._ fork, say)
+        return  # not one of ours (a macOS ._ fork, say)
     seen_paths.add(path)
     try:
         mtime = Path(path).stat().st_mtime
@@ -309,8 +359,17 @@ def _scan_foreign_container(path: str, size: int, db: IndexDB, progress: Progres
     # is tens of rows, not thousands, and it only happens where someone is
     # looking.
     audio = None
-    item_id = db.add_item(cid, None, kind, name, native_id=name, format=fmt,
-                          size=size, ordinal=0, audio_bytes=audio)
+    item_id = db.add_item(
+        cid,
+        None,
+        kind,
+        name,
+        native_id=name,
+        format=fmt,
+        size=size,
+        ordinal=0,
+        audio_bytes=audio,
+    )
     if audio is not None:
         db.set_container_audio_bytes(cid, audio)
     if verdict.container and verdict.importable:
@@ -320,13 +379,26 @@ def _scan_foreign_container(path: str, size: int, db: IndexDB, progress: Progres
             # no zones and positions shift when it does. The ordinal is
             # stored too -- it is the tree row's own address into the FILE,
             # which is a different number (see resolve_ordinal).
-            db.add_item(cid, item_id, "foreign_preset", entry.display,
-                        native_id=entry.display, format=fmt, ordinal=i)
+            db.add_item(
+                cid,
+                item_id,
+                "foreign_preset",
+                entry.display,
+                native_id=entry.display,
+                format=fmt,
+                ordinal=i,
+            )
     db.finish_container(cid)
 
 
-def _scan_image_container(path: str, volume_cls, size: int, db: IndexDB,
-                           progress: ProgressCB, seen_paths: set) -> None:
+def _scan_image_container(
+    path: str,
+    volume_cls,
+    size: int,
+    db: IndexDB,  # noqa: PLR0917
+    progress: ProgressCB,
+    seen_paths: set,
+) -> None:
     seen_paths.add(path)
     try:
         mtime = Path(path).stat().st_mtime
@@ -353,7 +425,7 @@ def _scan_image_container(path: str, volume_cls, size: int, db: IndexDB,
     db.finish_container(cid)
 
 
-def _container_audio_total(db: IndexDB, container_id: int) -> Optional[int]:
+def _container_audio_total(db: IndexDB, container_id: int) -> Optional[int]:  # noqa: UP045
     """An image's audio: the sum over its BANK rows.
 
     Summed at bank level, never at preset level -- a preset's figure counts a
@@ -364,22 +436,35 @@ def _container_audio_total(db: IndexDB, container_id: int) -> Optional[int]:
     row = db._conn.execute(
         "SELECT SUM(audio_bytes) FROM item "
         "WHERE container_id = ? AND kind = 'bank' AND audio_bytes IS NOT NULL",
-        (container_id,)).fetchone()
+        (container_id,),
+    ).fetchone()
     return row[0] if row and row[0] is not None else None
 
 
-def _scan_vfs_listing(vol, folder_entry, db: IndexDB, container_id: int,
-                       parent_item_id: Optional[int]) -> None:
+def _scan_vfs_listing(
+    vol,
+    folder_entry,
+    db: IndexDB,
+    container_id: int,  # noqa: C901
+    parent_item_id: Optional[int],
+) -> None:  # noqa: UP045
     for ordinal, e in enumerate(vol.list(folder_entry)):
         if e.kind == EntryKind.FOLDER and e.meta.get("akai_volume"):
             # An AKAI volume IS the bank and its programs are the presets --
             # the same shape ui/models.py gives the tree, so a search hit
             # resolves back onto a row that actually exists there.
-            item_id = db.add_item(container_id, parent_item_id, "bank", e.name,
-                                   native_id=e.name, format="AKAI", ordinal=ordinal)
+            item_id = db.add_item(
+                container_id,
+                parent_item_id,
+                "bank",
+                e.name,
+                native_id=e.name,
+                format="AKAI",
+                ordinal=ordinal,
+            )
             try:
                 programs = vol.volume_programs(e)
-            except Exception:
+            except Exception:  # noqa: S112
                 continue
             # Sample sizes come from the DIRECTORY, never from reading the
             # samples. volume_programs() exists precisely to avoid that --
@@ -391,34 +476,79 @@ def _scan_vfs_listing(vol, folder_entry, db: IndexDB, container_id: int,
                 for se in vol.list(e):
                     if se.meta.get("role") == "sample":
                         sample_bytes[Path(se.name).stem.strip().upper()] = max(
-                            0, int(se.size or 0) - _AKAI_SAMPLE_HEADER_BYTES)
+                            0, int(se.size or 0) - _AKAI_SAMPLE_HEADER_BYTES
+                        )
             except Exception:
                 sample_bytes = {}
             for i, prog in enumerate(programs):
-                wanted = {n.strip().upper()
-                          for n in getattr(prog, "sample_names", []) or []}
-                db.add_item(container_id, item_id, "preset",
-                            prog.name.strip() or "(untitled)",
-                            native_id=prog.filename or prog.name,
-                            format="AKAI", ordinal=i,
-                            # Deduped by name already, since `wanted` is a set
-                            # -- two keygroups pointing at one sample cost it
-                            # once, which is what loading the program costs.
-                            audio_bytes=sum(sample_bytes.get(n, 0) for n in wanted)
-                            if sample_bytes else None)
+                wanted = {
+                    n.strip().upper() for n in getattr(prog, "sample_names", []) or []
+                }
+                prog_audio = (
+                    sum(sample_bytes.get(n, 0) for n in wanted)
+                    if sample_bytes
+                    else None
+                )
+                prog_id = db.add_item(
+                    container_id,
+                    item_id,
+                    "preset",
+                    prog.name.strip() or "(untitled)",
+                    native_id=prog.filename or prog.name,
+                    format="AKAI",
+                    ordinal=i,
+                    # Deduped by name already, since `wanted` is a set
+                    # -- two keygroups pointing at one sample cost it
+                    # once, which is what loading the program costs.
+                    audio_bytes=prog_audio,
+                )
+                # ZERO AUDIO WITH SAMPLES NAMED IS NOT "NO SAMPLES".
+                # An AKAI sampler has no ROM, so a program naming samples
+                # this volume does not hold means they are in a companion
+                # volume -- the multi-volume idiom, measured at 35
+                # program-only volumes of 100 on one real disc. Recorded here
+                # rather than guessed from `format` at render time, because a
+                # program that names nothing at all is representable and is a
+                # different fact. models.akai_samples_elsewhere computes the
+                # same thing for a live tree row; this is the same sentence
+                # from the same directory listing, and both say it once.
+                #
+                # WHEN THE VOLUME HAS NO SAMPLES AT ALL, `sample_bytes` is
+                # empty and `prog_audio` is None -- UNKNOWN, not zero. That
+                # is intentional: a volume with no sample files could be a
+                # program-only volume (the multi-volume idiom) or a volume
+                # whose samples failed to read. We cannot tell which without
+                # the parsed bank, so we record nothing rather than guess.
+                # The tree path (models.akai_samples_elsewhere) has the same
+                # limitation and the same honest answer.
+                if prog_audio == 0 and wanted:
+                    db.set_item_note_short(prog_id, "samples on another volume")
             if sample_bytes:
                 db.set_item_audio_bytes(item_id, sum(sample_bytes.values()))
             continue
         if e.kind == EntryKind.FOLDER:
-            item_id = db.add_item(container_id, parent_item_id, "folder", e.name,
-                                   native_id=e.name, ordinal=ordinal)
+            item_id = db.add_item(
+                container_id,
+                parent_item_id,
+                "folder",
+                e.name,
+                native_id=e.name,
+                ordinal=ordinal,
+            )
             _scan_vfs_listing(vol, e, db, container_id, item_id)
         elif e.kind == EntryKind.BANK:
-            item_id = db.add_item(container_id, parent_item_id, "bank", e.name,
-                                   native_id=e.name, size=e.size, ordinal=ordinal)
+            item_id = db.add_item(
+                container_id,
+                parent_item_id,
+                "bank",
+                e.name,
+                native_id=e.name,
+                size=e.size,
+                ordinal=ordinal,
+            )
             try:
                 data = vol.read(e)
-            except Exception:
+            except Exception:  # noqa: S112
                 continue
             fmt, bank = _parse_bank_bytes(data, e.name)
             if bank is not None:
@@ -445,7 +575,7 @@ def _parse_bank_bytes(data: bytes, label: str):
     return "", None
 
 
-def _preset_audio_bytes(bank, obj) -> Optional[int]:
+def _preset_audio_bytes(bank, obj) -> Optional[int]:  # noqa: UP045
     """Loadable audio this ONE preset needs, or None if it cannot be told.
 
     Free here: the bank is already fully parsed (that is what this scan does)
@@ -463,7 +593,7 @@ def _preset_audio_bytes(bank, obj) -> Optional[int]:
         return None
 
 
-def _bank_audio_bytes(bank) -> Optional[int]:
+def _bank_audio_bytes(bank) -> Optional[int]:  # noqa: UP045
     """Loadable audio in the whole bank, DEDUPED -- what loading it costs.
 
     Not the sum of its presets: they share samples, so that sum overstates,
@@ -494,23 +624,49 @@ def _bank_audio_bytes(bank) -> Optional[int]:
         return None
 
 
-def _index_bank_presets(db: IndexDB, container_id: int, parent_item_id: Optional[int],
-                         bank, fmt: str) -> None:
+def _index_bank_presets(
+    db: IndexDB,
+    container_id: int,
+    parent_item_id: Optional[int],  # noqa: UP045
+    bank,
+    fmt: str,
+) -> None:
     if fmt == "E4B":
         for ordinal, p in enumerate(bank.presets):
-            db.add_item(container_id, parent_item_id, "preset", p.name.strip() or "(untitled)",
-                        native_id=str(p.index), format="E4B", ordinal=ordinal,
-                        audio_bytes=_preset_audio_bytes(bank, p))
+            db.add_item(
+                container_id,
+                parent_item_id,
+                "preset",
+                p.name.strip() or "(untitled)",
+                native_id=str(p.index),
+                format="E4B",
+                ordinal=ordinal,
+                audio_bytes=_preset_audio_bytes(bank, p),
+            )
     elif fmt == "KRZ":
         for ordinal, prog in enumerate(bank.programs.values()):
-            db.add_item(container_id, parent_item_id, "preset", prog.name.strip() or "(untitled)",
-                        native_id=str(prog.id), format="KRZ", ordinal=ordinal,
-                        audio_bytes=_preset_audio_bytes(bank, prog))
+            db.add_item(
+                container_id,
+                parent_item_id,
+                "preset",
+                prog.name.strip() or "(untitled)",
+                native_id=str(prog.id),
+                format="KRZ",
+                ordinal=ordinal,
+                audio_bytes=_preset_audio_bytes(bank, prog),
+            )
     elif fmt == "EIII":
         for ordinal, p in enumerate(bank.presets):
-            db.add_item(container_id, parent_item_id, "preset", p.name.strip() or "(untitled)",
-                        native_id=str(p.index), format="EIII", ordinal=ordinal,
-                        audio_bytes=_preset_audio_bytes(bank, p))
+            db.add_item(
+                container_id,
+                parent_item_id,
+                "preset",
+                p.name.strip() or "(untitled)",
+                native_id=str(p.index),
+                format="EIII",
+                ordinal=ordinal,
+                audio_bytes=_preset_audio_bytes(bank, p),
+            )
     if parent_item_id is not None:
         total = _bank_audio_bytes(bank)
         if total is not None:

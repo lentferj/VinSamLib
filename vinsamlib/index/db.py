@@ -63,6 +63,16 @@ CREATE TABLE IF NOT EXISTS item (
     -- a preset's is what that one alone needs (what taking it costs). Same
     -- quantity, different question; they are supposed to differ.
     audio_bytes INTEGER,
+    -- Why this preset has no audio ON THIS VOLUME, where that is not simply
+    -- "none": "samples on another volume" for an AKAI program whose samples
+    -- live in a companion volume. NULL means there is no reason to give.
+    --
+    -- Stored rather than inferred at render time because the answer needs the
+    -- PARSED bank -- which program names a sample the volume does not hold --
+    -- and a search row has none. Inferring it from `format` instead would put
+    -- "samples on another volume" on an AKAI program that simply names no
+    -- samples, which is representable and is a different fact.
+    note_short TEXT,
     ordinal INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS item_container_idx ON item(container_id);
@@ -89,7 +99,7 @@ END;
 class ItemChainEntry:
     kind: str
     name: str
-    native_id: Optional[str]
+    native_id: Optional[str]  # noqa: UP045
 
 
 @dataclass
@@ -99,13 +109,21 @@ class SearchResult:
     name: str
     format: str
     container_path: str
-    chain: list[ItemChainEntry]   # root -> ... -> this item (exclusive of the container itself)
+    chain: list[
+        ItemChainEntry
+    ]  # root -> ... -> this item (exclusive of the container itself)
     #: The two figures, carried so a search row can say what a tree row says.
     #: `size` is bytes on the media; `audio_bytes` is loadable audio, and NULL
     #: means "not measured", which is a third state and not zero. See
     #: `ui.models.size_suffix`, which is the single renderer of both.
-    size: Optional[int] = None
-    audio_bytes: Optional[int] = None
+    size: Optional[int] = None  # noqa: UP045
+    audio_bytes: Optional[int] = None  # noqa: UP045
+    #: Why this row has no audio on this volume, where that is not simply
+    #: "none" -- see the column comment in the `item` table. Rendered by the
+    #: same `ui.models.size_suffix` the tree row uses, which is the point: a
+    #: hit that said "no audio" where the tree said "samples on another
+    #: volume" was this branch's defect showing up in a second window.
+    note_short: str = ""
 
 
 @dataclass
@@ -116,9 +134,9 @@ class SearchPage:
     The alternative -- showing 200 rows and letting the user conclude the rest
     do not exist -- is how "Sync" lost a file that "Synco" had found.
     """
+
     hits: list[SearchResult]
     total: int
-    limit: int
 
     @property
     def truncated(self) -> bool:
@@ -131,7 +149,8 @@ class IndexDB:
         # only place that knows which file is actually about to be written.
         # A caller can assemble this path any way it likes; it still has to
         # come through here.
-        from ..config import home_data_dir, require_real_state_opt_in
+        from ..config import home_data_dir, require_real_state_opt_in  # noqa: PLC0415
+
         try:
             same = Path(path).resolve() == (home_data_dir() / "index.db").resolve()
         except OSError:
@@ -157,7 +176,7 @@ class IndexDB:
         # scratch. Nothing here is a source of truth.
         self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.executescript(SCHEMA)
-        self._migrate()
+        self.migrated = self._migrate()
         self._conn.commit()
 
     #: Bumped whenever a scan would now record something it did not before.
@@ -174,22 +193,26 @@ class IndexDB:
     #: header bytes, ~90 each, so a 1.4 MB bank was indexed as 21 KB. Those
     #: rows are structurally current and numerically wrong, which
     #: needs_rescan() cannot see -- nothing about the files changed.
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
-    def _migrate(self) -> None:
+    def _migrate(self) -> bool:
         """Add columns an older file lacks, and empty it if it predates them.
 
         `CREATE TABLE IF NOT EXISTS` does nothing to a table that already
         exists, so a new column has to be added by hand -- silently, since a
         file created by this version already has it.
+
+        Returns True if the index was emptied (schema bump), so the caller
+        can tell the user their library is being rebuilt.
         """
-        for table, column, decl in (("container", "audio_bytes", "INTEGER"),
-                                     ("item", "audio_bytes", "INTEGER")):
-            cols = {r[1] for r in self._conn.execute(
-                f"PRAGMA table_info({table})")}
+        for table, column, decl in (
+            ("container", "audio_bytes", "INTEGER"),
+            ("item", "audio_bytes", "INTEGER"),
+            ("item", "note_short", "TEXT"),
+        ):
+            cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if column not in cols:
-                self._conn.execute(
-                    f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
         have = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if have < self.SCHEMA_VERSION:
             # Everything scanned before this version has NULL audio_bytes and
@@ -199,6 +222,8 @@ class IndexDB:
             # the next scan repopulate.
             self._conn.execute("DELETE FROM container")
             self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
+            return True
+        return False
 
     def close(self) -> None:
         self._conn.close()
@@ -207,12 +232,15 @@ class IndexDB:
 
     def needs_rescan(self, path: str, size: int, mtime: float) -> bool:
         row = self._conn.execute(
-            "SELECT size, mtime FROM container WHERE path = ?", (path,)).fetchone()
+            "SELECT size, mtime FROM container WHERE path = ?", (path,)
+        ).fetchone()
         if row is None:
             return True
         return row[0] != size or row[1] != mtime
 
-    def begin_container(self, path: str, kind: str, format: str, size: int, mtime: float) -> int:
+    def begin_container(
+        self, path: str, kind: str, format: str, size: int, mtime: float
+    ) -> int:
         """(Re)register a container and wipe its previous items — the
         scanner rebuilds them fresh on every rescan rather than diffing."""
         cur = self._conn.execute(
@@ -220,22 +248,45 @@ class IndexDB:
             "VALUES (?, ?, ?, ?, ?, NULL, NULL) "
             "ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, format=excluded.format, "
             "size=excluded.size, mtime=excluded.mtime, scanned_at=NULL, error=NULL",
-            (path, kind, format, size, mtime))
-        container_id = cur.lastrowid or self._conn.execute(
-            "SELECT id FROM container WHERE path = ?", (path,)).fetchone()[0]
+            (path, kind, format, size, mtime),
+        )
+        container_id = (
+            cur.lastrowid
+            or self._conn.execute(
+                "SELECT id FROM container WHERE path = ?", (path,)
+            ).fetchone()[0]
+        )
         self._conn.execute("DELETE FROM item WHERE container_id = ?", (container_id,))
         return container_id
 
-    def add_item(self, container_id: int, parent_id: Optional[int], kind: str,
-                 name: str, native_id: Optional[str] = None, format: str = "",
-                 size: int = 0, ordinal: int = 0,
-                 audio_bytes: Optional[int] = None) -> int:
+    def add_item(
+        self,
+        container_id: int,
+        parent_id: Optional[int],
+        kind: str,  # noqa: PLR0917, UP045
+        name: str,
+        native_id: Optional[str] = None,
+        format: str = "",  # noqa: UP045
+        size: int = 0,
+        ordinal: int = 0,
+        audio_bytes: Optional[int] = None,
+    ) -> int:  # noqa: UP045
         cur = self._conn.execute(
             "INSERT INTO item(container_id, parent_id, kind, name, native_id, format, "
             "size, ordinal, audio_bytes) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (container_id, parent_id, kind, name, native_id, format, size, ordinal,
-             audio_bytes))
+            (
+                container_id,
+                parent_id,
+                kind,
+                name,
+                native_id,
+                format,
+                size,
+                ordinal,
+                audio_bytes,
+            ),
+        )
         return cur.lastrowid
 
     def set_item_audio_bytes(self, item_id: int, audio_bytes: int) -> None:
@@ -245,17 +296,35 @@ class IndexDB:
         and the row has to exist first to be their parent -- so it is written
         in two steps rather than held back until the end.
         """
-        self._conn.execute("UPDATE item SET audio_bytes = ? WHERE id = ?",
-                            (audio_bytes, item_id))
+        self._conn.execute(
+            "UPDATE item SET audio_bytes = ? WHERE id = ?", (audio_bytes, item_id)
+        )
+
+    def set_item_note_short(self, item_id: int, note_short: str) -> None:
+        """Record WHY this row has no audio on this volume, when it has a reason.
+
+        "" for the overwhelming majority of rows, and the UPDATE is skipped
+        rather than written -- a scan creates tens of thousands of preset rows
+        and almost none of them have anything to say.
+        """
+        if not note_short:
+            return
+        self._conn.execute(
+            "UPDATE item SET note_short = ? WHERE id = ?", (note_short, item_id)
+        )
 
     def set_container_audio_bytes(self, container_id: int, audio_bytes: int) -> None:
         """The container's own deduped audio total, for the tree's row."""
-        self._conn.execute("UPDATE container SET audio_bytes = ? WHERE id = ?",
-                            (audio_bytes, container_id))
+        self._conn.execute(
+            "UPDATE container SET audio_bytes = ? WHERE id = ?",
+            (audio_bytes, container_id),
+        )
 
-    def finish_container(self, container_id: int, error: Optional[str] = None) -> None:
-        self._conn.execute("UPDATE container SET scanned_at = ?, error = ? WHERE id = ?",
-                            (time.time(), error, container_id))
+    def finish_container(self, container_id: int, error: Optional[str] = None) -> None:  # noqa: UP045
+        self._conn.execute(
+            "UPDATE container SET scanned_at = ?, error = ? WHERE id = ?",
+            (time.time(), error, container_id),
+        )
         self._conn.commit()
 
     def forget_container(self, path: str) -> None:
@@ -272,8 +341,8 @@ class IndexDB:
         (e.g. removing "/libs/foo" must not also purge "/libs/foobar")."""
         prefix = root.rstrip("/") + "/"
         self._conn.execute(
-            "DELETE FROM container WHERE path = ? OR path LIKE ?",
-            (root, prefix + "%"))
+            "DELETE FROM container WHERE path = ? OR path LIKE ?", (root, prefix + "%")
+        )
         self._conn.commit()
 
     def all_container_paths(self) -> list[str]:
@@ -300,17 +369,19 @@ class IndexDB:
         # Chunked: SQLite's default parameter ceiling is 999, and a library
         # folder holding more banks than that is an ordinary thing here.
         for i in range(0, len(paths), 500):
-            chunk = paths[i:i + 500]
+            chunk = paths[i : i + 500]
             marks = ",".join("?" * len(chunk))
             for path, total in self._conn.execute(
-                    f"SELECT path, audio_bytes FROM container "
-                    f"WHERE path IN ({marks}) AND audio_bytes IS NOT NULL",
-                    chunk):
+                f"SELECT path, audio_bytes FROM container "  # noqa: S608
+                f"WHERE path IN ({marks}) AND audio_bytes IS NOT NULL",
+                chunk,
+            ):
                 out[path] = total
         return out
 
-    def audio_bytes_for_items(self, container_path: str,
-                              names: list[str]) -> dict[str, int]:
+    def audio_bytes_for_items(
+        self, container_path: str, names: list[str]
+    ) -> dict[str, int]:
         """Recorded totals for rows INSIDE a container, keyed by native id.
 
         A bank on a disc image is not a container of its own -- the image is
@@ -322,23 +393,26 @@ class IndexDB:
         if not names:
             return {}
         row = self._conn.execute(
-            "SELECT id FROM container WHERE path = ?", (container_path,)).fetchone()
+            "SELECT id FROM container WHERE path = ?", (container_path,)
+        ).fetchone()
         if row is None:
             return {}
         out: dict[str, int] = {}
         for i in range(0, len(names), 500):
-            chunk = names[i:i + 500]
+            chunk = names[i : i + 500]
             marks = ",".join("?" * len(chunk))
             for native_id, total in self._conn.execute(
-                    f"SELECT native_id, audio_bytes FROM item "
-                    f"WHERE container_id = ? AND native_id IN ({marks}) "
-                    f"AND audio_bytes IS NOT NULL",
-                    [row[0]] + chunk):
+                f"SELECT native_id, audio_bytes FROM item "  # noqa: S608
+                f"WHERE container_id = ? AND native_id IN ({marks}) "
+                f"AND audio_bytes IS NOT NULL",
+                [row[0]] + chunk,
+            ):  # noqa: RUF005
                 out[native_id] = total
         return out
 
-    def set_item_audio_by_name(self, container_path: str,
-                               sizes: dict[str, int]) -> None:
+    def set_item_audio_by_name(
+        self, container_path: str, sizes: dict[str, int]
+    ) -> None:
         """Record per-row audio totals worked out after the scan.
 
         For SF2 and GIG, whose per-preset figure is only knowable by reading
@@ -347,24 +421,42 @@ class IndexDB:
         session, reads it back like every other row.
         """
         row = self._conn.execute(
-            "SELECT id FROM container WHERE path = ?", (container_path,)).fetchone()
+            "SELECT id FROM container WHERE path = ?", (container_path,)
+        ).fetchone()
         if row is None:
             return
         self._conn.executemany(
             "UPDATE item SET audio_bytes = ? WHERE container_id = ? AND name = ?",
-            [(v, row[0], k) for k, v in sizes.items()])
+            [(v, row[0], k) for k, v in sizes.items()],
+        )
         self._conn.commit()
 
     def set_container_audio_by_path(self, path: str, audio_bytes: int) -> None:
         """The container's own total, recorded after the fact -- see
         set_item_audio_by_name for why this cannot happen during the scan."""
         self._conn.execute(
-            "UPDATE container SET audio_bytes = ? WHERE path = ?",
-            (audio_bytes, path))
+            "UPDATE container SET audio_bytes = ? WHERE path = ?", (audio_bytes, path)
+        )
         self._conn.commit()
 
-    def search(self, query: str, limit: int = 200,
-               formats: Optional[list[str]] = None) -> list[SearchResult]:
+    def _where(self, fts_query: str, formats: Optional[list[str]]):  # noqa: UP045
+        """The MATCH plus the format restriction, with its parameters.
+
+        ONE copy, because there are now two queries that need both -- the
+        page and its count -- and a second copy of a filter is how the KRZ
+        format list in `pending_pane.py` went stale and dropped a format
+        nobody noticed until a bank would not build.
+        """
+        where = " WHERE item_fts MATCH ?"
+        params: list = [fts_query]
+        if formats:
+            where += f" AND item.format IN ({','.join('?' * len(formats))})"
+            params.extend(formats)
+        return where, params
+
+    def search(
+        self, query: str, limit: int = 1000, formats: Optional[list[str]] = None
+    ) -> list[SearchResult]:  # noqa: UP045
         """Ranked FTS hits, optionally restricted to a set of formats.
 
         `formats` IS APPLIED IN THE QUERY, and that is the whole point of it
@@ -373,21 +465,38 @@ class IndexDB:
         library of 90 000 items returned 200 hits with not one MPC program
         among them, so the MPC filter showed "No matches" while 49 real ones
         sat further down the ranking.
+
+        THE LIMIT IS NOT A SILENT ONE, which is the same disease one level
+        further on. Jan, 2026-10-02: searching "Synco" returned his file and
+        searching "Sync" did not -- a SHORTER query lost a result a longer one
+        had. Not a matcher bug: both are prefix matches on the same token. The
+        file sat at rank 404 of 488, and 200 was the cut.
+
+        MEASURED on this library (99 251 items, 8 167 containers), which is
+        why the default moved from 200 to 1000:
+
+            "s" 28 382      "sy" 6 283      "syn" 5 552
+            "sync"  488     "synco" 11
+
+        A cap is still needed -- one character really does match 28 000 rows --
+        but 200 was below the answer set of an ordinary four-character query,
+        and truncating without saying so is what made the result look broken
+        rather than truncated. Callers should pair this with `count()` and say
+        so; `SearchPage` is what does.
         """
         query = query.strip()
         if not query:
             return []
         fts_query = _fts_query(query)
-        sql = ("SELECT item.id, item.kind, item.name, item.format, container.path, "
-               "item.size, item.audio_bytes "
-               "FROM item_fts JOIN item ON item.id = item_fts.rowid "
-               "JOIN container ON container.id = item.container_id "
-               "WHERE item_fts MATCH ?")
-        params: list = [fts_query]
-        if formats:
-            sql += f" AND item.format IN ({','.join('?' * len(formats))})"
-            params.extend(formats)
-        sql += " ORDER BY rank LIMIT ?"
+        where, params = self._where(fts_query, formats)
+        sql = (
+            "SELECT item.id, item.kind, item.name, item.format, container.path, "
+            "item.size, item.audio_bytes, item.note_short "
+            "FROM item_fts JOIN item ON item.id = item_fts.rowid "
+            "JOIN container ON container.id = item.container_id"
+            + where
+            + " ORDER BY rank LIMIT ?"
+        )
         params.append(limit)
         try:
             rows = self._conn.execute(sql, params).fetchall()
@@ -397,12 +506,65 @@ class IndexDB:
             # results for one keystroke than to crash the search box.
             return []
         out = []
-        for (item_id, kind, name, fmt, container_path,
-             size, audio_bytes) in rows:
-            out.append(SearchResult(item_id=item_id, kind=kind, name=name, format=fmt or "",
-                                    container_path=container_path, chain=self._chain_for(item_id),
-                                    size=size, audio_bytes=audio_bytes))
+        for (
+            item_id,
+            kind,
+            name,
+            fmt,
+            container_path,
+            size,
+            audio_bytes,
+            note_short,
+        ) in rows:
+            out.append(
+                SearchResult(
+                    item_id=item_id,
+                    kind=kind,
+                    name=name,
+                    format=fmt or "",
+                    container_path=container_path,
+                    chain=self._chain_for(item_id),
+                    size=size,
+                    audio_bytes=audio_bytes,
+                    note_short=note_short or "",
+                )
+            )
         return out
+
+    def count(self, query: str, formats: Optional[list[str]] = None) -> int:  # noqa: UP045
+        """How many rows `search()` WOULD match, ignoring its limit.
+
+        The honest denominator for a truncated result. "No matches" while 288
+        real ones sat below the cut is the failure this exists to prevent, and
+        it is the same shape as the format-filter bug above: the limit is spent
+        on rows the caller is about to discover it cannot show.
+
+        A second query rather than a window function on the first, because
+        `search()`'s return type is a plain list that seven tests iterate, and
+        changing it to carry a total would have churned all of them for no
+        gain. COUNT over an FTS match on a local file is cheap enough to run
+        per keystroke, and the search box is debounced.
+        """
+        query = query.strip()
+        if not query:
+            return 0
+        where, params = self._where(_fts_query(query), formats)
+        sql = (
+            "SELECT COUNT(*) FROM item_fts JOIN item ON item.id = item_fts.rowid"  # noqa: S608
+            + where
+        )
+        try:
+            return int(self._conn.execute(sql, params).fetchone()[0])
+        except sqlite3.OperationalError:
+            return 0
+
+    def search_page(
+        self, query: str, limit: int = 1000, formats: Optional[list[str]] = None
+    ) -> "SearchPage":  # noqa: UP037, UP045
+        """`search()` plus the true total, so the UI never has to guess."""
+        hits = self.search(query, limit=limit, formats=formats)
+        total = self.count(query, formats=formats)
+        return SearchPage(hits=hits, total=max(total, len(hits)))
 
     def _chain_for(self, item_id: int) -> list[ItemChainEntry]:
         chain: list[ItemChainEntry] = []
@@ -410,7 +572,8 @@ class IndexDB:
         while current is not None:
             row = self._conn.execute(
                 "SELECT kind, name, native_id, parent_id FROM item WHERE id = ?",
-                (current,)).fetchone()
+                (current,),
+            ).fetchone()
             if row is None:
                 break
             kind, name, native_id, parent_id = row

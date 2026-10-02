@@ -218,8 +218,9 @@ class ExplorerPane(QWidget):
         # Restricted in the QUERY, not afterwards: the limit must be spent on
         # rows that can survive the filter, or a format with fewer or
         # lower-ranked matches reads as "No matches" on a big library.
-        hits = self._index_db.search(
+        page = self._index_db.search_page(
             text, formats=models.formats_for_filter(format_filter))
+        hits = page.hits
         if format_filter is not None:
             # Non-bank hits (folders, presets/programs) carry the format of
             # the bank they belong to (see index/scanner.py), so filtering
@@ -235,6 +236,16 @@ class ExplorerPane(QWidget):
             item = QListWidgetItem(_format_hit(hit))
             item.setData(Qt.ItemDataRole.UserRole, hit)
             self._results.addItem(item)
+        # SAY SO WHEN THE LIST IS CUT. Silently showing the first N and letting
+        # the user conclude the rest do not exist is what made "Sync" look like
+        # it had lost a file "Synco" had found -- the file was at rank 404 of
+        # 488, below a limit nobody was told about.
+        if page.truncated:
+            more = QListWidgetItem(
+                f"Showing {len(hits)} of {page.total} matches — keep typing "
+                f"to narrow the search.")
+            more.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._results.addItem(more)
 
     # -- selection plumbing -----------------------------------------------------
 
@@ -644,6 +655,12 @@ def _format_hit(hit: SearchResult) -> str:
     label = " ".join(bits)
     if hit.format:
         label += f"  [{hit.format}]"
+    # The SAME size the tree row shows, from the same helper, because the
+    # browser and the search box were describing one row differently: the tree
+    # said "1.5 MB audio" and this said nothing at all. Jan, 2026-10-02. Not a
+    # `note_short`, which needs a parsed bank a search row does not have -- so
+    # it says the true generic thing rather than inventing a reason.
+    label += models.size_suffix(hit.size, hit.audio_bytes)
     from pathlib import Path
     container_name = Path(hit.container_path).name
     ancestry = " ▸ ".join(c.name for c in hit.chain[:-1])
@@ -655,12 +672,6 @@ def _node_format(node: TreeNode) -> str:
     """The format a preset row would be added as.
 
     Read off the PARENT bank row, which is the only node that carries it --
-    # The SAME size the tree row shows, from the same helper, because the
-    # browser and the search box were describing one row differently: the tree
-    # said "1.5 MB audio" and this said nothing at all. Jan, 2026-10-02. Not a
-    # `note_short`, which needs a parsed bank a search row does not have -- so
-    # it says the true generic thing rather than inventing a reason.
-    label += models.size_suffix(hit.size, hit.audio_bytes)
     a preset's own format_label is empty. Same rule MainWindow's
     _add_node_to_bank() uses to build the items, so the menu cannot offer
     something the add would then classify differently.

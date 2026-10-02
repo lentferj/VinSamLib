@@ -30,3 +30,4 @@ tests/
 *.ISO
 *.img
 *.hda
+.coverage

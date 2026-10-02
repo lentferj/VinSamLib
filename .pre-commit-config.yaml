@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+      - id: mypy
+        args: [
+          --ignore-missing-imports,
+          --disable-error-code=union-attr,
+          --disable-error-code=assignment,
+          --disable-error-code=attr-defined,
+          --disable-error-code=arg-type,
+          --disable-error-code=override,
+          --disable-error-code=annotation-unchecked,
+          --disable-error-code=var-annotated,
+          --disable-error-code=valid-type,
+          --disable-error-code=operator,
+          --disable-error-code=misc,
+          --disable-error-code=call-overload,
+          --disable-error-code=return-value,
+          --disable-error-code=func-returns-value,
+          --disable-error-code=call-arg,
+          --disable-error-code=no-redef,
+          --disable-error-code=index,
+          --disable-error-code=name-defined,
+        ]
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]

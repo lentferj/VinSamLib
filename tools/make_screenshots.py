@@ -56,8 +56,13 @@ RATE = 44100
 
 #: (filename stem, MIDI note). Five zones, matching what the old shot showed,
 #: and named so the importer's own key parser places them.
-TONES = [("DemoSample-C2", 36), ("DemoSample-E2", 40), ("DemoSample-G2", 43),
-         ("DemoSample-C3", 48), ("DemoSample-E3", 52)]
+TONES = [
+    ("DemoSample-C2", 36),
+    ("DemoSample-E2", 40),
+    ("DemoSample-G2", 43),
+    ("DemoSample-C3", 48),
+    ("DemoSample-E3", 52),
+]
 
 
 def _sine(path: Path, midi: int, ms: int = 300) -> None:
@@ -68,8 +73,9 @@ def _sine(path: Path, midi: int, ms: int = 300) -> None:
         # A short fade at both ends, so trim/loop heuristics see something
         # musical rather than a click.
         env = min(1.0, i / 400.0, (n - i) / 400.0)
-        frames += struct.pack("<h", int(12000 * env * math.sin(
-            2 * math.pi * freq * i / RATE)))
+        frames += struct.pack(
+            "<h", int(12000 * env * math.sin(2 * math.pi * freq * i / RATE))
+        )
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -90,20 +96,26 @@ def _build_library() -> None:
         _sine(src / f"{stem}.wav", midi)
 
     opts = ConversionOptions(target_format="E4B")
-    out = import_sample_dir(str(src), opts, octave_offset=2,
-                            bank_name="Demo Multisample",
-                            # with_key OFF for E4B: its writer already
-                            # appends `_<note><octave>` of its own, so leaving
-                            # it on produced "DemoSample-C2_C2".
-                            name_base="DemoSample", name_with_key=False)
+    out = import_sample_dir(
+        str(src),
+        opts,
+        octave_offset=2,
+        bank_name="Demo Multisample",
+        # with_key OFF for E4B: its writer already
+        # appends `_<note><octave>` of its own, so leaving
+        # it on produced "DemoSample-C2_C2".
+        name_base="DemoSample",
+        name_with_key=False,
+    )
     shutil.copy(out, DEMO_LIB / "DemoBank.e4b")
 
     for label, (stem, midi) in zip(("Demo Tone A", "Demo Tone B"), TONES[:2]):
         one = SCRATCH / label
         one.mkdir(parents=True, exist_ok=True)
         _sine(one / f"{stem}.wav", midi)
-        out = import_sample_dir(str(one), opts, octave_offset=2,
-                                bank_name=label, name_base="DemoSample")
+        out = import_sample_dir(
+            str(one), opts, octave_offset=2, bank_name=label, name_base="DemoSample"
+        )
         shutil.copy(out, DEMO_LIB / f"{label.replace(' ', '')}.e4b")
 
 
@@ -121,9 +133,11 @@ def _isolate() -> None:
 
     def _refuse(self, *a, **k):
         raise AssertionError("Config.save() during a screenshot run")
-    cfg.Config.save = _refuse          # load() still works; only writes die
+
+    cfg.Config.save = _refuse  # load() still works; only writes die
 
     from vinsamlib.ui import main_window as mw
+
     mw.user_data_dir = lambda: data
     assert mw.user_data_dir() != real_home, "data dir was not redirected"
     print(f"  isolated: index db -> {data}")
@@ -144,11 +158,36 @@ def _isolate() -> None:
     real_exec = QMessageBox.exec
 
     def _auto(self, *a, **k):
-        print(f"  [auto-dismissed modal] {self.windowTitle()!r}: "
-              f"{self.text().splitlines()[0][:90] if self.text() else ''}")
+        print(
+            f"  [auto-dismissed modal] {self.windowTitle()!r}: "
+            f"{self.text().splitlines()[0][:90] if self.text() else ''}"
+        )
         return QMessageBox.StandardButton.Yes.value
+
     QMessageBox.exec = _auto
     globals()["_REAL_QMESSAGEBOX_EXEC"] = real_exec
+
+
+def _restore_modals() -> None:
+    """Put `QMessageBox.exec` back.
+
+    THE STUB IS GLOBAL AND STAYS PUT. It replaces the class attribute, so
+    every dialog raised after it -- including any real one -- answers "Yes"
+    silently and prints a line about a screenshot. That is harmless for a tool
+    whose whole job is to take pictures and exit. It is not harmless for
+    anything else in the process, and the previous version stashed the real
+    method in `globals()` where nothing read it, which is the worst of both:
+    it looked like it could be undone and could not.
+
+    Called from the shots loop's `finally`, so a crash mid-run does not leave
+    the stub installed either.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    real_exec = globals().get("_REAL_QMESSAGEBOX_EXEC")
+    if real_exec is not None:
+        QMessageBox.exec = real_exec
+        globals().pop("_REAL_QMESSAGEBOX_EXEC", None)
 
 
 def _window():
@@ -175,7 +214,8 @@ def _window():
 def _settle(app, ms: int = 1500) -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
     try:
-        from _qtest_shim import qwait          # never QTest.qWait -- segfaults
+        from _qtest_shim import qwait  # never QTest.qWait -- segfaults
+
         qwait(ms)
     except Exception:
         for _ in range(40):
@@ -186,7 +226,9 @@ def _grab(widget, name: str) -> None:
     SHOTS.mkdir(parents=True, exist_ok=True)
     path = SHOTS / f"{name}.png"
     widget.grab().save(str(path))
-    print(f"  wrote {path.relative_to(Path.cwd()) if str(path).startswith(str(Path.cwd())) else path}")
+    print(
+        f"  wrote {path.relative_to(Path.cwd()) if str(path).startswith(str(Path.cwd())) else path}"
+    )
 
 
 def _stage(win) -> None:
@@ -201,9 +243,11 @@ def _stage(win) -> None:
     if pane._items:
         return
     items = []
-    for fname, label in (("DemoBank.e4b", "Demo Multisample"),
-                         ("DemoToneA.e4b", "Demo Tone A"),
-                         ("DemoToneB.e4b", "Demo Tone B")):
+    for fname, label in (
+        ("DemoBank.e4b", "Demo Multisample"),
+        ("DemoToneA.e4b", "Demo Tone A"),
+        ("DemoToneB.e4b", "Demo Tone B"),
+    ):
         path = DEMO_LIB / fname
         bank = e4b.parse_bytes(path.read_bytes(), path.name)
         items.append((bank, bank.presets[0], "E4B", label))
@@ -240,7 +284,8 @@ def shot_new_bank(app, win) -> None:
     # pane listens to selectionChanged, and a current index without a
     # selection leaves it reading "Nothing selected."
     tree.selectionModel().setCurrentIndex(
-        leaf, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        leaf, QItemSelectionModel.SelectionFlag.ClearAndSelect
+    )
     _settle(app)
     _grab(win, "02_new_bank")
 
@@ -259,8 +304,9 @@ def shot_placement(app, win) -> None:
     # show_velocity matches what New Bank opens; the import dialog's own shot
     # (09_sample_placement) deliberately stays without the columns, because
     # that path has no velocity to carry.
-    dialog = SamplePlacementDialog(rows, octave_offset=_RENAME_OCTAVE,
-                                    show_velocity=True)
+    dialog = SamplePlacementDialog(
+        rows, octave_offset=_RENAME_OCTAVE, show_velocity=True
+    )
     dialog.resize(880, 560)
     dialog.show()
     _settle(app)
@@ -302,6 +348,7 @@ def shot_sample_placement(app, win) -> None:
     def _capture(self, *a, **k):
         captured.append(self)
         return QDialog.DialogCode.Rejected
+
     SamplePlacementDialog.exec = _capture
 
     outer = None
@@ -312,8 +359,10 @@ def shot_sample_placement(app, win) -> None:
             # The same call `MainWindow._start_sample_import` makes, so the
             # rows, the octave and the velocity decision are the product's.
             placement_loader=lambda octave: sampledir_import.parse_preview(
-                str(src), octave),
-            source_text=f"{len(TONES)} file(s) from Demo Multisample")
+                str(src), octave
+            ),
+            source_text=f"{len(TONES)} file(s) from Demo Multisample",
+        )
         outer._on_adjust_placement_clicked()
         if not captured:
             print("  SKIPPED 09_sample_placement: the handler opened no dialog")
@@ -371,8 +420,7 @@ def shot_favourites(app, win) -> None:
     # commercial CD content, and a screenshot is a tracked file.
     names = [f"Demo Patch {i:02d}" for i in range(40)]
     dialog = FavouritesDialog("DemoBank [E4B]", "E4B", names)
-    dialog._text.setPlainText(
-        "DemoBank 128\nP002\nP005\nP008\nP013\nP021\nP034")
+    dialog._text.setPlainText("DemoBank 128\nP002\nP005\nP008\nP013\nP021\nP034")
     dialog.resize(660, 540)
     dialog.show()
     _settle(app)
@@ -390,6 +438,7 @@ def shot_settings(app, win) -> None:
     is NEVER saved (see the guard in this file's _no_save).
     """
     from vinsamlib.ui.settings_dialog import SettingsDialog
+
     dlg = SettingsDialog(win._config)
     dlg.resize(560, dlg.sizeHint().height())
     _settle(app)
@@ -409,15 +458,18 @@ def shot_settings_audition(app, win) -> None:
     from PySide6.QtWidgets import QScrollArea
     from vinsamlib.config import Config
     from vinsamlib.ui.settings_dialog import SettingsDialog
+
     # The picture must agree with the README, which quotes the DEFAULT note
     # list and hold; the demo config carries whatever this machine had.
     defaults = Config()
-    cfg = replace(win._config,
-                  audition_notes=defaults.audition_notes,
-                  audition_velocity=defaults.audition_velocity,
-                  audition_hold_seconds=defaults.audition_hold_seconds,
-                  audition_gap_seconds=defaults.audition_gap_seconds,
-                  audition_volume=defaults.audition_volume)
+    cfg = replace(
+        win._config,
+        audition_notes=defaults.audition_notes,
+        audition_velocity=defaults.audition_velocity,
+        audition_hold_seconds=defaults.audition_hold_seconds,
+        audition_gap_seconds=defaults.audition_gap_seconds,
+        audition_volume=defaults.audition_volume,
+    )
     dlg = SettingsDialog(cfg)
     dlg.resize(560, dlg.sizeHint().height())
     dlg.show()
@@ -450,8 +502,10 @@ def shot_akai_partitions(app, win) -> None:
     names = ["KIT 01", "KIT 02", "PAD 01", "PAD 02", "FX 01", "FX 02"]
     pane = PendingBanksPane()
     pane._format = "AKAI"
-    pane._pending = [{"name": n, "format": "AKAI", "items": [None, None],
-                      "convert_opts": None} for n in names]
+    pane._pending = [
+        {"name": n, "format": "AKAI", "items": [None, None], "convert_opts": None}
+        for n in names
+    ]
     pane._partition_breaks = {2, 4}
     pane._refresh()
     # Tall enough for all six rows: the point of the shot is THREE partition
@@ -474,9 +528,12 @@ def shot_akai_partitions(app, win) -> None:
         for i in range(2):
             (d / f"{n.replace(' ', '')}{i}.S3").write_bytes(b"\0" * 1024 * 1024)
         folders.append(str(d))
-    dlg = _NewImageDialog(config=win._config, seed_paths=folders,
-                          seed_format="AKAI",
-                          seed_partitions=[[0, 1], [2, 3], [4, 5]])
+    dlg = _NewImageDialog(
+        config=win._config,
+        seed_paths=folders,
+        seed_format="AKAI",
+        seed_partitions=[[0, 1], [2, 3], [4, 5]],
+    )
     for i in range(dlg._kind_box.count()):
         if dlg._kind_box.itemData(i) == "akai_hd":
             dlg._kind_box.setCurrentIndex(i)
@@ -508,8 +565,12 @@ def shot_convert_options(app, win) -> None:
     dlg._format_box.setCurrentText("KRZ")
     # Expanded, because a screenshot of collapsed group headers shows the
     # feature list and none of the content the README text is explaining.
-    for name in ("_trim_start_group", "_pan_law_group", "_resample_group",
-                 "_key_zone_group"):
+    for name in (
+        "_trim_start_group",
+        "_pan_law_group",
+        "_resample_group",
+        "_key_zone_group",
+    ):
         group = getattr(dlg, name, None)
         if group is not None:
             group.setChecked(True)
@@ -519,14 +580,16 @@ def shot_convert_options(app, win) -> None:
     dlg.deleteLater()
 
 
-ALL = {"02_new_bank": shot_new_bank,
-       "05_convert_options": shot_convert_options,
-       "06_settings": shot_settings,
-       "06b_settings_audition": shot_settings_audition,
-       "09_sample_placement": shot_sample_placement,
-       "12_bank_placement": shot_placement,
-       "13_favourites": shot_favourites,
-       "14_akai_partitions": shot_akai_partitions}
+ALL = {
+    "02_new_bank": shot_new_bank,
+    "05_convert_options": shot_convert_options,
+    "06_settings": shot_settings,
+    "06b_settings_audition": shot_settings_audition,
+    "09_sample_placement": shot_sample_placement,
+    "12_bank_placement": shot_placement,
+    "13_favourites": shot_favourites,
+    "14_akai_partitions": shot_akai_partitions,
+}
 
 
 def main(argv: list[str]) -> int:
@@ -539,17 +602,22 @@ def main(argv: list[str]) -> int:
     # the work area, and wiping it afterwards deletes that out from under it.
     shutil.rmtree(SCRATCH, ignore_errors=True)
     shutil.rmtree(DEMO_LIB, ignore_errors=True)
+    # `_isolate` installs a global `QMessageBox.exec` stub, and a crash between
+    # installing it and the old `try` left it installed for the rest of the
+    # process with nothing here able to put it back. So the stub goes in first,
+    # and the `finally` below is the one place that puts it back.
     _isolate()
-    print("  building the demo library…")
-    _build_library()
-    app, win = _window()
     try:
+        print("  building the demo library…")
+        _build_library()
+        app, win = _window()
         for name in wanted:
             # New Bank has to be staged before the placement dialog can show
             # anything, so 02 always runs first when both were asked for.
             ALL[name](app, win)
-    finally:
         win.close()
+    finally:
+        _restore_modals()
         shutil.rmtree(SCRATCH, ignore_errors=True)
         shutil.rmtree(DEMO_LIB, ignore_errors=True)
     print("done")
