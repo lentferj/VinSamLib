@@ -268,6 +268,100 @@ def shot_placement(app, win) -> None:
     dialog.close()
 
 
+def shot_sample_placement(app, win) -> None:
+    """09_sample_placement -- Adjust Sample Placement inside a folder import.
+
+    THE HANDLER IS DRIVEN, not re-implemented. This shot had no recipe at all
+    -- it was taken by hand, which is the drift this file exists to stop, and
+    `shot_placement`'s own comment refers to it by name as if a recipe existed.
+    Building the dialog by hand here would have reproduced exactly the fault
+    the generator documents: a picture that can drift from the code it shows.
+    So `_on_adjust_placement_clicked()` runs for real, against the demo folder
+    the import would actually read, and `exec()` is captured rather than
+    blocked -- same reason as the QMessageBox stub.
+
+    `show_velocity` is NOT set: the handler decides it, from whether the
+    folder has velocity layers. The demo tones are single-layer, so the
+    columns are absent, which is what this shot is meant to show -- the plain
+    Sample/Low/Root/High matrix before any velocity work existed.
+    """
+    from PySide6.QtWidgets import QDialog
+
+    from vinsamlib.build import sampledir_import
+    from vinsamlib.ui.sample_placement_dialog import SamplePlacementDialog
+    from vinsamlib.ui.sampledir_import_dialog import SampleDirImportDialog
+
+    src = SCRATCH / "Demo Multisample"
+    if not src.is_dir():
+        print("  SKIPPED 09_sample_placement: the demo folder is gone")
+        return
+
+    captured: list = []
+    real_exec = SamplePlacementDialog.exec
+
+    def _capture(self, *a, **k):
+        captured.append(self)
+        return QDialog.DialogCode.Rejected
+    SamplePlacementDialog.exec = _capture
+
+    outer = None
+    try:
+        outer = SampleDirImportDialog(
+            win,
+            locked_format="E4B",
+            # The same call `MainWindow._start_sample_import` makes, so the
+            # rows, the octave and the velocity decision are the product's.
+            placement_loader=lambda octave: sampledir_import.parse_preview(
+                str(src), octave),
+            source_text=f"{len(TONES)} file(s) from Demo Multisample")
+        outer._on_adjust_placement_clicked()
+        if not captured:
+            print("  SKIPPED 09_sample_placement: the handler opened no dialog")
+            return
+        dialog = captured[0]
+        _overlap_two_rows(dialog)
+        dialog.resize(880, 560)
+        dialog.show()
+        _settle(app)
+        _grab(dialog, "09_sample_placement")
+        dialog.close()
+    finally:
+        SamplePlacementDialog.exec = real_exec
+        if outer is not None:
+            outer.close()
+
+
+def _overlap_two_rows(dialog) -> None:
+    """Make the last two rows overlap, so the warning tint is in the picture.
+
+    The caption claims two rows have been edited to overlap and their note
+    fields tinted light red, which is the thing worth showing: it is the only
+    state in which the dialog is telling the user something. Left to chance it
+    would not appear at all, and a shot that silently stopped demonstrating
+    the warning is exactly how `02_new_bank.png` went stale twice.
+
+    Done through the spinboxes rather than by writing the table directly, so
+    the repaint that tints the row is the product's own.
+    """
+    table = dialog._table
+    rows = table.rowCount()
+    if rows < 2:
+        return
+    # Column 1 is Low; the dialog installs the spinboxes as cell widgets and
+    # wires each one to the product's own repaint, so setting a value here is
+    # the same thing a user pressing an arrow does.
+    lower = table.cellWidget(rows - 2, 1)
+    upper = table.cellWidget(rows - 1, 1)
+    if lower is None or upper is None:
+        print("  (09: no spinboxes to overlap; shot without the warning tint)")
+        return
+    lo = lower.value()
+    if upper.value() >= lo:
+        upper.setValue(min(lo + 2, upper.maximum()))
+    else:
+        lower.setValue(max(upper.value() - 2, lower.minimum()))
+
+
 def shot_favourites(app, win) -> None:
     """13_favourites -- a pasted list of hardware preset numbers."""
     from vinsamlib.ui.favourites_dialog import FavouritesDialog
@@ -429,6 +523,7 @@ ALL = {"02_new_bank": shot_new_bank,
        "05_convert_options": shot_convert_options,
        "06_settings": shot_settings,
        "06b_settings_audition": shot_settings_audition,
+       "09_sample_placement": shot_sample_placement,
        "12_bank_placement": shot_placement,
        "13_favourites": shot_favourites,
        "14_akai_partitions": shot_akai_partitions}
