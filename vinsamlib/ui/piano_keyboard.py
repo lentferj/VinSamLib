@@ -1,12 +1,19 @@
 """
-88-key (A0-C8) piano keyboard widget for the Sample Placement dialog:
+Full-MIDI-range (0-127) keyboard widget for the Sample Placement dialog:
 paints real white/black key shapes and overlays each sample's key range
 in that sample's own color (same colors the matrix table uses), with a
 small dark marker on each zone's root note. Read-only -- the matrix's
 spinboxes are the only inputs; this is purely a visual cross-check.
 
-Standard 88-key layout: 52 white keys, 36 black keys, starting at A0
-(MIDI 21) through C8 (MIDI 108). Each of the 12 pitch classes maps to a
+EVERY KEY THE DATA CAN NAME, 0 to 127, not the 88 of a real piano. It drew
+A0-C8 until 2026-09-29, which silently clipped both ends of what this dialog
+edits: a zone reaching MIDI 127 stopped at C8 on screen and a zone starting
+at 0 appeared to start at A0. Jan found it looking at a preset whose top zone
+ends at 127 -- and the whole rate-ceiling feature is about keys 117-127, every
+one of which was off the right-hand edge. A keyboard that cannot show the
+range being edited is worse than no keyboard.
+
+75 white keys and 53 black ones. Each of the 12 pitch classes maps to a
 fixed position in "white-key-width" units (integers for white keys,
 half-integers for the black keys between them, with the two natural
 gaps -- no black key between B/C or E/F) so any note's x position is a
@@ -21,9 +28,12 @@ from PySide6.QtWidgets import QWidget
 
 from .note_naming import midi_to_name
 
-LOW = 21    # A0
-HIGH = 108  # C8
-WHITE_KEY_COUNT = 52
+LOW = 0     # C-2 in this project's C3=60 convention
+HIGH = 127  # G8
+#: Derived, not counted by hand: the old 52 was a constant that had to agree
+#: with LOW/HIGH and would not have if either moved.
+WHITE_KEY_COUNT = sum(1 for m in range(LOW, HIGH + 1) if (m % 12) in
+                      (0, 2, 4, 5, 7, 9, 11))
 
 _WHITE_POS = {0: 0.0, 1: 0.5, 2: 1.0, 3: 1.5, 4: 2.0, 5: 3.0, 6: 3.5,
               7: 4.0, 8: 4.5, 9: 5.0, 10: 5.5, 11: 6.0}

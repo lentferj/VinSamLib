@@ -8,7 +8,7 @@ midpoints between adjacent roots) is usually right, this is for the
 cases it isn't.
 
 A simple box matrix -- one row per sample, columns Sample / Low / Root /
-High -- next to an 88-key piano image coloring each sample's range in
+High -- next to a full-range (MIDI 0-127) piano image coloring each range in
 its own color (same color both places). Rows are kept sorted low-to-high
 and reorder live if an edit changes that relative order. Two kinds of
 trouble are flagged by tinting the offending rows' note fields: ranges
@@ -37,7 +37,8 @@ from .piano_keyboard import PianoKeyboardWidget
 
 # Full MIDI key range -- what a real E4B/KRZ/EIII zone (and
 # parse_sample_dir()'s own 0/127 outer bounds) actually spans. The piano
-# widget's narrower 88-key A0-C8 span is a DRAWING limit only.
+# widget now draws all 128 of them too; it drew A0-C8 until 2026-09-29, which
+# clipped both ends of what this dialog edits.
 MIDI_MIN, MIDI_MAX = 0, 127
 
 # Two ranges [lo1,hi1]/[lo2,hi2] overlap iff lo1 <= hi2 and lo2 <= hi1 --
@@ -126,16 +127,18 @@ class NoteSpinBox(QSpinBox):
     over the real MIDI value, using the SAME octave-offset convention as
     build/sampledir_import.py's own octave_offset ("Middle C is:").
 
-    Range is the FULL MIDI 0-127, deliberately NOT the 88-key 21-108 span
-    the piano widget draws: parse_sample_dir() gives its lowest zone
+    Range is the FULL MIDI 0-127: parse_sample_dir() gives its lowest zone
     lo_key=0 and its highest hi_key=127 so the preset covers the whole
     keyboard, and E4B/KRZ/EIII zones are 0-127 too. Clamping the editor to
-    21-108 silently rewrote exactly those two outer zones -- the spinbox
-    displayed A0/C8 while the model still held 0/127, and one arrow-press
-    on such a field jumped it to 22 (dropping MIDI 0-21 coverage) instead
-    of stepping by a semitone. The piano widget clips its own DRAWING to
-    the 88 keys it has (see its set_zones()/paintEvent), which is the right
-    place for that limit -- the data model must not be narrowed to it."""
+    an 88-key 21-108 span silently rewrote exactly those two outer zones --
+    the spinbox displayed A0/C8 while the model still held 0/127, and one
+    arrow-press on such a field jumped it to 22 (dropping MIDI 0-21
+    coverage) instead of stepping by a semitone.
+
+    The piano widget used to keep that 88-key limit for DRAWING, which was
+    defensible until you looked at a preset whose top zone ends at 127: the
+    picture stopped at C8 and said nothing about the keys past it. It now
+    draws 0-127, so the two agree."""
 
     def __init__(self, octave_offset: int, parent=None):
         super().__init__(parent)

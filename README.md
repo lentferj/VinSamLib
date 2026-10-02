@@ -2011,9 +2011,9 @@ selected at that moment, not whatever it was when the dialog opened.
 
 #### Sample Placement
 
-![Sample Placement dialog: five demo samples as Sample/Low/Root/High rows, each in its own color, over an 88-key piano showing each sample's key range and root in the matching color; two rows have been edited to overlap and their note fields are tinted light red](docs/screenshots/09_sample_placement.png)
+![Sample Placement dialog: five demo samples as Sample/Low/Root/High rows, each in its own color, over a full-range piano (MIDI 0-127) showing each sample's key range and root in the matching color; two rows have been edited to overlap and their note fields are tinted light red](docs/screenshots/09_sample_placement.png)
 
-One row per sample — **Sample / Low / Root / High** — beside an 88-key
+One row per sample — **Sample / Low / Root / High** — beside a full-range
 piano that colors each sample's range in that sample's own color, the
 same color in both places. Colors are assigned once from the initial
 low-to-high order and never change afterwards, so a sample stays
