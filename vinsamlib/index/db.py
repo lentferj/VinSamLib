@@ -100,6 +100,29 @@ class SearchResult:
     format: str
     container_path: str
     chain: list[ItemChainEntry]   # root -> ... -> this item (exclusive of the container itself)
+    #: The two figures, carried so a search row can say what a tree row says.
+    #: `size` is bytes on the media; `audio_bytes` is loadable audio, and NULL
+    #: means "not measured", which is a third state and not zero. See
+    #: `ui.models.size_suffix`, which is the single renderer of both.
+    size: Optional[int] = None
+    audio_bytes: Optional[int] = None
+
+
+@dataclass
+class SearchPage:
+    """What `search_page()` returns: the hits, and how many there really were.
+
+    `total > len(hits)` means the list is TRUNCATED, and the UI has to say so.
+    The alternative -- showing 200 rows and letting the user conclude the rest
+    do not exist -- is how "Sync" lost a file that "Synco" had found.
+    """
+    hits: list[SearchResult]
+    total: int
+    limit: int
+
+    @property
+    def truncated(self) -> bool:
+        return self.total > len(self.hits)
 
 
 class IndexDB:
@@ -355,7 +378,8 @@ class IndexDB:
         if not query:
             return []
         fts_query = _fts_query(query)
-        sql = ("SELECT item.id, item.kind, item.name, item.format, container.path "
+        sql = ("SELECT item.id, item.kind, item.name, item.format, container.path, "
+               "item.size, item.audio_bytes "
                "FROM item_fts JOIN item ON item.id = item_fts.rowid "
                "JOIN container ON container.id = item.container_id "
                "WHERE item_fts MATCH ?")
@@ -373,9 +397,11 @@ class IndexDB:
             # results for one keystroke than to crash the search box.
             return []
         out = []
-        for item_id, kind, name, fmt, container_path in rows:
+        for (item_id, kind, name, fmt, container_path,
+             size, audio_bytes) in rows:
             out.append(SearchResult(item_id=item_id, kind=kind, name=name, format=fmt or "",
-                                     container_path=container_path, chain=self._chain_for(item_id)))
+                                    container_path=container_path, chain=self._chain_for(item_id),
+                                    size=size, audio_bytes=audio_bytes))
         return out
 
     def _chain_for(self, item_id: int) -> list[ItemChainEntry]:

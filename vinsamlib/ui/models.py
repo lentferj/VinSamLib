@@ -170,6 +170,57 @@ def human_size(n: int) -> str:
     return f"{size:.1f} GB"
 
 
+def size_suffix(size: Optional[int], audio_bytes: Optional[int],
+                note_short: str = "") -> str:
+    """The size tail of a row -- "   9.0 KB audio", or "" when nothing is known.
+
+    ONE implementation, called by the tree row and by the search-result row.
+
+    Jan, 2026-10-02: the browser showed `A/SL3001  [AKAI]  1.5 MB audio` and
+    the search box for the same row showed the name, the format and the
+    container, and no size at all. The search results are rendered by
+    `_format_hit()`, a second function, which never had the figures -- so the
+    two windows described the same row differently and only one of them was
+    right. Two renderers of one quantity is the same shape as two maps for one
+    rename field, which is how a rename was applied by one path and dropped by
+    the other.
+
+    The two figures are deliberately NOT the same one, and
+    `manual_tree_audio_sizes` is what pins that:
+
+        bank / volume / image   deduped audio -- what LOADING it costs
+        preset / program        what that one ALONE needs
+
+    So `audio_bytes` wins when it is measured, `size` is the fallback for a row
+    whose audio was never measured, and neither is shown when there is nothing
+    to show. That last case is not an oversight either: a `.xpm` keeps its
+    audio in separate files, so its own size is not what importing it costs,
+    and `audio_bytes` is NULL rather than 0 precisely so this branch is taken.
+    `_size_would_mislead()` is the tooltip that explains it.
+
+    `note_short` is passed only where it is known -- the tree computes it from
+    a live bank ("samples on another volume"). A search row has no parsed bank,
+    so it says the true generic thing rather than guessing the reason.
+    """
+    if audio_bytes is not None:
+        # human_size(0) is "" -- it was written for `if size:`, where zero
+        # never reaches it. Here zero is a real and interesting answer, so it
+        # needs words of its own: a KRZ bank whose programs reference only the
+        # sampler's ROM holds no audio at all, and rendering that as a bare
+        # "audio" with nothing in front of it is how it first appeared.
+        if audio_bytes:
+            return f"   {human_size(audio_bytes)} audio"
+        if note_short:
+            # A zero with a KNOWN reason says the reason instead. "no audio"
+            # is true of a KRZ ROM-only program and misleading of an AKAI one,
+            # whose samples are on another volume.
+            return f"   {note_short}"
+        return "   no audio"
+    if size:
+        return f"   {human_size(size)}"
+    return ""
+
+
 @dataclass
 class TreeNode:
     kind: str                                  # 'directory' | 'volume_root' | 'folder' | 'bank' | 'preset'
@@ -209,24 +260,7 @@ class TreeNode:
         text = " ".join(bits)
         if self.format_label:
             text += f"  [{self.format_label}]"
-        if self.audio_bytes is not None:
-            # human_size(0) is "" -- it was written for `if self.size:`, where
-            # zero never reaches it. Here zero is a real and interesting
-            # answer, so it needs words of its own: a KRZ bank whose programs
-            # reference only the sampler's ROM holds no audio at all, and
-            # rendering that as a bare "audio" with nothing in front of it is
-            # how it first appeared.
-            if self.audio_bytes:
-                text += f"   {human_size(self.audio_bytes)} audio"
-            elif self.note_short:
-                # A zero with a KNOWN reason says the reason instead. "no
-                # audio" is true of a KRZ ROM-only program and misleading of
-                # an AKAI one, whose samples are on another volume.
-                text += f"   {self.note_short}"
-            else:
-                text += "   no audio"
-        elif self.size:
-            text += f"   {human_size(self.size)}"
+        text += size_suffix(self.size, self.audio_bytes, self.note_short)
         if self.error:
             text += "   (failed to open)"
         elif self.empty_reason:

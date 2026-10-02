@@ -655,6 +655,12 @@ def _node_format(node: TreeNode) -> str:
     """The format a preset row would be added as.
 
     Read off the PARENT bank row, which is the only node that carries it --
+    # The SAME size the tree row shows, from the same helper, because the
+    # browser and the search box were describing one row differently: the tree
+    # said "1.5 MB audio" and this said nothing at all. Jan, 2026-10-02. Not a
+    # `note_short`, which needs a parsed bank a search row does not have -- so
+    # it says the true generic thing rather than inventing a reason.
+    label += models.size_suffix(hit.size, hit.audio_bytes)
     a preset's own format_label is empty. Same rule MainWindow's
     _add_node_to_bank() uses to build the items, so the menu cannot offer
     something the add would then classify differently.
