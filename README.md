@@ -893,7 +893,17 @@ play — low key, root note, high key — using the same editor the sample-folde
 import uses, described under [Sample Placement](#sample-placement). The audio
 is not touched; only the key range each sample answers to.
 
-![Adjust Placement dialog over a staged bank: five demo samples as Sample / Low / Root / High rows, each in its own colour, above an 88-key piano showing every sample's range and root in the matching colour](docs/screenshots/12_bank_placement.png)
+**It edits the preset you opened it on, and says so in its own header.** Since
+2026-09-29 each staged preset carries its own placement and velocity edits, so
+a sample used by two staged presets can sit in different places in each. Open
+it with several presets selected and it seeds from what those presets
+**agree** on — a row can show one answer, and showing the first preset's would
+assert an agreement that may not exist, then write it to all of them on OK.
+The dialog also carries a plain statement that an edit here **changes the bank
+away from what its author wrote**: the preset that gets written will play
+differently from the one you started with, everywhere it is loaded.
+
+![Adjust Placement dialog over a staged bank: five demo samples as Sample / Low / Root / High rows, each in its own colour, above a full-range piano (MIDI 0-127) showing every sample's range and root in the matching colour](docs/screenshots/12_bank_placement.png)
 
 It opens on the ranges the bank actually has, under whatever names the samples
 currently carry — rename a sample and the placement list shows the new name,
@@ -1564,33 +1574,27 @@ key differing by one, which reads as a bug rather than as a layered preset.
 And its third button is **"Leave the zones as they are"**, not *OK* — the
 other two act, and *OK* reads as consent to what was just described.
 
-⚠ **Narrowing is bank-wide, not per preset.** A placement edit is keyed by the
-source sample's name — the same mechanism **Adjust Placement…** uses — so
-narrowing a sample narrows it in **every staged preset that uses it**. In a
-bank whose fifteen presets share four samples that is the normal case, not a
-corner one, and the status line says so after the edit. It is also **sticky**: narrow a preset, add
-an untreated copy afterwards, and that one is narrowed too — the map belongs
-to the bank, not to the item, so the order you add things in makes no
-difference.
+**Placement edits belong to the staged preset you made them on.** Both
+**Adjust Placement…** and this button write into that preset's own map, so a
+sample shared with another staged preset keeps its own key range there. That
+was not true before 2026-09-29: one map served the whole staged bank, keyed by
+the sample's *name*, so narrowing one preset narrowed every staged preset
+using that sample — stage a preset twice, narrow one copy, and both changed.
+Worse, a sample *name* shared by two different banks at different roots (seven
+of them in one library here, an octave apart) would have been rewritten to one
+placement, transposing the other preset to fix a zone it did not have.
 
-What it refuses is the corrupting version. A placement row is deduped by
-sample *name* across every staged preset, carrying the lowest low key, the
-highest high key and a first-wins root, so when two presets place one name
-differently the row describes neither. The button therefore acts only where
-the staged row matches the finding's zone exactly, and counts the rest as
-left alone. That case is real, not theoretical: in one library here **seven
-sample names appear in two different banks at roots an octave apart** — e.g.
-keys 0–29 rooted at 24 in one bank and 0–41 rooted at 36 in the other — so
-staging a preset from each and narrowing would otherwise transpose one of them
-to fix a zone in the other. Per-preset narrowing would mean keying
-placement per preset, which is a change to a shipped, hardware-exercised
-feature rather than something this button should do quietly.
+Narrowing still takes the **strictest safe key** of the zones sharing a sample
+*within* that preset. That is not a detail: on the three-voice preset that
+prompted this — safe at 118, 118 and 117, the third voice carrying a tune
+offset — anything but the minimum clears two zones and leaves the third one
+key over while reporting three narrowed.
 
-Narrowing is **per sample and takes the strictest safe key** of the zones
-using it. That is not a detail: a placement edit moves every zone that shares
-a sample, so on that three-voice preset — safe at 118, 118 and 117, the third
-voice carrying a tune offset — anything but the minimum clears two zones and
-leaves the third one key over while reporting three narrowed.
+A project written by an older version carries the one bank-wide map. It still
+loads, and its entries are applied to **every** staged preset, because that is
+exactly what they meant when they were written and nothing in such a file can
+say which preset an entry was for. New projects are written per item
+(`version: 2`).
 
 That remedy is worth knowing about, because it is **not** applied
 automatically and the reason is measured. Above an absolute playback rate the

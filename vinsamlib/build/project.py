@@ -47,7 +47,11 @@ from . import calllog
 
 FORMAT = "vinsamlib-project"
 #: 1: New Bank + Pending, references and carried blobs.
-VERSION = 1
+#: 2: zone_placement/voice_velocity move ONTO each item. A v1 file's
+#:    bank-wide maps are still read and applied to every item, which is
+#:    exactly what they meant when they were written -- nothing in such a
+#:    file can say which preset an entry was for.
+VERSION = 2
 SUFFIX = ".vslproj"
 
 
@@ -286,11 +290,25 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
 
     def _items_json(items: list, fmt: Optional[str]) -> list:
         rows = []
-        for bank, preset, name, *_edits in items:
+        for bank, preset, name, *rest in items:
             f = fmt or _guess_format(bank)
-            rows.append({"bank": _bank_entry(bank, f),
-                         "preset": _preset_ref(preset, f),
-                         "name": name})
+            row = {"bank": _bank_entry(bank, f),
+                   "preset": _preset_ref(preset, f),
+                   "name": name}
+            # PER-ITEM EDITS, version 2. A placement is looked up by the
+            # sample's name, so the bank-wide maps below cannot say "this
+            # preset and not that one" -- two staged presets sharing a sample
+            # shared the edit. Written per item so they can.
+            edits = rest[0] if rest else {}
+            placement = {str(k): list(v) for k, v in
+                         ((edits or {}).get("placement") or {}).items()}
+            velocity = {str(k): list(v) for k, v in
+                        ((edits or {}).get("velocity") or {}).items()}
+            if placement:
+                row["zone_placement"] = placement
+            if velocity:
+                row["voice_velocity"] = velocity
+            rows.append(row)
         return rows
 
     manifest = {
@@ -413,7 +431,12 @@ def load(path: str) -> LoadReport:
                         f"{Path(getattr(bank, 'path', '?')).name} — it was "
                         f"found by position and the bank has changed.")
                     continue
-                out.append((bank, preset, row.get("name") or ""))
+                edits = {"placement": {}, "velocity": {}}
+                for key, into in (("zone_placement", "placement"),
+                                  ("voice_velocity", "velocity")):
+                    for k, v in (row.get(key) or {}).items():
+                        edits[into][str(k)] = tuple(v)
+                out.append((bank, preset, row.get("name") or "", edits))
             return out
 
         nb = manifest.get("new_bank") or {}

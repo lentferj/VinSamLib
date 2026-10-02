@@ -101,12 +101,29 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         if renames and fmt in ("E4B", "EIII", "KRZ"):
             kwargs["sample_names"] = renames
         # E4B only -- the only format whose zones carry their own key range.
-        placement = entry.get("zone_placement") or {}
-        if placement and fmt == "E4B":
-            kwargs["zone_placement"] = placement
-        velocity = entry.get("voice_velocity") or {}
-        if velocity and fmt == "E4B":
-            kwargs["voice_velocity"] = velocity
+        #
+        # PER STAGED ITEM, read off the items themselves. An entry's items are
+        # `(bank, preset, name, edits)`, so the maps travel with the presets
+        # they belong to and Pending needs no second copy of them: an edit to
+        # one preset cannot reach another that happens to share a sample.
+        # `entry["zone_placement"]` is the OLD bank-wide map and is still
+        # honoured, because a project written before this carries one and
+        # nothing in it can be split after the fact.
+        per_item_p = [dict((it[3].get("placement") or {})) if len(it) > 3 else {}
+                      for it in entry["items"]]
+        per_item_v = [dict((it[3].get("velocity") or {})) if len(it) > 3 else {}
+                      for it in entry["items"]]
+        legacy_p = entry.get("zone_placement") or {}
+        legacy_v = entry.get("voice_velocity") or {}
+        if fmt == "E4B":
+            if any(per_item_p):
+                kwargs["zone_placement"] = per_item_p
+            elif legacy_p:
+                kwargs["zone_placement"] = legacy_p
+            if any(per_item_v):
+                kwargs["voice_velocity"] = per_item_v
+            elif legacy_v:
+                kwargs["voice_velocity"] = legacy_v
         # Gated on the same list the pane binds by, imported rather than
         # spelled out again here: the rename above is the cautionary tale of
         # a SECOND copy of a format list, which went stale and dropped KRZ

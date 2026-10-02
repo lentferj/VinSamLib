@@ -1817,8 +1817,10 @@ class MainWindow(QMainWindow):
             bank_items=list(bp._items), bank_format=bp.format,
             bank_name=bp._name_edit.text(),
             sample_renames=dict(bp._sample_renames),
-            zone_placement=dict(bp._zone_placement),
-            voice_velocity=dict(bp._voice_velocity),
+            # The placement/velocity maps ride on the items now, and
+            # `_items_json` writes them there. These two stay for the v1
+            # bank-wide slot, which nothing writes any more.
+            zone_placement={}, voice_velocity={},
             pending=[dict(e) for e in pp._pending],
             partition_breaks=set(pp._partition_breaks),
             image=self._image_state(), explorer=self._explorer.view_state())
@@ -1887,8 +1889,7 @@ class MainWindow(QMainWindow):
                 bank_items=list(bp._items), bank_format=bp.format,
                 bank_name=bp._name_edit.text(),
                 sample_renames=dict(bp._sample_renames),
-                zone_placement=dict(bp._zone_placement),
-                voice_velocity=dict(bp._voice_velocity),
+                zone_placement={}, voice_velocity={},
                 pending=list(pp._pending),
                 partition_breaks=set(pp._partition_breaks),
                 image=self._image_state(),
@@ -1938,14 +1939,23 @@ class MainWindow(QMainWindow):
         bp, pp = self._bank_pane, self._pending_pane
         bp._clear()
         if rep.banks:
-            bp.add_presets([(b, p, rep.bank_format or "", n) for b, p, n in rep.banks],
-                           restoring=True)
+            bp.add_presets([(b, p, rep.bank_format or "", n)
+                            for b, p, n, *_e in rep.banks], restoring=True)
         # AFTER the presets, not before: add_presets() rewrites the name field
         # for a freshly-locked bank, so setting it first was silently undone.
         bp._name_edit.setText(rep.bank_name)
         bp._sample_renames = dict(rep.sample_renames)
-        bp._zone_placement = dict(rep.zone_placement)
-        bp._voice_velocity = dict(rep.voice_velocity)
+        # Per item, from the restored rows; a v1 file's bank-wide maps are
+        # applied to EVERY item, because that is what they meant.
+        for (row, item) in zip(rep.banks, bp._items):
+            edits = item[3]
+            src = row[3] if len(row) > 3 else {}
+            edits.setdefault("placement", {}).update(src.get("placement") or {})
+            edits.setdefault("velocity", {}).update(src.get("velocity") or {})
+            if rep.zone_placement:
+                edits["placement"].update(rep.zone_placement)
+            if rep.voice_velocity:
+                edits["velocity"].update(rep.voice_velocity)
         bp._refresh()
         pp._pending = list(rep.pending)
         pp._format = rep.pending[0]["format"] if rep.pending else None

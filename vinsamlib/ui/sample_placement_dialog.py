@@ -196,7 +196,7 @@ class NoteSpinBox(QSpinBox):
 
 class SamplePlacementDialog(QDialog):
     def __init__(self, zones: list[dict], octave_offset: int = 1, parent=None,
-                  show_velocity: bool = False):
+                  show_velocity: bool = False, scope_text: str = ""):
         """`zones`: [{"name": str, "lo": int, "root": int, "hi": int}, ...],
         one per sample -- see sampledir_import_dialog.py's caller for how
         these come from an mpc2emu Bank's zones. `octave_offset` is
@@ -237,6 +237,10 @@ class SamplePlacementDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # WHAT THIS CHANGES, AND WHOSE WORK IT OVERWRITES, first -- before
+        # the mechanics of the table. Jan, 2026-09-28: a good explanation of
+        # the consequences, and a stronger emphasis that this is a deviation
+        # from the original.
         text = ("Override each sample's key range and root note. Rows stay "
                 "sorted low to high and reorder automatically if an edit "
                 "changes that order. Overlapping ranges turn light red; a row "
@@ -259,14 +263,32 @@ class SamplePlacementDialog(QDialog):
                      "of 0, which is note-off — turns red and is applied as "
                      "typed: that is how a layer is switched off, not a "
                      "mistake to correct."
-                     "\n⚠ Experimental: neither the key ranges nor the "
-                     "velocity windows edited here have been confirmed on "
-                     "hardware, and a velocity change rebuilds the preset's "
-                     "voices. Keep the original file.")
+                     "")
+        if scope_text:
+            text = (f"Editing {scope_text}. These edits belong to that "
+                    f"preset alone: another staged preset using the same "
+                    f"sample keeps its own placement.\n" + text)
         info = QLabel(text)
         info.setWordWrap(True)
         info.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+
+        # ITS OWN LABEL, not a line appended to the grey paragraph above.
+        # This is the sentence that matters and it was the last line of a
+        # block nobody finishes reading.
+        deviation = QLabel(
+            "⚠ THIS CHANGES THE BANK AWAY FROM WHAT ITS AUTHOR WROTE. A key "
+            "range, a root note or a velocity window edited here is yours, "
+            "not the source bank's — the preset that gets written will play "
+            "differently from the one you started with, everywhere it is "
+            "loaded. Nothing edited here has been confirmed on hardware, and "
+            "a velocity change rebuilds the preset's voices. Keep the "
+            "original file.")
+        deviation.setWordWrap(True)
+        deviation.setStyleSheet(
+            "color: palette(bright-text); background: palette(highlight); "
+            "font-size: 11px; padding: 6px; border-radius: 3px;")
         layout.addWidget(info)
+        layout.addWidget(deviation)
 
         self._table = QTableWidget()
         heads = ["Sample", "Low", "Root", "High"]

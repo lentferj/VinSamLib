@@ -192,14 +192,16 @@ class BankPane(QWidget):
         #: dialog. Applies to all three formats, unlike the renames and the
         #: placement edits beside it, because every format stores loop points.
         self._loop_repairs: dict = {}
+        #: token -> the staged item's edits map, for findings that have been
+        #: through a Qt signal. See `_report_ceiling_zones`.
+        self._ceiling_edits: dict = {}
+        self._ceiling_token: int = 0
         #: {original sample name: new name}, from the Rename Samples dialog.
         #: Cleared with the bank -- a rename belongs to the material that
         #: was staged, not to the pane.
         self._sample_renames: dict = {}
         #: {original sample name: (lo, root, hi)} from Adjust Placement.
         #: Cleared with the bank, exactly like the renames.
-        self._zone_placement: dict = {}
-        self._voice_velocity: dict = {}
         self._dedupe_enabled = True
         self._prompt_on_duplicate = True
         self._last_bytes: Optional[bytes] = None
@@ -388,10 +390,22 @@ class BankPane(QWidget):
         # built, so a rename left behind here would be silently absent from
         # the image -- the meter and Save as... would show one bank and the
         # media would hold another.
-        self.sendToPendingRequested.emit(name, self._format, list(self._items),
-                                          dict(self._sample_renames),
-                                          dict(self._zone_placement),
-                                          dict(self._voice_velocity),
+        # The placement and velocity maps are EMPTY here by design: they now
+        # ride on the items themselves, which are in the list above, so
+        # sending them separately would be a second copy that can disagree.
+        # The two arguments stay in the signal because a project written
+        # before this carries bank-wide maps and Pending still honours them.
+        # A SNAPSHOT, not the live items. The edits are mutable dicts that
+        # ride on the item, so sending the items themselves would hand Pending
+        # the same objects New Bank goes on editing -- and a queued entry
+        # would change under the user after they queued it. The old code
+        # copied the bank-wide maps here for exactly this reason; copying per
+        # item is the same guarantee.
+        queued = [(b, p, n, {"placement": dict(e.get("placement") or {}),
+                             "velocity": dict(e.get("velocity") or {})})
+                  for b, p, n, e in self._items]
+        self.sendToPendingRequested.emit(name, self._format, queued,
+                                          dict(self._sample_renames), {}, {},
                                           dict(self._loop_repairs))
 
     @property
@@ -429,8 +443,15 @@ class BankPane(QWidget):
         the given recipe, exactly as if it had been assembled from scratch."""
         self._items = list(items)
         self._sample_renames = dict(sample_renames or {})
-        self._zone_placement = dict(zone_placement or {})
-        self._voice_velocity = dict(voice_velocity or {})
+        # A bank-wide map coming back from an older project or from Pending is
+        # applied to EVERY item, which is what it meant when it was written.
+        # Nothing can recover which preset an entry was for, so the honest
+        # restore is the one that reproduces the old behaviour exactly.
+        for *_i, edits in self._items:
+            if zone_placement:
+                edits.setdefault("placement", {}).update(zone_placement)
+            if voice_velocity:
+                edits.setdefault("velocity", {}).update(voice_velocity)
         self._loop_repairs = dict(loop_repair or {})
         self._format = fmt
         self._name_edit.setText(name)
@@ -597,7 +618,12 @@ class BankPane(QWidget):
             return False
         added, dupes = self._add_items(items, restoring=restoring)
         if added and check_ceiling and fmt == "E4B" and not restoring:
-            self._report_ceiling_zones(items)
+            # The items just appended, by position. NOT looked up by
+            # (id(bank), id(preset)): staging the same preset twice gives two
+            # items sharing both objects, so such a lookup collapses to one
+            # entry and a warning raised for one copy could be applied to the
+            # other.
+            self._report_ceiling_zones(self._items[-len(added):])
         if added:
             names = ", ".join(f'"{name}"' for name in added)
             msg = f"Added {names} to New Bank"
@@ -609,7 +635,7 @@ class BankPane(QWidget):
                 f"Already in New Bank, skipped: {', '.join(dupes)}")
         return bool(added)
 
-    def _report_ceiling_zones(self, items: list) -> None:
+    def _report_ceiling_zones(self, staged_items: list) -> None:
         """Emit the over-ceiling zones of the presets just added.
 
         Read with our OWN E4B code, deliberately: a plain add needs no
@@ -617,8 +643,10 @@ class BankPane(QWidget):
         wanted. `banks/e4b.py` carries the offsets and the measured rate.
         """
         findings: list = []
-        staged = {(id(b), id(p)): e for b, p, _n, e in self._items}
-        for bank, preset, _fmt, _name in items:
+        # Bounded: only the newest warning's findings can still be acted on,
+        # and a box the user dismissed leaves nothing behind.
+        self._ceiling_edits = {}
+        for bank, preset, _name, edits in staged_items:
             try:
                 found = e4b.zones_above_playback_ceiling(bank, preset)
             except Exception:
@@ -628,9 +656,18 @@ class BankPane(QWidget):
             # preset that was warned about, and a reorder or a delete in
             # between cannot send the edit somewhere else -- the map travels
             # with the item, and an orphaned one harms nothing.
-            edits = staged.get((id(bank), id(preset)))
+            # A TOKEN, NOT THE DICT. These findings cross a Qt signal to reach
+            # the window that shows them and come back through
+            # `narrow_zones_to_ceiling` -- and PySide6 COPIES a dict on the
+            # way: the receiver got a copy of the edits map, narrowing wrote
+            # into the copy, and the item kept nothing. It reported success
+            # while doing nothing, and the project file Jan saved is what
+            # showed it (`placement=None` on a preset he had narrowed).
+            # An int survives the trip; the mapping stays on this side.
             for det in found:
-                det["_edits"] = edits
+                self._ceiling_token += 1
+                det["token"] = self._ceiling_token
+                self._ceiling_edits[self._ceiling_token] = edits
             findings.extend(found)
         if findings:
             self.ceilingZonesAdded.emit(findings)
@@ -890,8 +927,6 @@ class BankPane(QWidget):
         self._items = []
         self._sample_renames = {}
         self._loop_repairs = {}
-        self._zone_placement = {}
-        self._voice_velocity = {}
         self._reset_format_lock()
         self._name_edit.clear()
         self._refresh()
@@ -1143,6 +1178,19 @@ class BankPane(QWidget):
         # {sample name: (lo_vel, hi_vel)} for the staged presets. Only E4B
         # exposes one; _zone_ranges returns {} for the others.
         vel_by_name: dict = {}
+        # THE EDITS THE STAGED ITEMS IN SCOPE ACTUALLY CARRY. First one wins,
+        # as the row itself is first-wins: this list is one row per SAMPLE
+        # across the staged bank, so with two presets placing one sample
+        # differently it can only show one of them -- which is now a property
+        # of this list rather than of the edit, since the edits themselves are
+        # per preset.
+        edits_seen: dict = {}
+        vel_edits_seen: dict = {}
+        for *_i, _e in scope:
+            for k, v in (_e.get("placement") or {}).items():
+                edits_seen.setdefault(k, v)
+            for k, v in (_e.get("velocity") or {}).items():
+                vel_edits_seen.setdefault(k, v)
         for bank, preset, _label, *_ in scope:
             for idx, info in self._zone_ranges(bank, preset).items():
                 samp = bank.samples.get(idx)
@@ -1173,7 +1221,7 @@ class BankPane(QWidget):
                 # invisible to the other window. (This is not the Samples pane
                 # rule: that pane is UPSTREAM of New Bank and correctly shows
                 # the source untouched. These two are the same step.)
-                moved = self._zone_placement.get(name)
+                moved = edits_seen.get(name)
                 if moved is not None:
                     root = moved[1]
                 # The velocity window belongs next to the note: two samples in
@@ -1181,8 +1229,8 @@ class BankPane(QWidget):
                 # which is exactly when you most need to tell them apart while
                 # naming them. None for formats with nothing to show.
                 vel = vel_by_name.get(name) if vel_informative else None
-                if name in self._voice_velocity:
-                    vel = self._voice_velocity[name]
+                if name in vel_edits_seen:
+                    vel = vel_edits_seen[name]
                 rows.append({"name": name, "root": root, "vel": vel,
                              "shared_with": sorted(elsewhere.get(name, ()))})
         return rows
@@ -1522,7 +1570,8 @@ class BankPane(QWidget):
                 prev = wanted.get(r["orig"])
                 if prev is None or safe < prev[2]:
                     wanted[r["orig"]] = (r["lo"], r["root"], safe)
-                wanted_edits.setdefault(r["orig"], []).append(det.get("_edits"))
+                wanted_edits.setdefault(r["orig"], []).append(
+                    self._ceiling_edits.get(det.get("token")))
         for name, move in wanted.items():
             targets = [e for e in (wanted_edits.get(name) or ()) if e is not None]
             if not targets:
@@ -1582,8 +1631,11 @@ class BankPane(QWidget):
         # the only place the two meet.
         to_orig = {r["name"]: r["orig"] for r in rows}
 
+        scope_text = (f'"{items[0][2]}"' if len(items) == 1
+                      else f"{len(items)} staged presets")
         dialog = SamplePlacementDialog(rows, octave_offset=_RENAME_OCTAVE,
-                                        parent=self, show_velocity=True)
+                                        parent=self, show_velocity=True,
+                                        scope_text=scope_text)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         # `overrides()` returns EVERY row, not the edited ones, and the values
