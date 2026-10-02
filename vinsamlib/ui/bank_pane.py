@@ -894,7 +894,14 @@ class BankPane(QWidget):
         if audition_action is not None and chosen == audition_action:
             item = selected[0].data(Qt.ItemDataRole.UserRole)
             if item is not None:
-                bank, preset_obj, name = item
+                # THE FIRST THREE, deliberately. A staged item is
+                # `(bank, preset, name, edits)` since the maps moved onto it,
+                # and this list stores the item whole, so unpacking it in full
+                # raises -- inside a menu handler, where PySide6 prints the
+                # traceback to stderr and carries on, which is why "Audition
+                # this preset" did nothing and nothing said so. The edits are
+                # passed separately, as `_edit_kwargs()` has always done.
+                bank, preset_obj, name = item[0], item[1], item[2]
                 self.auditionStagedRequested.emit(
                     bank, preset_obj, name, self._edit_kwargs())
             return
@@ -1086,7 +1093,13 @@ class BankPane(QWidget):
         if len(selected) != 1:
             self._info_label.setText("")
             return
-        bank, preset_obj, name = selected[0].data(Qt.ItemDataRole.UserRole)
+        # `[:3]`, and the reason is the same as in the context menu: the list
+        # stores the whole staged item, which has carried a fourth element --
+        # its own edits -- since the maps moved onto it. Unpacking in full
+        # raises here, in a SLOT, so the exception is printed to stderr and
+        # swallowed: this line's per-preset info never appeared, on any
+        # selection, and the pane looked merely empty rather than broken.
+        bank, preset_obj, name = selected[0].data(Qt.ItemDataRole.UserRole)[:3]
         self._info_label.setText("Loading…")
         w = workers.Worker(summary.summarize_preset, bank, preset_obj)
         w.signals.finished.connect(lambda ps, g=gen, n=name: self._apply_preset_info(g, n, ps))
