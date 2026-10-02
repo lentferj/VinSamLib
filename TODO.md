@@ -268,6 +268,53 @@ verification-not-correction write-back check, and the diagnostics-keyed-on-
 
 ---
 
+# OPEN — five tests hang at 300 s on a modal, and it is OURS (2026-10-02)
+
+Five tests time out in the runner with no output. **Reproduced on clean
+`master` 8377ee1**, so this is not `wip/per-preset-placement`'s doing, and it
+predates that branch:
+
+    manual_ui_smoke_convert        manual_ui_smoke_pending
+    manual_ui_smoke_dnd            manual_ui_smoke_sampledir_import
+    manual_hw_convert_matrix
+
+**ONE CAUSE, measured rather than guessed.** `master` 8377ee1 added the
+playback-ceiling warning as a hand-built `QMessageBox` run with `exec()`.
+Offscreen Qt has nobody to click it. Re-running `manual_ui_smoke_dnd` with
+`QMessageBox.exec` replaced by a recorder:
+
+    blocked:   TIMEOUT 300.1s
+    stubbed:   exit=None in 12.9s, exactly one modal --
+               "Zones above the E4XT's rate ceiling": 'fxp:Rip!' in 6 of its
+               voices plays keys 94-102 past the E4XT's rate ceiling
+               (44100 Hz, root 48); the highest key that plays correctly is 93.
+
+It fires on real material because it *should*: 10.8% of presets in a commercial
+E4B bank carry a zone above the ceiling as AUTHORED. Every one of these tests
+stages presets from that library, so the "normal case here, not a corner".
+
+**The helper for this already exists and four of the five do not call it.**
+`_harness.no_blocking_modals()` was written for exactly this shape, when
+`manual_ui_smoke_xpm_import` hung the same way on `_maybe_warn_over_limit`.
+`manual_hw_convert_matrix` calls `stub_message_boxes()` instead, which covers
+the STATIC helpers (`QMessageBox.warning` and friends) and does not reach a
+box the product builds itself -- the same "half-guarded, which looks covered"
+trap the 2026-09-20 `manual_hw_convert_matrix` entry below records, one layer
+up.
+
+**Fixed locally on 2026-10-02** by adding `no_blocking_modals()` to all five,
+because a red suite is not a mergeable state and `tests/` is gitignored so the
+fix cannot travel with a commit. **What is still owed on master:** either the
+five calls, or -- better -- `run_manual.py` stubbing constructed modals for
+every test by default, so the next hand-built box does not cost five timeouts
+and twenty-five minutes to find again.
+
+The deeper lesson is the one already recorded under the 2026-09-20 entry:
+**any modal the product adds can block an automated consumer that has no
+seam.** Twice now, from two different boxes.
+
+---
+
 # OPEN — `manual_akai_real_discs` is RED on purpose (2026-09-20)
 
 Not a regression here, and not to be "fixed" by loosening the assertion.
