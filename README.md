@@ -2281,7 +2281,11 @@ Opting out is a way to skip a window, never a way to lose information:
   of the setting, because then it is the only thing there is, and it holds
   Save as WAV…;
 * starting a new audition silences the previous one rather than playing two at
-  once, and says so on the window it silenced.
+  once, and says so on the window it silenced;
+* **closing either window stops the sound** — the Close button, Escape and the
+  window manager's X alike. Until 2026-09-29 only the X did: `QDialog.reject()`
+  hides a dialog without a close event, so a preset went on playing with its
+  window gone.
 
 ### While it renders
 

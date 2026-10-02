@@ -226,6 +226,19 @@ class AuditionDialog(QDialog):
                 f"caveats that say what it is.")
         self._save_btn.setText(f"Saved {Path(path).name}")
 
+    def done(self, result: int) -> None:
+        """Every way out of this dialog stops the sound.
+
+        `closeEvent` alone was not enough and the difference is a Qt trap:
+        `QDialog.reject()` -- which the Close button calls, and which Escape
+        calls for free -- HIDES the dialog without a close event, so the
+        player went on playing a preset whose window was gone. Only the
+        window manager's X fired `closeEvent`, so the X worked and the button
+        did not. `done()` is the one choke point both paths pass through.
+        """
+        self._player.stop()
+        super().done(result)
+
     def closeEvent(self, event) -> None:
         self._player.stop()
         super().closeEvent(event)
@@ -340,6 +353,14 @@ class AuditionNotice(QDialog):
         # what the button is for.
         self.reportRequested.emit(self.detach_player())
         self.accept()
+
+    def done(self, result: int) -> None:
+        # Same Qt trap as the report window: Escape and any `reject()` hide a
+        # QDialog without a close event. None once the player has been handed
+        # to the report window, which is the one case that must NOT stop it.
+        if self._player is not None:
+            self._player.stop()
+        super().done(result)
 
     def closeEvent(self, event) -> None:
         # None once the player has been handed to the report window.
