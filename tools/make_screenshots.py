@@ -128,6 +128,28 @@ def _isolate() -> None:
     assert mw.user_data_dir() != real_home, "data dir was not redirected"
     print(f"  isolated: index db -> {data}")
 
+    # A MODAL IS A HANG HERE, and this tool had no answer for one.
+    #
+    # `_stage()` calls `add_presets()`, which checks the playback ceiling, and
+    # the demo library is built from full-range sine tones -- so `DemoSample`
+    # reaches key 127 and `master` 8377ee1's ceiling warning fires. `exec()`
+    # under offscreen Qt blocks forever with nobody to click it, so the run
+    # sat there until it was killed: 400 s, then 1500 s, no output.
+    #
+    # The stub answers "Yes" and SAYS SO. A dialog that is dismissed silently
+    # is indistinguishable from one that never fired, and the next person to
+    # add a shot has no way to tell which state the picture was taken in.
+    from PySide6.QtWidgets import QMessageBox
+
+    real_exec = QMessageBox.exec
+
+    def _auto(self, *a, **k):
+        print(f"  [auto-dismissed modal] {self.windowTitle()!r}: "
+              f"{self.text().splitlines()[0][:90] if self.text() else ''}")
+        return QMessageBox.StandardButton.Yes.value
+    QMessageBox.exec = _auto
+    globals()["_REAL_QMESSAGEBOX_EXEC"] = real_exec
+
 
 def _window():
     from PySide6.QtWidgets import QApplication
