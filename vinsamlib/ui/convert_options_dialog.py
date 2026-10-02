@@ -912,7 +912,8 @@ class ConvertOptionsDialog(QDialog):
         self._shrink_to_spin.setVisible(index == 0)
         self._shrink_by_spin.setVisible(index == 1)
 
-    def apply_source_capabilities(self, source_format: str) -> None:
+    def apply_source_capabilities(self, source_format: str,
+                                   has_velocity_layers=None) -> None:
         """Hide the controls this SOURCE cannot be acted on by.
 
         Not cosmetics. Jan, importing a Roland disc: "Lay MPC drum pads
@@ -926,11 +927,19 @@ class ConvertOptionsDialog(QDialog):
         * **MPC-only** -- the pad map and the synced-LFO tempo are properties
           of an XPM. Nothing else here has either.
         * **VELOCITY LAYERS** -- splitting them and reducing them both need a
-          source that has them. MEASURED on the reference discs rather than
-          assumed: of 2 396 EPS presets and 4 004 Roland presets, **not one**
-          carries a zone with a restricted velocity range. An import with
+          source that has them. Two ways to know there are none. By FORMAT,
+          measured on the reference discs rather than assumed: of 2 396 EPS
+          presets and 4 004 Roland presets, **not one** carries a zone with a
+          restricted velocity range, and an import with
           `reduce_velocity_layers_pct=50` is byte-identical to one without
-          (488 624 bytes, same md5), which is the pair that proves it.
+          (488 624 bytes, same md5). By THIS SOURCE, when the caller has
+          counted them -- `has_velocity_layers=False` for a preset the Detail
+          pane describes as "1 velocity layer". Jan, 2026-09-29, looking at
+          exactly that: we should probably also not offer "split velocity
+          layers" when the source has no vel layers.
+
+          `None` means the caller does not know, and then nothing is hidden on
+          this ground -- absence of a count is not a count of zero.
 
         Reduce KEY ZONES stays, because it is not inert: the same import at
         50% came out 250 612 bytes against 488 624. Rate ceiling and vintage
@@ -940,15 +949,20 @@ class ConvertOptionsDialog(QDialog):
         unanswered question with a frame around it.
         """
         fmt = (source_format or "").strip()
-        if not fmt:
+        if not fmt and has_velocity_layers is None:
             return                      # mixed or unknown: assume nothing
-        mpc = fmt.upper() == "MPC"
+        # No format named means mixed or unknown, and then the MPC-only
+        # controls stay: assume nothing. Only a known non-MPC source
+        # hides them.
+        mpc = (not fmt) or fmt.upper() == "MPC"
         # Velocity layers: only the two disc formats are known NOT to carry
         # them. Every other source is left alone -- absence of a measurement
         # is not a measurement of absence.
         from ..build import foreign_import
-        has_velocity_layers = fmt not in (foreign_import.EPS_FORMAT,
-                                          foreign_import.ROLAND_FORMAT)
+        by_format = fmt not in (foreign_import.EPS_FORMAT,
+                                foreign_import.ROLAND_FORMAT)
+        has_velocity_layers = (by_format if has_velocity_layers is None
+                               else bool(has_velocity_layers) and by_format)
         for w in getattr(self, "_mpc_only_widgets", []):
             w.setVisible(mpc)
         for w in getattr(self, "_velocity_layer_widgets", []):

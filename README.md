@@ -471,6 +471,15 @@ across the reference discs, **none** of 2 396 EPS presets and **none** of
 controls, and the two MPC ones, are therefore left out of the dialog for
 these sources rather than shown and quietly ignored.
 
+**The same applies per preset, not only per format.** Where the source can be
+counted cheaply — a native E4B or KRZ preset — the two velocity controls are
+left out when *that preset* has a single velocity layer, which is the same
+thing the Detail pane says about it in words. Across 38 banks here, 535 of
+600 presets carry more than one layer and 65 carry one, so this hides the
+controls where they would do nothing and leaves them everywhere else. Where
+the count would cost a parse it is not attempted, and then nothing is hidden:
+absence of a count is not a count of zero.
+
 Where a path is not ready, the option is **disabled with mpc2emu's own
 reason**, never left out — someone who asks to convert as the firmware would
 and silently receives an ordinary conversion has no way to tell.

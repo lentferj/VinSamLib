@@ -133,7 +133,8 @@ class FormatConvertDialog(ConvertOptionsDialog):
                  title: str = "Import MPC Program", warning_text: Optional[str] = None,
                  locked_format: Optional[str] = None,
                  bank_loader: Optional[Callable[[], list]] = None,
-                 source_text: str = "", source_format: str = ""):
+                 source_text: str = "", source_format: str = "",
+                 has_velocity_layers=None):
         self._source_format = source_format
         super().__init__(parent, initial=initial, bank_loader=bank_loader)
         self.setWindowTitle(title)
@@ -247,7 +248,7 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # be acted on by. See ConvertOptionsDialog.apply_source_capabilities --
         # the MPC pad map and synced-LFO tempo are XPM properties, and the two
         # disc formats carry no velocity layers at all (measured).
-        self.apply_source_capabilities(source_format)
+        self.apply_source_capabilities(source_format, has_velocity_layers)
 
     # ── import method ──────────────────────────────────────────────────────
 
@@ -475,11 +476,13 @@ class FormatConvertDialog(ConvertOptionsDialog):
                             title: str = "Import MPC Program", warning_text: Optional[str] = None,
                             locked_format: Optional[str] = None,
                             bank_loader: Optional[Callable[[], list]] = None,
-                            source_text: str = "", source_format: str = ""
+                            source_text: str = "", source_format: str = "",
+                            has_velocity_layers=None
                             ) -> Optional[ConversionOptions]:
         dialog = FormatConvertDialog(parent, initial=initial, title=title, warning_text=warning_text,
                                   locked_format=locked_format, bank_loader=bank_loader,
-                                  source_text=source_text, source_format=source_format)
+                                  source_text=source_text, source_format=source_format,
+                                  has_velocity_layers=has_velocity_layers)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog._to_options()

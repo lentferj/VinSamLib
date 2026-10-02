@@ -1502,6 +1502,38 @@ class MainWindow(QMainWindow):
                                 "ordinal": None, "name": Path(path).stem}])
 
     @staticmethod
+    def _selection_has_velocity_layers(nodes: list):
+        """Does any selected preset carry more than one velocity layer?
+
+        `None` when it cannot be answered from what is already parsed -- the
+        dialog treats that as "unknown" and hides nothing, because absence of
+        a count is not a count of zero.
+        """
+        from ..banks import summary as _summary
+        seen = False
+        for node in nodes:
+            payload = getattr(node, "payload", None)
+            if not isinstance(payload, tuple) or len(payload) != 2:
+                return None
+            bank, preset = payload
+            try:
+                if hasattr(bank, "program_keymap_refs"):
+                    ps = _summary.summarize_krz_program(bank, preset)
+                elif hasattr(bank, "samples") and hasattr(preset, "body"):
+                    ps = _summary.summarize_e4b_preset(bank, preset)
+                else:
+                    return None
+                stats = _summary.zone_stats(getattr(ps, "zones", []) or [])
+            except Exception:
+                return None
+            if stats is None:
+                continue
+            seen = True
+            if stats.vel_layer_count > 1:
+                return True
+        return False if seen else None
+
+    @staticmethod
     def _is_mpc_request(request: dict) -> bool:
         return Path(request["path"]).suffix.lower() in xpm_import.MPC_EXT_FORMAT
 
@@ -1699,6 +1731,11 @@ class MainWindow(QMainWindow):
         opts = FormatConvertDialog.get_import_options(
             self, initial=convert.ConversionOptions(target_format=source_fmt or "E4B"),
             title=title, source_format=shared_source_fmt,
+            # Counted, not assumed: a preset the Detail pane describes as
+            # "1 velocity layer" has nothing to split and nothing to reduce,
+            # so the dialog does not offer either. None where we cannot count
+            # cheaply, and then nothing is hidden on that ground.
+            has_velocity_layers=self._selection_has_velocity_layers(nodes),
             warning_text=(
                 "Converting goes through mpc2emu's own model, same as any "
                 "other conversion here; a few advanced parameters may not "
