@@ -34,7 +34,7 @@ preferred route where it works, because it needs no temporary file and gives
 real transport control.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001, RUF100
 
 import os
 import shutil
@@ -42,10 +42,9 @@ import sys
 import tempfile
 import wave
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple  # noqa: UP035
 
-from PySide6.QtCore import (QBuffer, QByteArray, QIODevice, QObject,
-                            QProcess, Signal)
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, QProcess, Signal
 
 try:
     # The state enum lives on QAudio (QtAudio), NOT on QAudioSink: PySide6
@@ -53,15 +52,20 @@ try:
     # AttributeError on the first state change. That cannot fail here --
     # this sandbox has no audio device, so the handler never runs -- which
     # is exactly why it needed finding by reading the binding, not the tests.
-    from PySide6.QtMultimedia import (QAudio, QAudioFormat, QAudioSink,
-                                      QMediaDevices)
+    from PySide6.QtMultimedia import (
+        QAudio,
+        QAudioFormat,
+        QAudioSink,  # noqa: I001, RUF100
+        QMediaDevices,
+    )
+
     _HAVE_MULTIMEDIA = True
-except Exception:  # pragma: no cover - depends on the Qt build
+except Exception:  # pragma: no cover - depends on the Qt build  # noqa: BLE001
     QAudio = QAudioFormat = QAudioSink = QMediaDevices = None
     _HAVE_MULTIMEDIA = False
 
 
-def check_audio_output() -> Tuple[bool, str]:
+def check_audio_output() -> Tuple[bool, str]:  # noqa: UP006
     """``(ok, reason)`` for the audio device -- the same shape as the mpc2emu
     capability probes, so callers can treat them alike.
 
@@ -85,7 +89,7 @@ def check_audio_output() -> Tuple[bool, str]:
         return False, "Qt multimedia is not available in this build"
     try:
         dev = QMediaDevices.defaultAudioOutput()
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001
         return False, f"could not query audio devices: {ex}"
     if dev is None or dev.isNull():
         return False, _no_device_reason()
@@ -106,10 +110,17 @@ def volume_gain(percent) -> float:
     """
     pct = max(0, min(100, int(percent or 0))) / 100.0
     if not _HAVE_MULTIMEDIA:
-        return pct * pct * pct          # a rough cube, same shape, no Qt
-    return max(0.0, float(QAudio.convertVolume(
-        pct, QAudio.VolumeScale.LogarithmicVolumeScale,
-        QAudio.VolumeScale.LinearVolumeScale)))
+        return pct * pct * pct  # a rough cube, same shape, no Qt
+    return max(
+        0.0,
+        float(
+            QAudio.convertVolume(
+                pct,
+                QAudio.VolumeScale.LogarithmicVolumeScale,
+                QAudio.VolumeScale.LinearVolumeScale,
+            )
+        ),
+    )
 
 
 def scaled_pcm(pcm: bytes, gain: float) -> bytes:
@@ -126,11 +137,12 @@ def scaled_pcm(pcm: bytes, gain: float) -> bytes:
     if gain <= 0.0:
         return b"\x00" * len(pcm)
     import array
+
     a = array.array("h")
     a.frombytes(pcm)
     for i, v in enumerate(a):
         s = int(v * gain)
-        a[i] = -32768 if s < -32768 else (32767 if s > 32767 else s)
+        a[i] = -32768 if s < -32768 else (32767 if s > 32767 else s)  # noqa: FURB136
     return a.tobytes()
 
 
@@ -146,8 +158,10 @@ def _no_device_reason() -> str:
         # State the rule, not an assumption about this machine: on a PipeWire
         # host with a genuinely absent device, "so your JACK setup shows none"
         # would be a confident wrong explanation.
-        return ("no audio output device — on Linux Qt reaches only PipeWire "
-                "or PulseAudio, not ALSA or JACK directly")
+        return (
+            "no audio output device — on Linux Qt reaches only PipeWire "
+            "or PulseAudio, not ALSA or JACK directly"
+        )
     return "no audio output device"
 
 
@@ -169,8 +183,15 @@ _LINUX_PLAYERS = (
 )
 _DARWIN_PLAYERS = (("afplay", ["afplay", "{}"]),)
 _WINDOWS_PLAYERS = (
-    ("powershell", ["powershell", "-NoProfile", "-Command",
-                    "(New-Object Media.SoundPlayer '{}').PlaySync()"]),
+    (
+        "powershell",
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "(New-Object Media.SoundPlayer '{}').PlaySync()",
+        ],
+    ),
 )
 
 
@@ -184,7 +205,7 @@ def _candidate_players():
     return ()
 
 
-def find_external_player() -> Optional[Tuple[str, List[str]]]:
+def find_external_player() -> Optional[Tuple[str, List[str]]]:  # noqa: UP006, UP045
     """``(name, argv_template)`` of the first player on PATH, or ``None``.
 
     Presence on PATH is all this can check. Whether the player can actually
@@ -199,7 +220,7 @@ def find_external_player() -> Optional[Tuple[str, List[str]]]:
     return None
 
 
-def playback_route() -> Tuple[str, str]:
+def playback_route() -> Tuple[str, str]:  # noqa: UP006
     """``(kind, description)`` for how audio can leave this process.
 
     ``kind`` is ``"qt"``, ``"external"`` or ``"none"``. Callers gate the Play
@@ -216,7 +237,7 @@ def playback_route() -> Tuple[str, str]:
     return "none", why
 
 
-def check_playback() -> Tuple[bool, str]:
+def check_playback() -> Tuple[bool, str]:  # noqa: UP006
     """``(ok, reason)`` for playback by any route -- the probe the UI gates on."""
     kind, description = playback_route()
     if kind == "qt":
@@ -226,7 +247,7 @@ def check_playback() -> Tuple[bool, str]:
     return False, f"{description}, and no external player on PATH"
 
 
-def negotiate_format() -> Optional[Tuple[int, int]]:
+def negotiate_format() -> Optional[Tuple[int, int]]:  # noqa: UP006, UP045
     """The (rate, channels) to render at, or None if there is no device.
 
     Prefers 44100/2/Int16; falls back to the device's own preferred format
@@ -260,13 +281,14 @@ def write_wav_only(path, rendering, gain: float = 1.0) -> None:
     # Open the file ourselves. `wave.open(str(p))` constructs a Wave_write
     # BEFORE it opens, so a failed open leaves a half-built object whose
     # __del__ raises AttributeError on top of the real OSError, burying it.
-    with open(Path(path), "wb") as fh:
+    with open(Path(path), "wb") as fh:  # noqa: SIM117
         with wave.open(fh, "wb") as w:
             w.setnchannels(rendering.channels)
             w.setsampwidth(2)
             w.setframerate(rendering.rate)
-            w.writeframes(rendering.pcm if gain >= 0.999
-                          else scaled_pcm(rendering.pcm, gain))
+            w.writeframes(
+                rendering.pcm if gain >= 0.999 else scaled_pcm(rendering.pcm, gain)
+            )
 
 
 def write_wav(path, rendering):
@@ -350,8 +372,10 @@ class AuditionPlayer(QObject):
             # Never play a format the device merely tolerates: it sounds at
             # the wrong pitch or with swapped channels, silently.
             fmt = dev.preferredFormat()
-            if (int(fmt.sampleRate()) != rendering.rate
-                    or int(fmt.channelCount()) < rendering.channels):
+            if (
+                int(fmt.sampleRate()) != rendering.rate
+                or int(fmt.channelCount()) < rendering.channels
+            ):
                 return False
         self._sink = QAudioSink(dev, fmt, self)
         # Set BEFORE start(): a volume applied after the sink is running is
@@ -432,8 +456,10 @@ class AuditionPlayer(QObject):
         self._proc = None
         self._tmp = None
         if proc is not None:
-            for sig, slot in ((proc.finished, self._on_proc_finished),
-                              (proc.errorOccurred, self._on_proc_error)):
+            for sig, slot in (
+                (proc.finished, self._on_proc_finished),
+                (proc.errorOccurred, self._on_proc_error),
+            ):
                 try:
                     sig.disconnect(slot)
                 except (RuntimeError, TypeError):
@@ -453,19 +479,22 @@ class AuditionPlayer(QObject):
 
     def _on_state(self, state) -> None:
         if self.sender() is not self._sink:
-            return          # an earlier sink finishing; not ours to act on
+            return  # an earlier sink finishing; not ours to act on
         if state == QAudio.State.IdleState:
             self.stop()
             self.finished.emit()
 
     def _on_proc_finished(self, code, status) -> None:
         if self.sender() is not self._proc:
-            return          # an earlier player exiting; not ours to act on
+            return  # an earlier player exiting; not ours to act on
         name = getattr(self, "_player_name", "the audio player")
         prog = getattr(self, "_player_prog", name)
-        err = bytes(self._proc.readAllStandardError()).decode(
-            "utf-8", "replace") if self._proc is not None else ""
-        bad = (code != 0 or status != QProcess.ExitStatus.NormalExit)
+        err = (
+            bytes(self._proc.readAllStandardError()).decode("utf-8", "replace")
+            if self._proc is not None
+            else ""
+        )
+        bad = code != 0 or status != QProcess.ExitStatus.NormalExit
         self._teardown_proc()
         if bad:
             # A non-zero exit is the `aplay -D jack` case: the player was
@@ -474,8 +503,9 @@ class AuditionPlayer(QObject):
             detail = _error_line(err, prog) or f"exit code {code}"
             # The player's own line usually already names it ("aplay: ..."),
             # and "aplay: aplay: ..." reads like a bug in us.
-            self.failed.emit(detail if detail.startswith((name, prog))
-                             else f"{name}: {detail}")
+            self.failed.emit(
+                detail if detail.startswith((name, prog)) else f"{name}: {detail}"
+            )
         else:
             self.finished.emit()
 

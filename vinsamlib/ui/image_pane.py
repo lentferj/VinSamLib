@@ -23,18 +23,35 @@ being exact-fit, must have every one of its banks specified up front — would
 otherwise force a save-to-disk-then-browse-for-it round trip for no reason.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogButtonBox,
-                             QFileDialog, QFormLayout, QFrame, QHBoxLayout,
-                             QInputDialog, QLabel, QLineEdit, QListWidget,
-                             QListWidgetItem, QMenu, QMessageBox, QPushButton,
-                             QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import workers
 from .models import human_size
@@ -50,8 +67,14 @@ from ..vfs.emu3 import Emu3Volume
 from ..vfs.fatvol import Fat12Volume, Fat16Volume, Fat32Volume
 from ..vfs.iso9660 import Iso9660Volume
 
-_FORMAT_FROM_EXT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ",
-                     ".e3x": "EIII", ".esi": "EIII"}
+_FORMAT_FROM_EXT = {
+    ".e4b": "E4B",
+    ".krz": "KRZ",
+    ".k25": "KRZ",
+    ".k26": "KRZ",
+    ".e3x": "EIII",
+    ".esi": "EIII",
+}
 
 # E4B and EIII share the exact same EMU3-filesystem image kinds (emu3_cd/
 # emu3_hd_emu/emu3_hd_fat) -- IMAGE_KINDS' own format label only lists
@@ -66,7 +89,7 @@ _EMU3_FAMILY = {"E4B", "EIII"}
 _AKAI_PROGRAM_EXTS = {".p3", ".p1", ".a3p", ".s3p"}
 
 
-def _sniff_format(path: str) -> Optional[str]:
+def _sniff_format(path: str) -> Optional[str]:  # noqa: UP045
     # A DIRECTORY first, before anything tries to read it as a file. An AKAI
     # volume is a folder of loose .P3/.S3 files, so open() raises
     # IsADirectoryError -- an OSError, swallowed by the handler below, which
@@ -81,8 +104,7 @@ def _sniff_format(path: str) -> Optional[str]:
             entries = list(d.iterdir())
         except OSError:
             return None
-        if any(e.is_file() and e.suffix.lower() in _AKAI_PROGRAM_EXTS
-               for e in entries):
+        if any(e.is_file() and e.suffix.lower() in _AKAI_PROGRAM_EXTS for e in entries):
             return "AKAI"
         return None
     try:
@@ -132,8 +154,15 @@ _AKAI_MEDIA_KIND = {
 #: MESSAGE because neither mpc2emu nor build/images.py raises a distinct
 #: exception type for it, and inventing one here would only be right until
 #: the next writer was added.
-_OUT_OF_ROOM = ("no room", "not enough free", "too large", "no space",
-                "free volume slot", "does not fit", "exceeds")
+_OUT_OF_ROOM = (
+    "no room",
+    "not enough free",
+    "too large",
+    "no space",
+    "free volume slot",
+    "does not fit",
+    "exceeds",
+)
 
 
 #: Kinds that are laid out once and cannot be appended to afterwards, so an
@@ -148,7 +177,7 @@ def _looks_out_of_room(message: str) -> bool:
     return any(phrase in low for phrase in _OUT_OF_ROOM)
 
 
-def _kind_label(kind: Optional[str], vol: Volume, path: str, fmt: Optional[str]) -> str:
+def _kind_label(kind: Optional[str], vol: Volume, path: str, fmt: Optional[str]) -> str:  # noqa: UP045
     """A short human label for the info box's Type row. `kind` is exact
     when known (this pane just built the image itself, via the New…
     dialog); otherwise it's guessed from the volume class plus the bank
@@ -161,7 +190,9 @@ def _kind_label(kind: Optional[str], vol: Volume, path: str, fmt: Optional[str])
     if kind is not None:
         return _KIND_SHORT_LABEL.get(kind, kind)
     if isinstance(vol, Emu3Volume):
-        return "EMU3 CD image" if Path(path).suffix.lower() == ".iso" else "EMU3 HD image"
+        return (
+            "EMU3 CD image" if Path(path).suffix.lower() == ".iso" else "EMU3 HD image"
+        )
     if isinstance(vol, Fat12Volume):
         return "FAT12 floppy"
     if isinstance(vol, (Fat16Volume, Fat32Volume)):
@@ -181,15 +212,17 @@ class ImagePane(QWidget):
         self.setAcceptDrops(True)
         self._config = config
 
-        self._path: Optional[str] = None
-        self._format: Optional[str] = None
+        self._path: Optional[str] = None  # noqa: UP045
+        self._format: Optional[str] = None  # noqa: UP045
         self._appendable = False
         self._mutable = False
         self._deletable = False
         self._retry_paths: list[str] = []
-        self._retry_format: Optional[str] = None
+        self._retry_format: Optional[str] = None  # noqa: UP045
         self._entries: list[Entry] = []
-        self._kind: Optional[str] = None   # an images.IMAGE_KINDS key, when known
+        self._kind: Optional[str] = (  # noqa: UP045
+            None  # an images.IMAGE_KINDS key, when known  # noqa: RUF100, UP045
+        )
         self._type_label_text = ""
         self._busy = False
         self._live_workers: list[workers.Worker] = []
@@ -199,8 +232,10 @@ class ImagePane(QWidget):
         layout.setSpacing(0)
 
         self._head = QLabel("Image")
-        self._head.setStyleSheet("font-weight: 600; padding: 6px 10px;"
-                                  "border-bottom: 1px solid palette(mid);")
+        self._head.setStyleSheet(
+            "font-weight: 600; padding: 6px 10px;"
+            "border-bottom: 1px solid palette(mid);"
+        )
         layout.addWidget(self._head)
 
         self._stack = QStackedWidget()
@@ -217,11 +252,15 @@ class ImagePane(QWidget):
         outer.setContentsMargins(10, 10, 10, 10)
 
         box = QFrame()
-        box.setStyleSheet("QFrame { border: 1px dashed palette(mid); border-radius: 6px; }")
+        box.setStyleSheet(
+            "QFrame { border: 1px dashed palette(mid); border-radius: 6px; }"
+        )
         box_layout = QVBoxLayout(box)
         box_layout.addStretch()
-        hint = QLabel("Drop a bank here to start a new image with it,\n"
-                       "or create/open one below.")
+        hint = QLabel(
+            "Drop a bank here to start a new image with it,\n"
+            "or create/open one below."
+        )
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setStyleSheet("color: palette(placeholdertext);")
         box_layout.addWidget(hint)
@@ -245,7 +284,8 @@ class ImagePane(QWidget):
 
         info_box = QFrame()
         info_box.setStyleSheet(
-            "QFrame { border: 1px solid palette(mid); border-radius: 6px; }")
+            "QFrame { border: 1px solid palette(mid); border-radius: 6px; }"
+        )
         info_form = QFormLayout(info_box)
         info_form.setContentsMargins(8, 6, 8, 6)
         info_form.setSpacing(4)
@@ -298,15 +338,16 @@ class ImagePane(QWidget):
         # knew the empty page had a New… at all, which you cannot see from
         # here.
         new_btn = QPushButton("New…")
-        new_btn.setToolTip("Build a new, empty image. The one open here is "
-                           "left untouched on disk.")
+        new_btn.setToolTip(
+            "Build a new, empty image. The one open here is " "left untouched on disk."
+        )
         # Seeded from what is OPEN. Reached from an AKAI hard disk, the
         # dialog used to come up offering an EMU3 CD holding E4B banks and
         # then refuse it for having no banks -- three wrong answers in a row
         # to a question the pane could already answer.
         new_btn.clicked.connect(
-            lambda: self._new_image(seed_format=self._format,
-                                    seed_kind=self._kind))
+            lambda: self._new_image(seed_format=self._format, seed_kind=self._kind)
+        )
         row2.addWidget(new_btn)
         self._rename_btn = QPushButton("Rename…")
         self._rename_btn.clicked.connect(self._rename_selected)
@@ -335,13 +376,14 @@ class ImagePane(QWidget):
         # here did exactly nothing: no cursor change worth noticing, no
         # message, no error. "Drag and drop does not work at all" is the
         # correct report of silence, and silence was the bug.
-        if event.mimeData().hasFormat(dnd.DRAG_MIME_TYPE):
+        if event.mimeData().hasFormat(dnd.DRAG_MIME_TYPE):  # noqa: SIM102
             if not getattr(self, "_said_no_to_drag", False):
                 self._said_no_to_drag = True
                 self.statusMessage.emit(
                     "Presets can't be dropped straight onto an image — they "
                     "are not bank files yet. Stage them in New Bank, then "
-                    "\"Send to Image Column\" and \"Build Image →\".")
+                    '"Send to Image Column" and "Build Image →".'
+                )
         event.ignore()
 
     def dragMoveEvent(self, event) -> None:
@@ -394,23 +436,31 @@ class ImagePane(QWidget):
         fmt = self._validate_formats(paths, warn=False)
         return fmt is not None
 
-    def _validate_formats(self, paths: list[str], warn: bool = True) -> Optional[str]:
+    def _validate_formats(self, paths: list[str], warn: bool = True) -> Optional[str]:  # noqa: UP045
         formats = {_sniff_format(p) for p in paths}
         if None in formats or len(formats) != 1:
             if warn:
-                self.statusMessage.emit("Can't drop a mix of formats, or an unrecognised file")
+                self.statusMessage.emit(
+                    "Can't drop a mix of formats, or an unrecognised file"
+                )
             return None
         fmt = formats.pop()
         if self._format is not None and fmt != self._format:
             if warn:
-                self.statusMessage.emit(f"This image is already {self._format} — can't add a {fmt} bank")
+                self.statusMessage.emit(
+                    f"This image is already {self._format} — can't add a {fmt} bank"
+                )
             return None
         return fmt
 
     # -- public entry point for the New Bank column's "Send to Image Column" ----
 
-    def receive_bank_files(self, paths: list[str], fmt: str,
-                            partitions: Optional[list] = None) -> None:
+    def receive_bank_files(
+        self,
+        paths: list[str],
+        fmt: str,
+        partitions: Optional[list] = None,  # noqa: UP045
+    ) -> None:  # noqa: RUF100, UP045
         """Entry point for the Pending for Image column's "Build Image ->"
         -- a batch of already-assembled bank files, in the order they
         should end up on the image. Seeds a brand-new image (pre-filling
@@ -421,8 +471,9 @@ class ImagePane(QWidget):
         if not paths:
             return
         if self._path is None:
-            self._new_image(seed_paths=paths, seed_format=fmt,
-                            seed_partitions=partitions)
+            self._new_image(
+                seed_paths=paths, seed_format=fmt, seed_partitions=partitions
+            )
             return
         # Appending to an existing disk: the partition grouping describes a
         # disk being CREATED, and the volumes here are going into partitions
@@ -432,7 +483,8 @@ class ImagePane(QWidget):
         if partitions:
             self.statusMessage.emit(
                 "Partition breaks apply when creating an image; appending "
-                "puts volumes wherever the disk has room")
+                "puts volumes wherever the disk has room"
+            )
         self._append_paths(paths)
 
     # -- opening / creating -------------------------------------------------------
@@ -448,18 +500,23 @@ class ImagePane(QWidget):
 
     def _open_image_dialog(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(
-            self, "Open Image", self._dialog_start_dir(),
+            self,
+            "Open Image",
+            self._dialog_start_dir(),
             "Disk images (*.iso *.hda *.img);;All files (*)",
-            options=QFileDialog.Option.DontUseNativeDialog)
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if path:
             self._remember_dir(path)
-            self._kind = None   # unknown provenance -- _open_image() will guess from content
+            self._kind = (
+                None  # unknown provenance -- _open_image() will guess from content
+            )
             self._open_image(path)
 
-    def _open_image(self, path: str, known_kind: Optional[str] = None) -> None:
+    def _open_image(self, path: str, known_kind: Optional[str] = None) -> None:  # noqa: UP045
         try:
             vol = open_volume(path)
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
             self.statusMessage.emit(f"Couldn't open {Path(path).name}: {ex}")
             return
         if vol is None:
@@ -470,7 +527,7 @@ class ImagePane(QWidget):
 
         akai_volumes = False
 
-        def _walk(folder: Optional[Entry] = None) -> None:
+        def _walk(folder: Optional[Entry] = None) -> None:  # noqa: UP045
             nonlocal akai_volumes
             for e in vol.list(folder):
                 if e.meta.get("akai_volume"):
@@ -488,7 +545,7 @@ class ImagePane(QWidget):
                 elif e.kind == EntryKind.BANK:
                     entries.append(e)
 
-        fmt: Optional[str] = None
+        fmt: Optional[str] = None  # noqa: UP045
         try:
             _walk()
             if akai_volumes:
@@ -532,9 +589,9 @@ class ImagePane(QWidget):
         # has no attribute 'delete'. A button that asks you to confirm
         # something irreversible had better be able to do it.
         self._mutable = isinstance(vol, WritableVolume)
-        self._appendable = (self._mutable
-                            or (akai_volumes
-                                and self._kind in akai_image.AKAI_APPENDABLE))
+        self._appendable = self._mutable or (
+            akai_volumes and self._kind in akai_image.AKAI_APPENDABLE
+        )
         # THREE capabilities now, because the three really do differ on an
         # AKAI disc: append goes through mpc2emu's image writer, delete
         # through their delete_akai_volume(), and rename through neither --
@@ -542,25 +599,32 @@ class ImagePane(QWidget):
         # not yet know whether the sampler cares about anything else in that
         # 16-byte slot, and a rename that half-works is worse than a button
         # that is off.
-        self._deletable = (self._mutable
-                           or (akai_volumes
-                               and self._kind in akai_image.AKAI_DELETABLE))
+        self._deletable = self._mutable or (
+            akai_volumes and self._kind in akai_image.AKAI_DELETABLE
+        )
         self._entries = entries
         self._type_label_text = _kind_label(self._kind, vol, path, fmt)
         self._refresh()
         noun = "volume" if akai_volumes else "bank"
-        self.statusMessage.emit(
-            f"Opened {Path(path).name} ({len(entries)} {noun}(s))")
+        self.statusMessage.emit(f"Opened {Path(path).name} ({len(entries)} {noun}(s))")
 
-    def _new_image(self, seed_paths: Optional[list[str]] = None,
-                    seed_format: Optional[str] = None,
-                    seed_partitions: Optional[list] = None,
-                    seed_kind: Optional[str] = None,
-                    seed_size_mb: Optional[int] = None) -> None:
-        dlg = _NewImageDialog(self, self._config, seed_paths=seed_paths,
-                              seed_format=seed_format,
-                              seed_partitions=seed_partitions,
-                              seed_kind=seed_kind, seed_size_mb=seed_size_mb)
+    def _new_image(
+        self,
+        seed_paths: Optional[list[str]] = None,  # noqa: UP045
+        seed_format: Optional[str] = None,  # noqa: UP045
+        seed_partitions: Optional[list] = None,  # noqa: UP045
+        seed_kind: Optional[str] = None,  # noqa: UP045
+        seed_size_mb: Optional[int] = None,  # noqa: UP045
+    ) -> None:  # noqa: RUF100, UP045
+        dlg = _NewImageDialog(
+            self,
+            self._config,
+            seed_paths=seed_paths,
+            seed_format=seed_format,
+            seed_partitions=seed_partitions,
+            seed_kind=seed_kind,
+            seed_size_mb=seed_size_mb,
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         spec = dlg.result_spec()
@@ -569,11 +633,19 @@ class ImagePane(QWidget):
         self._remember_dir(spec["output_path"])
         self._run_confirmed_op(
             f"Building {Path(spec['output_path']).name}…",
-            workers.Worker(images.create_image, spec["kind"], spec["output_path"],
-                           spec["bank_paths"], spec["volume_label"], spec["size_mb"],
-                           spec["floppy_kind"], spec.get("partitions")),
-            on_done=lambda _log, p=spec["output_path"], k=spec["kind"]:
-                self._open_image(p, known_kind=k),
+            workers.Worker(
+                images.create_image,
+                spec["kind"],
+                spec["output_path"],
+                spec["bank_paths"],
+                spec["volume_label"],
+                spec["size_mb"],
+                spec["floppy_kind"],
+                spec.get("partitions"),
+            ),
+            on_done=lambda _log,
+            p=spec["output_path"],
+            k=spec["kind"]: self._open_image(p, known_kind=k),
         )
 
     def _close_image(self) -> None:
@@ -583,7 +655,7 @@ class ImagePane(QWidget):
         self._mutable = False
         self._deletable = False
         self._retry_paths: list[str] = []
-        self._retry_format: Optional[str] = None
+        self._retry_format: Optional[str] = None  # noqa: UP045
         self._entries = []
         self._kind = None
         self._type_label_text = ""
@@ -601,7 +673,9 @@ class ImagePane(QWidget):
         self._info_name_label.setText(path.name)
         self._info_path_label.setText(str(path.parent))
         self._info_type_label.setText(self._type_label_text or "(unknown)")
-        self._info_format_label.setText(self._format or "(none yet — drop or append a bank)")
+        self._info_format_label.setText(
+            self._format or "(none yet — drop or append a bank)"
+        )
         try:
             self._info_size_label.setText(human_size(path.stat().st_size))
         except OSError:
@@ -620,20 +694,28 @@ class ImagePane(QWidget):
         self._rename_btn.setEnabled(self._mutable)
         self._delete_btn.setEnabled(self._deletable)
         self._rename_btn.setToolTip(
-            "" if self._mutable else
-            ("Renaming an AKAI volume in place is not supported yet. Rebuild "
-             "the image with New… under the name you want.")
-            if self._format == "AKAI" else "This image kind is read-only.")
+            ""
+            if self._mutable
+            else (
+                "Renaming an AKAI volume in place is not supported yet. Rebuild "
+                "the image with New… under the name you want."
+            )
+            if self._format == "AKAI"
+            else "This image kind is read-only."
+        )
         self._delete_btn.setToolTip(
-            "" if self._deletable else "This image kind is read-only.")
+            "" if self._deletable else "This image kind is read-only."
+        )
 
         self._list.clear()
         for e in self._entries:
-            item = QListWidgetItem(f"{e.name}   {human_size(e.size)}" if e.size else e.name)
+            item = QListWidgetItem(
+                f"{e.name}   {human_size(e.size)}" if e.size else e.name
+            )
             item.setData(Qt.ItemDataRole.UserRole, e)
             self._list.addItem(item)
 
-    def _selected_entry(self) -> Optional[Entry]:
+    def _selected_entry(self) -> Optional[Entry]:  # noqa: UP045
         item = self._list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
 
@@ -669,8 +751,12 @@ class ImagePane(QWidget):
         else:
             filt = "Banks (*.e4b *.krz *.k25 *.k26 *.e3x *.esi)"
         paths, _filter = QFileDialog.getOpenFileNames(
-            self, "Append Bank File(s)", self._dialog_start_dir(), filt,
-            options=QFileDialog.Option.DontUseNativeDialog)
+            self,
+            "Append Bank File(s)",
+            self._dialog_start_dir(),
+            filt,
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if paths:
             self._remember_dir(paths[0])
             self._append_paths(paths)
@@ -700,11 +786,15 @@ class ImagePane(QWidget):
         entry = self._selected_entry()
         if entry is None:
             return
-        new_name, ok = QInputDialog.getText(self, "Rename", "New name:", text=entry.name.strip())
+        new_name, ok = QInputDialog.getText(
+            self, "Rename", "New name:", text=entry.name.strip()
+        )
         if not ok or not new_name.strip():
             return
         image_name = Path(self._path).name
-        if not self._confirm(f"Rename '{entry.name.strip()}' to '{new_name.strip()}' in '{image_name}'?"):
+        if not self._confirm(
+            f"Rename '{entry.name.strip()}' to '{new_name.strip()}' in '{image_name}'?"
+        ):
             return
         self._run_confirmed_op(
             f"Renaming in {image_name}…",
@@ -720,7 +810,8 @@ class ImagePane(QWidget):
             return
         image_name = Path(self._path).name
         if not self._confirm(
-                f"Delete '{entry.name.strip()}' from '{image_name}'?\nThis cannot be undone."):
+            f"Delete '{entry.name.strip()}' from '{image_name}'?\nThis cannot be undone."
+        ):
             return
         self._run_confirmed_op(
             f"Deleting from {image_name}…",
@@ -742,8 +833,12 @@ class ImagePane(QWidget):
         suggested = safe_path_component(entry.name.strip(), fallback="bank")
         default_path = str(Path(start_dir) / suggested) if start_dir else suggested
         out_path, _filter = QFileDialog.getSaveFileName(
-            self, "Export Bank", default_path, f"Bank (*{ext})",
-            options=QFileDialog.Option.DontUseNativeDialog)
+            self,
+            "Export Bank",
+            default_path,
+            f"Bank (*{ext})",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if not out_path:
             return
         self._remember_dir(out_path)
@@ -758,16 +853,23 @@ class ImagePane(QWidget):
     # -- shared op runner ---------------------------------------------------------
 
     def _confirm(self, text: str) -> bool:
-        return QMessageBox.question(
-            self, "Confirm", text + "\n\nA safety copy is made and only swapped in "
-            "if this succeeds, but back up irreplaceable library images regardless.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+        return (
+            QMessageBox.question(
+                self,
+                "Confirm",
+                text + "\n\nA safety copy is made and only swapped in "
+                "if this succeeds, but back up irreplaceable library images regardless.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
 
     def _offer_bigger_image(self, reason: str) -> bool:
         """Offer to build a new image that actually fits. True if taken."""
-        need = sum(Path(p).stat().st_size for p in self._retry_paths
-                   if Path(p).exists())
+        need = sum(
+            Path(p).stat().st_size for p in self._retry_paths if Path(p).exists()
+        )
         here = Path(self._path).stat().st_size if self._path else 0
         # Headroom, not a tight fit: an AKAI volume costs a directory and a
         # partition costs a header, and a disc sized to the exact byte total
@@ -775,11 +877,14 @@ class ImagePane(QWidget):
         # is an image file, not a real disc.
         suggest = max(16, int((need * 1.2) // 1048576) + 16)
         existing = len(self._entries)
-        keep = ("" if not existing else
-                f"\n\nThe {existing} item(s) already on "
-                f"{Path(self._path).name} are NOT carried over — the new "
-                f"image starts with just these banks. The current image is "
-                f"left untouched.")
+        keep = (
+            ""
+            if not existing
+            else f"\n\nThe {existing} item(s) already on "
+            f"{Path(self._path).name} are NOT carried over — the new "
+            f"image starts with just these banks. The current image is "
+            f"left untouched."
+        )
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Image Too Small")
@@ -787,7 +892,8 @@ class ImagePane(QWidget):
             f"{reason}\n\n"
             f"{Path(self._path).name} is {here / 1048576:.0f} MB and these "
             f"bank(s) need about {need / 1048576:.0f} MB. Build a new image "
-            f"of about {suggest} MB instead?{keep}")
+            f"of about {suggest} MB instead?{keep}"
+        )
         build = box.addButton("Build Bigger Image…", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.exec()
@@ -795,12 +901,17 @@ class ImagePane(QWidget):
             return False
         # Straight into New Image with the banks and a size already filled
         # in, on the kind that is open.
-        self._new_image(seed_paths=list(self._retry_paths),
-                        seed_format=self._retry_format,
-                        seed_kind=self._kind, seed_size_mb=suggest)
+        self._new_image(
+            seed_paths=list(self._retry_paths),
+            seed_format=self._retry_format,
+            seed_kind=self._kind,
+            seed_size_mb=suggest,
+        )
         return True
 
-    def _run_confirmed_op(self, busy_message: str, worker: workers.Worker, on_done) -> None:
+    def _run_confirmed_op(
+        self, busy_message: str, worker: workers.Worker, on_done
+    ) -> None:
         if self._busy:
             self.statusMessage.emit("Another image operation is still running")
             return
@@ -823,7 +934,7 @@ class ImagePane(QWidget):
             # refusal alone leaves the user to work out the arithmetic, pick
             # a size, rebuild by hand and re-queue everything -- for a
             # condition the pane can size exactly.
-            if _looks_out_of_room(last_line) and self._retry_paths:
+            if _looks_out_of_room(last_line) and self._retry_paths:  # noqa: SIM102
                 if self._offer_bigger_image(last_line):
                     return
             # A DIALOG, not only the status bar. Writing media is deliberate,
@@ -836,10 +947,16 @@ class ImagePane(QWidget):
 
         worker.signals.finished.connect(_finished)
         worker.signals.error.connect(_error)
-        worker.signals.finished.connect(lambda *_: self._live_workers.remove(worker)
-                                          if worker in self._live_workers else None)
-        worker.signals.error.connect(lambda *_: self._live_workers.remove(worker)
-                                       if worker in self._live_workers else None)
+        worker.signals.finished.connect(
+            lambda *_: self._live_workers.remove(worker)
+            if worker in self._live_workers
+            else None
+        )
+        worker.signals.error.connect(
+            lambda *_: self._live_workers.remove(worker)
+            if worker in self._live_workers
+            else None
+        )
         self._live_workers.append(worker)
         workers.run(worker)
 
@@ -857,12 +974,16 @@ class _NewImageDialog(QDialog):
     (for the appendable HD/disk kinds) a size with real headroom, plus
     optional initial bank files."""
 
-    def __init__(self, parent=None, config: Optional[Config] = None,
-                 seed_paths: Optional[list[str]] = None,
-                 seed_format: Optional[str] = None,
-                 seed_partitions: Optional[list] = None,
-                 seed_kind: Optional[str] = None,
-                 seed_size_mb: Optional[int] = None):
+    def __init__(
+        self,
+        parent=None,
+        config: Optional[Config] = None,  # noqa: UP045
+        seed_paths: Optional[list[str]] = None,  # noqa: UP045
+        seed_format: Optional[str] = None,  # noqa: UP045
+        seed_partitions: Optional[list] = None,  # noqa: UP045
+        seed_kind: Optional[str] = None,  # noqa: UP045
+        seed_size_mb: Optional[int] = None,  # noqa: UP045
+    ):  # noqa: RUF100, UP045
         super().__init__(parent)
         self._seed_size_mb = seed_size_mb
         self.setWindowTitle("New Image")
@@ -878,7 +999,9 @@ class _NewImageDialog(QDialog):
         self._kind_box = QComboBox()
         seed_row = None
         exact_row = None
-        for row, (key, (fmt, label, _default_label)) in enumerate(images.IMAGE_KINDS.items()):
+        for row, (key, (fmt, label, _default_label)) in enumerate(
+            images.IMAGE_KINDS.items()
+        ):
             self._kind_box.addItem(f"{label}  [{fmt}]", key)
             # An exact kind beats a format guess. Opened from an AKAI hard
             # disk, "AKAI hard disk" is the answer -- not merely the first
@@ -887,7 +1010,7 @@ class _NewImageDialog(QDialog):
                 exact_row = row
             seed_matches = fmt == seed_format or ({fmt, seed_format} <= _EMU3_FAMILY)
             if seed_format is not None and seed_matches and seed_row is None:
-                seed_row = row   # first matching kind, e.g. E4B/EIII -> emu3_cd
+                seed_row = row  # first matching kind, e.g. E4B/EIII -> emu3_cd
         if exact_row is not None:
             self._kind_box.setCurrentIndex(exact_row)
         elif seed_row is not None:
@@ -907,7 +1030,7 @@ class _NewImageDialog(QDialog):
         self._size_spin.setRange(16, 14 * 1024)
         self._size_spin.setSuffix(" MB")
         self._size_spin.setSpecialValueText("auto")
-        self._size_spin.setValue(16)   # == minimum -> shows "auto" (size_mb=None)
+        self._size_spin.setValue(16)  # == minimum -> shows "auto" (size_mb=None)
         if seed_size_mb:
             self._size_spin.setValue(max(16, int(seed_size_mb)))
         # Same orphaned-label problem the Volume label row had: hiding the
@@ -953,7 +1076,8 @@ class _NewImageDialog(QDialog):
         self._plan_label = QLabel("")
         self._plan_label.setWordWrap(True)
         self._plan_label.setStyleSheet(
-            "color: palette(placeholdertext); font-size: 11px;")
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         layout.addWidget(self._plan_label)
         self._update_partition_plan()
 
@@ -967,8 +1091,10 @@ class _NewImageDialog(QDialog):
         bank_buttons.addStretch()
         layout.addLayout(bank_buttons)
 
-        self._spec: Optional[dict] = None
-        self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self._spec: Optional[dict] = None  # noqa: UP045
+        self._buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         self._buttons.accepted.connect(self._try_accept)
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)
@@ -981,12 +1107,13 @@ class _NewImageDialog(QDialog):
 
     def _on_kind_changed(self) -> None:
         kind = self._current_kind()
-        fmt, _label, default_label = images.IMAGE_KINDS[kind]
+        fmt, _label, default_label = images.IMAGE_KINDS[kind]  # noqa: RUF059
         self._banks_caption.setText(
             "Initial banks — REQUIRED: this format is created once and "
             "cannot be appended to later:"
-            if kind in CREATE_ONCE_KINDS else
-            "Initial banks (optional — you can append to this kind later):")
+            if kind in CREATE_ONCE_KINDS
+            else "Initial banks (optional — you can append to this kind later):"
+        )
         # A DEFAULT LEFT OVER FROM ANOTHER KIND IS NOT THE USER'S CHOICE.
         # This only filled an EMPTY field, so switching from an AKAI hard
         # disk (whose row is hidden, holding "VOLUME 001") to an EMU3 CD left
@@ -1018,18 +1145,24 @@ class _NewImageDialog(QDialog):
             self._label_row_label.setText("Disc label:")
             self._label_edit.setToolTip(
                 "The CD3000 disc's own label. The volumes on it are named "
-                "individually, from the banks queued in Pending for Image.")
+                "individually, from the banks queued in Pending for Image."
+            )
         elif kind == "akai_floppy":
             self._label_row_label.setText("Volume name:")
             self._label_edit.setToolTip(
-                "A floppy holds exactly one AKAI volume, and this names it.")
+                "A floppy holds exactly one AKAI volume, and this names it."
+            )
         else:
             self._label_row_label.setText("Volume label:")
             self._label_edit.setToolTip("")
         self._update_partition_plan()
 
     def _start_dir(self) -> str:
-        return str(self._config.last_image_dir) if self._config and self._config.last_image_dir else ""
+        return (
+            str(self._config.last_image_dir)
+            if self._config and self._config.last_image_dir
+            else ""
+        )
 
     def _browse_output(self) -> None:
         kind = self._current_kind()
@@ -1038,14 +1171,28 @@ class _NewImageDialog(QDialog):
         # swallows an exception out of a slot, so the button did nothing at
         # all, silently, for every AKAI image. A kind nobody listed now gets
         # a sensible extension instead of a dead button.
-        ext = {"emu3_cd": "iso", "emu3_hd_emu": "hda", "emu3_hd_fat": "hda",
-               "k2000_fat16": "hda", "k2000_iso9660": "iso", "fat12_floppy": "img",
-               "akai_hd": "hda", "akai_cd3000": "iso", "akai_floppy": "img"}.get(kind, "img")
+        ext = {
+            "emu3_cd": "iso",
+            "emu3_hd_emu": "hda",
+            "emu3_hd_fat": "hda",
+            "k2000_fat16": "hda",
+            "k2000_iso9660": "iso",
+            "fat12_floppy": "img",
+            "akai_hd": "hda",
+            "akai_cd3000": "iso",
+            "akai_floppy": "img",
+        }.get(kind, "img")
         start_dir = self._start_dir()
-        default = str(Path(start_dir) / f"NewImage.{ext}") if start_dir else f"NewImage.{ext}"
+        default = (
+            str(Path(start_dir) / f"NewImage.{ext}") if start_dir else f"NewImage.{ext}"
+        )
         path, _filter = QFileDialog.getSaveFileName(
-            self, "New Image", default, f"*.{ext}",
-            options=QFileDialog.Option.DontUseNativeDialog)
+            self,
+            "New Image",
+            default,
+            f"*.{ext}",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if path:
             self._path_edit.setText(path)
 
@@ -1073,23 +1220,30 @@ class _NewImageDialog(QDialog):
                 # automatic plan here would contradict the markers they can
                 # see one column to the left.
                 lines = akai_image.describe_partition_groups(
-                    volumes, self._partitions, kind=kind)
+                    volumes, self._partitions, kind=kind
+                )
             else:
                 lines = akai_image.describe_partition_plan(volumes, kind=kind)
-        except Exception as ex:
-            self._plan_label.setText(
-                f"Partition layout could not be previewed: {ex}")
+        except Exception as ex:  # noqa: BLE001
+            self._plan_label.setText(f"Partition layout could not be previewed: {ex}")
             return
         self._plan_label.setText("Will be written as:\n" + "\n".join(lines))
 
     def _add_bank_files(self) -> None:
         kind = self._current_kind()
         fmt, _label, _dl = images.IMAGE_KINDS[kind]
-        filt = ("E4B/EIII banks (*.e4b *.e3x *.esi)" if fmt == "E4B"
-                else "KRZ banks (*.krz *.k25 *.k26)")
+        filt = (
+            "E4B/EIII banks (*.e4b *.e3x *.esi)"
+            if fmt == "E4B"
+            else "KRZ banks (*.krz *.k25 *.k26)"
+        )
         paths, _filter = QFileDialog.getOpenFileNames(
-            self, "Add Bank Files", self._start_dir(), filt,
-            options=QFileDialog.Option.DontUseNativeDialog)
+            self,
+            "Add Bank Files",
+            self._start_dir(),
+            filt,
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         for p in paths:
             self._bank_paths.append(p)
             self._bank_list.addItem(QListWidgetItem(Path(p).name))
@@ -1113,12 +1267,17 @@ class _NewImageDialog(QDialog):
         kind = self._current_kind()
         output_path = self._path_edit.text().strip()
         if not output_path:
-            QMessageBox.warning(self, "New Image", "Type or choose a location to save the image first.")
+            QMessageBox.warning(
+                self, "New Image", "Type or choose a location to save the image first."
+            )
             return
         if kind in CREATE_ONCE_KINDS and not self._bank_paths:
-            QMessageBox.warning(self, "New Image",
-                                 "This image format is created once and can't be appended to "
-                                 "later — add at least one bank.")
+            QMessageBox.warning(
+                self,
+                "New Image",
+                "This image format is created once and can't be appended to "
+                "later — add at least one bank.",
+            )
             return
         size_mb = self._size_spin.value() if self._size_spin.value() > 16 else None
         self._spec = {
@@ -1132,5 +1291,5 @@ class _NewImageDialog(QDialog):
         }
         self.accept()
 
-    def result_spec(self) -> Optional[dict]:
+    def result_spec(self) -> Optional[dict]:  # noqa: UP045
         return self._spec

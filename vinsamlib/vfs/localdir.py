@@ -32,8 +32,11 @@ class LocalDirVolume(Volume):
     def __init__(self, root: str):
         self.path = root
 
-    def list(self, folder: Optional[Entry] = None,
-             size_suffixes: Optional[frozenset] = None) -> list[Entry]:
+    def list(
+        self,
+        folder: Optional[Entry] = None,  # noqa: UP045
+        size_suffixes: Optional[frozenset] = None,  # noqa: UP045
+    ) -> list[Entry]:  # noqa: RUF100, UP045
         """Entries under `folder`, or the volume root.
 
         `size_suffixes` names the file suffixes whose SIZE and MTIME the
@@ -72,15 +75,17 @@ class LocalDirVolume(Volume):
                     mtime = st.st_mtime
                 else:
                     size, mtime = 0, None
-            except OSError:      # a broken symlink, or it went away mid-listing
+            except OSError:  # a broken symlink, or it went away mid-listing
                 continue
-            out.append(Entry(
-                name=child.name,
-                kind=_classify(suffix, is_dir),
-                size=size,
-                ref=child.path,
-                meta={"mtime": mtime, "is_image": suffix in _IMAGE_EXTS},
-            ))
+            out.append(
+                Entry(
+                    name=child.name,
+                    kind=_classify(suffix, is_dir),
+                    size=size,
+                    ref=child.path,
+                    meta={"mtime": mtime, "is_image": suffix in _IMAGE_EXTS},
+                )
+            )
         return out
 
     def read(self, entry: Entry) -> bytes:

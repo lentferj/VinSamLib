@@ -98,7 +98,8 @@ def require_real_state_opt_in(what: str) -> None:
         f"Refusing to open the real {what} at {home_data_dir()}. Point "
         f"XDG_DATA_HOME somewhere disposable, or set {REAL_STATE_ENV}=1 if "
         f"you genuinely mean the user's own data. A test script that did "
-        f"this once destroyed a library index.")
+        f"this once destroyed a library index."
+    )
 
 
 def _toml_str(value) -> str:
@@ -127,16 +128,16 @@ class Config:
     # Last directory browsed to in the Image column's file dialogs (New…'s
     # Browse…, Open…) — persisted across restarts so each one doesn't start
     # back at some default location every time.
-    last_image_dir: Optional[Path] = None
+    last_image_dir: Optional[Path] = None  # noqa: UP045
     # Same idea for File > Add Library Folder… — the parent of the last
     # folder added, so picking a sibling library folder next time doesn't
     # start back at the dialog's platform default every time.
-    last_library_dir: Optional[Path] = None
+    last_library_dir: Optional[Path] = None  # noqa: UP045
     # And for the two import dialogs, which start somewhere else entirely:
     # sample folders live with your samples, MPC programs with your MPC
     # backup, and neither is where you last added a library folder.
-    last_sample_dir: Optional[Path] = None
-    last_program_dir: Optional[Path] = None
+    last_sample_dir: Optional[Path] = None  # noqa: UP045
+    last_program_dir: Optional[Path] = None  # noqa: UP045
     # New Bank's size-meter warning threshold, in MB, per format. This is
     # a soft, user-adjustable "will this fit MY hardware's RAM" warning,
     # separate from the hard format-technical ceiling banks/e4b.py always
@@ -242,13 +243,13 @@ class Config:
     # Size only, deliberately not position: a window restored onto a monitor
     # that is no longer attached is unreachable, and the fix for that is
     # fiddlier than the feature is worth.
-    window_width: Optional[int] = None
-    window_height: Optional[int] = None
+    window_width: Optional[int] = None  # noqa: UP045
+    window_height: Optional[int] = None  # noqa: UP045
 
     CONFIG_FILE = "config.toml"
 
     @classmethod
-    def load(cls, path: Path | None = None) -> "Config":
+    def load(cls, path: Path | None = None) -> "Config":  # noqa: UP037
         path = path or (user_config_dir() / cls.CONFIG_FILE)
         if not path.exists():
             return cls()
@@ -270,39 +271,53 @@ class Config:
         krz_pram_kb = data.get("krz_pram_kb", defaults.krz_pram_kb)
         akai_max_objects = data.get("akai_max_objects", defaults.akai_max_objects)
         autosave_seconds = data.get("autosave_seconds", defaults.autosave_seconds)
-        debug_mpc2emu_log = bool(data.get("debug_mpc2emu_log",
-                                          defaults.debug_mpc2emu_log))
+        debug_mpc2emu_log = bool(
+            data.get("debug_mpc2emu_log", defaults.debug_mpc2emu_log)
+        )
         loop_click_check = bool(data.get("loop_click_check", defaults.loop_click_check))
-        warn_playback_ceiling = bool(data.get("warn_playback_ceiling",
-                                              defaults.warn_playback_ceiling))
-        audition_show_report = bool(data.get(
-            "audition_show_report", defaults.audition_show_report))
-        audition_volume = max(0, min(100, int(data.get(
-            "audition_volume", defaults.audition_volume))))
+        warn_playback_ceiling = bool(
+            data.get("warn_playback_ceiling", defaults.warn_playback_ceiling)
+        )
+        audition_show_report = bool(
+            data.get("audition_show_report", defaults.audition_show_report)
+        )
+        audition_volume = max(
+            0, min(100, int(data.get("audition_volume", defaults.audition_volume)))
+        )
         audition_notes = str(data.get("audition_notes", defaults.audition_notes))
-        audition_velocity = int(data.get("audition_velocity", defaults.audition_velocity))
-        audition_hold_seconds = float(data.get("audition_hold_seconds",
-                                               defaults.audition_hold_seconds))
-        audition_gap_seconds = float(data.get("audition_gap_seconds",
-                                              defaults.audition_gap_seconds))
-        return cls(mpc2emu_path=mpc2emu_path, library_roots=roots,
-                    last_image_dir=last_image_dir, last_library_dir=last_library_dir,
-                    last_sample_dir=last_sample_dir, last_program_dir=last_program_dir,
-                    e4b_bank_limit_mb=e4b_bank_limit_mb, krz_bank_limit_mb=krz_bank_limit_mb,
-                    krz_pram_kb=krz_pram_kb,
-                    akai_max_objects=akai_max_objects,
-                    autosave_seconds=autosave_seconds,
-                    debug_mpc2emu_log=debug_mpc2emu_log,
-                    loop_click_check=loop_click_check,
-                    warn_playback_ceiling=warn_playback_ceiling,
-                    audition_show_report=audition_show_report,
-                    audition_volume=audition_volume,
-                    audition_notes=audition_notes,
-                    audition_velocity=audition_velocity,
-                    audition_hold_seconds=audition_hold_seconds,
-                    audition_gap_seconds=audition_gap_seconds,
-                    window_width=data.get("window_width"),
-                    window_height=data.get("window_height"))
+        audition_velocity = int(
+            data.get("audition_velocity", defaults.audition_velocity)
+        )
+        audition_hold_seconds = float(
+            data.get("audition_hold_seconds", defaults.audition_hold_seconds)
+        )
+        audition_gap_seconds = float(
+            data.get("audition_gap_seconds", defaults.audition_gap_seconds)
+        )
+        return cls(
+            mpc2emu_path=mpc2emu_path,
+            library_roots=roots,
+            last_image_dir=last_image_dir,
+            last_library_dir=last_library_dir,
+            last_sample_dir=last_sample_dir,
+            last_program_dir=last_program_dir,
+            e4b_bank_limit_mb=e4b_bank_limit_mb,
+            krz_bank_limit_mb=krz_bank_limit_mb,
+            krz_pram_kb=krz_pram_kb,
+            akai_max_objects=akai_max_objects,
+            autosave_seconds=autosave_seconds,
+            debug_mpc2emu_log=debug_mpc2emu_log,
+            loop_click_check=loop_click_check,
+            warn_playback_ceiling=warn_playback_ceiling,
+            audition_show_report=audition_show_report,
+            audition_volume=audition_volume,
+            audition_notes=audition_notes,
+            audition_velocity=audition_velocity,
+            audition_hold_seconds=audition_hold_seconds,
+            audition_gap_seconds=audition_gap_seconds,
+            window_width=data.get("window_width"),
+            window_height=data.get("window_height"),
+        )
 
     def save(self, path: Path | None = None, allow_empty_library: bool = False) -> None:
         """Writes the config file. Refuses to blank a non-empty library.
@@ -346,8 +361,9 @@ class Config:
         lines.append(f"autosave_seconds = {self.autosave_seconds}")
         lines.append(f"debug_mpc2emu_log = {str(bool(self.debug_mpc2emu_log)).lower()}")
         lines.append(f"loop_click_check = {str(self.loop_click_check).lower()}")
-        lines.append("warn_playback_ceiling = "
-                     f"{str(self.warn_playback_ceiling).lower()}")
+        lines.append(
+            "warn_playback_ceiling = " f"{str(self.warn_playback_ceiling).lower()}"
+        )
         lines.append(f"audition_show_report = {str(self.audition_show_report).lower()}")
         lines.append(f"audition_volume = {int(self.audition_volume)}")
         lines.append(f"audition_notes = {_toml_str(self.audition_notes)}")
@@ -393,7 +409,9 @@ class Config:
             Path("parsers") / "e4b_parser.py",
             Path("writers") / "e4b_writer.py",
         ]
-        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        missing = [
+            str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()
+        ]
         if missing:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Vintage resample/reduce is available"
@@ -411,7 +429,9 @@ class Config:
             Path("processors") / "start_trim.py",
             Path("processors") / "tail_trim.py",
         ]
-        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        missing = [
+            str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()
+        ]
         if missing:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Trim silence is available"
@@ -430,9 +450,11 @@ class Config:
             return False, reason
         marker = self.mpc2emu_path / "models" / "diagnostics.py"
         if not marker.exists():
-            return False, ("this mpc2emu checkout predates structured "
-                           "diagnostics, so conversion warnings stay on its "
-                           "stdout and cannot be shown here")
+            return False, (
+                "this mpc2emu checkout predates structured "
+                "diagnostics, so conversion warnings stay on its "
+                "stdout and cannot be shown here"
+            )
         return True, "Conversion warnings are available"
 
     def check_xpm_import_support(self) -> tuple[bool, str]:
@@ -445,7 +467,10 @@ class Config:
             return False, reason
         marker = self.mpc2emu_path / "parsers" / "xpm_parser.py"
         if not marker.exists():
-            return False, f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}"
+            return (
+                False,
+                f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}",
+            )
         return True, "XPM import is available"
 
     def check_akai_read_support(self) -> tuple[bool, str]:
@@ -467,7 +492,8 @@ class Config:
                 "this mpc2emu checkout has no AKAI support "
                 f"({marker.relative_to(self.mpc2emu_path)} is missing). "
                 "Browsing AKAI discs works regardless; converting them needs "
-                "a checkout that has it.")
+                "a checkout that has it."
+            )
         return True, "Converting AKAI programs is available"
 
     def check_akai_write_support(self) -> tuple[bool, str]:
@@ -485,7 +511,9 @@ class Config:
             Path("writers") / "akai_s3000_writer.py",
             Path("writers") / "akai_s3000_image.py",
         ]
-        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        missing = [
+            str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()
+        ]
         if missing:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Writing AKAI programs and media is available"
@@ -500,7 +528,10 @@ class Config:
             return False, reason
         marker = self.mpc2emu_path / "parsers" / "sampledir_parser.py"
         if not marker.exists():
-            return False, f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}"
+            return (
+                False,
+                f"mpc2emu checkout is missing {marker.relative_to(self.mpc2emu_path)}",
+            )
         return True, "Sample folder import is available"
 
     def check_foreign_import_support(self) -> tuple[bool, str]:
@@ -517,10 +548,20 @@ class Config:
         ok, reason = self.check_mpc2emu_path()
         if not ok:
             return False, reason
-        required = [Path("parsers") / name for name in (
-            "registry.py", "sf2_parser.py", "sfz_parser.py",
-            "exs24_parser.py", "talsmpl_parser.py", "gig_parser.py")]
-        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        required = [
+            Path("parsers") / name
+            for name in (
+                "registry.py",
+                "sf2_parser.py",
+                "sfz_parser.py",
+                "exs24_parser.py",
+                "talsmpl_parser.py",
+                "gig_parser.py",
+            )
+        ]
+        missing = [
+            str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()
+        ]
         if missing:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Soundfont/SFZ/EXS/TAL/GIG import is available"
@@ -542,14 +583,19 @@ class Config:
         ok, reason = self.check_mpc2emu_path()
         if not ok:
             return False, reason
-        required = [Path("parsers") / name for name in (
-            "eps_parser.py", "roland_s7xx_parser.py")]
-        missing = [str(rel) for rel in required
-                   if not (self.mpc2emu_path / rel).exists()]
+        required = [
+            Path("parsers") / name
+            for name in ("eps_parser.py", "roland_s7xx_parser.py")
+        ]
+        missing = [
+            str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()
+        ]
         if missing:
-            return False, (f"this mpc2emu checkout has no firmware-import "
-                           f"parsers (missing {', '.join(missing)}) — they are "
-                           f"on its fw-only-imports branch")
+            return False, (
+                f"this mpc2emu checkout has no firmware-import "
+                f"parsers (missing {', '.join(missing)}) — they are "
+                f"on its fw-only-imports branch"
+            )
         return True, "Ensoniq EPS and Roland S-7xx disc import is available"
 
     def check_audition_support(self) -> tuple[bool, str]:
@@ -572,7 +618,9 @@ class Config:
             Path("parsers") / "krz_parser.py",
             Path("parsers") / "eiii_parser.py",
         ]
-        missing = [str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()]
+        missing = [
+            str(rel) for rel in required if not (self.mpc2emu_path / rel).exists()
+        ]
         if missing:
             return False, f"mpc2emu checkout is missing: {', '.join(missing)}"
         return True, "Audition is available"

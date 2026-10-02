@@ -149,7 +149,10 @@ class IndexDB:
         # only place that knows which file is actually about to be written.
         # A caller can assemble this path any way it likes; it still has to
         # come through here.
-        from ..config import home_data_dir, require_real_state_opt_in  # noqa: PLC0415
+        from ..config import (  # noqa: PLC0415, RUF100
+            home_data_dir,
+            require_real_state_opt_in,
+        )
 
         try:
             same = Path(path).resolve() == (home_data_dir() / "index.db").resolve()
@@ -262,15 +265,15 @@ class IndexDB:
     def add_item(
         self,
         container_id: int,
-        parent_id: Optional[int],
-        kind: str,  # noqa: PLR0917, UP045
+        parent_id: Optional[int],  # noqa: UP045
+        kind: str,  # noqa: PLR0917, RUF100, UP045
         name: str,
-        native_id: Optional[str] = None,
-        format: str = "",  # noqa: UP045
+        native_id: Optional[str] = None,  # noqa: UP045
+        format: str = "",  # noqa: RUF100, UP045
         size: int = 0,
         ordinal: int = 0,
-        audio_bytes: Optional[int] = None,
-    ) -> int:  # noqa: UP045
+        audio_bytes: Optional[int] = None,  # noqa: UP045
+    ) -> int:  # noqa: RUF100, UP045
         cur = self._conn.execute(
             "INSERT INTO item(container_id, parent_id, kind, name, native_id, format, "
             "size, ordinal, audio_bytes) "
@@ -372,7 +375,7 @@ class IndexDB:
             chunk = paths[i : i + 500]
             marks = ",".join("?" * len(chunk))
             for path, total in self._conn.execute(
-                f"SELECT path, audio_bytes FROM container "  # noqa: S608
+                f"SELECT path, audio_bytes FROM container "  # noqa: RUF100, S608
                 f"WHERE path IN ({marks}) AND audio_bytes IS NOT NULL",
                 chunk,
             ):
@@ -402,11 +405,11 @@ class IndexDB:
             chunk = names[i : i + 500]
             marks = ",".join("?" * len(chunk))
             for native_id, total in self._conn.execute(
-                f"SELECT native_id, audio_bytes FROM item "  # noqa: S608
+                f"SELECT native_id, audio_bytes FROM item "  # noqa: RUF100, S608
                 f"WHERE container_id = ? AND native_id IN ({marks}) "
                 f"AND audio_bytes IS NOT NULL",
                 [row[0]] + chunk,
-            ):  # noqa: RUF005
+            ):  # noqa: RUF005, RUF100
                 out[native_id] = total
         return out
 
@@ -455,8 +458,11 @@ class IndexDB:
         return where, params
 
     def search(
-        self, query: str, limit: int = 1000, formats: Optional[list[str]] = None
-    ) -> list[SearchResult]:  # noqa: UP045
+        self,
+        query: str,
+        limit: int = 1000,
+        formats: Optional[list[str]] = None,  # noqa: UP045
+    ) -> list[SearchResult]:  # noqa: RUF100, UP045
         """Ranked FTS hits, optionally restricted to a set of formats.
 
         `formats` IS APPLIED IN THE QUERY, and that is the whole point of it
@@ -550,7 +556,7 @@ class IndexDB:
             return 0
         where, params = self._where(_fts_query(query), formats)
         sql = (
-            "SELECT COUNT(*) FROM item_fts JOIN item ON item.id = item_fts.rowid"  # noqa: S608
+            "SELECT COUNT(*) FROM item_fts JOIN item ON item.id = item_fts.rowid"  # noqa: RUF100, S608
             + where
         )
         try:
@@ -559,8 +565,11 @@ class IndexDB:
             return 0
 
     def search_page(
-        self, query: str, limit: int = 1000, formats: Optional[list[str]] = None
-    ) -> "SearchPage":  # noqa: UP037, UP045
+        self,
+        query: str,
+        limit: int = 1000,
+        formats: Optional[list[str]] = None,  # noqa: UP045
+    ) -> "SearchPage":  # noqa: RUF100, UP037, UP045
         """`search()` plus the true total, so the UI never has to guess."""
         hits = self.search(query, limit=limit, formats=formats)
         total = self.count(query, formats=formats)

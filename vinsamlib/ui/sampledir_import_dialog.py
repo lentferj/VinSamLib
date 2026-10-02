@@ -12,12 +12,19 @@ directly, and its key-range split (midpoints between adjacent roots) is
 usually right but not always what the user actually wants.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional  # noqa: UP035
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QMessageBox,
-                             QPushButton, QWidget)
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QWidget,
+)
 
 from .format_convert_dialog import FormatConvertDialog
 from .sample_names_widget import SampleNamesWidget
@@ -42,7 +49,7 @@ _NAME_OCTAVE_FALLBACK = 2
 
 # QComboBox row index -> parsers.sampledir_parser.parse_sample_dir()'s own
 # octave_offset convention (2=C3, 1=C4, 0=C5; None lets it auto-detect).
-_OCTAVE_CHOICES: list[tuple[str, Optional[int]]] = [
+_OCTAVE_CHOICES: list[tuple[str, Optional[int]]] = [  # noqa: UP045
     ("Auto-detect", None),
     ("C3 (K2000/vintage convention)", 2),
     ("C4 (general MIDI convention)", 1),
@@ -54,23 +61,34 @@ _DEFAULT_WARNING = (
     "conversion here. Each WAV is auto-mapped to the keys nearest its "
     "filename's root note, key-tracked, into one multisampled preset. "
     "Resample/reduce below are optional and off by default for either "
-    "target format.")
+    "target format."
+)
 
 
 class SampleDirImportDialog(FormatConvertDialog):
-    def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
-                 title: str = "Import Sample Folder", warning_text: Optional[str] = None,
-                 locked_format: Optional[str] = None,
-                 sample_loader: Optional[Callable[[Optional[int]], list]] = None,
-                 placement_loader: Optional[Callable[[Optional[int]], Any]] = None,
-                 source_text: str = ""):
-        super().__init__(parent, initial=initial, title=title,
-                          warning_text=warning_text or _DEFAULT_WARNING,
-                          locked_format=locked_format, source_text=source_text)
+    def __init__(
+        self,
+        parent=None,
+        initial: Optional[ConversionOptions] = None,  # noqa: UP045
+        title: str = "Import Sample Folder",
+        warning_text: Optional[str] = None,  # noqa: UP045
+        locked_format: Optional[str] = None,  # noqa: UP045
+        sample_loader: Optional[Callable[[Optional[int]], list]] = None,  # noqa: UP045
+        placement_loader: Optional[Callable[[Optional[int]], Any]] = None,  # noqa: UP045
+        source_text: str = "",
+    ):
+        super().__init__(
+            parent,
+            initial=initial,
+            title=title,
+            warning_text=warning_text or _DEFAULT_WARNING,
+            locked_format=locked_format,
+            source_text=source_text,
+        )
 
         self._placement_loader = placement_loader
-        self._zone_overrides: Optional[dict] = None
-        self._velocity_overrides: Optional[dict] = None
+        self._zone_overrides: Optional[dict] = None  # noqa: UP045
+        self._velocity_overrides: Optional[dict] = None  # noqa: UP045
         self._name_overrides: dict = {}
 
         octave_row = QWidget()
@@ -93,7 +111,9 @@ class SampleDirImportDialog(FormatConvertDialog):
         self._placement_button.clicked.connect(self._on_adjust_placement_clicked)
         placement_layout.addWidget(self._placement_button)
         self._placement_status = QLabel("Auto-computed placement (default)")
-        self._placement_status.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        self._placement_status.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         placement_layout.addWidget(self._placement_status, 1)
         self.layout().insertWidget(self._header_base + 2, placement_row)
 
@@ -106,11 +126,14 @@ class SampleDirImportDialog(FormatConvertDialog):
         # ("a preview that said C3 where the import wrote C4 would be worse
         # than no preview at all") -- it was the caller that did not comply.
         self._names = SampleNamesWidget(
-            octave_offset=self.octave_offset() or _NAME_OCTAVE_FALLBACK)
+            octave_offset=self.octave_offset() or _NAME_OCTAVE_FALLBACK
+        )
         self.layout().insertWidget(self._header_base + 3, self._names)
         self._octave_box.currentIndexChanged.connect(
             lambda *_: self._names.set_octave_offset(
-                self.octave_offset() or _NAME_OCTAVE_FALLBACK))
+                self.octave_offset() or _NAME_OCTAVE_FALLBACK
+            )
+        )
 
         # sample_loader/placement_loader both take the LIVE octave_offset
         # (this dialog's own choice), unlike ConvertOptionsDialog's plain
@@ -126,15 +149,16 @@ class SampleDirImportDialog(FormatConvertDialog):
             self._test_button.setEnabled(True)
             self._test_button.setToolTip(
                 "Check the actual samples for stereo content and, for Mix, "
-                "whether averaging would cancel signal on any of them.")
+                "whether averaging would cancel signal on any of them."
+            )
 
-    def octave_offset(self) -> Optional[int]:
+    def octave_offset(self) -> Optional[int]:  # noqa: UP045
         return _OCTAVE_CHOICES[self._octave_box.currentIndex()][1]
 
-    def zone_overrides(self) -> Optional[dict]:
+    def zone_overrides(self) -> Optional[dict]:  # noqa: UP045
         return self._zone_overrides
 
-    def velocity_overrides(self) -> Optional[dict]:
+    def velocity_overrides(self) -> Optional[dict]:  # noqa: UP045
         """{sample_name: (lo_vel, hi_vel)}, or None if the folder carried no
         layering or the editor was never accepted."""
         return self._velocity_overrides
@@ -158,17 +182,26 @@ class SampleDirImportDialog(FormatConvertDialog):
         self._placement_button.setEnabled(False)
         try:
             bank = self._placement_loader(self.octave_offset())
-        except Exception as ex:
-            QMessageBox.warning(self, "Adjust Sample Placement",
-                                 f"Couldn't parse the folder:\n\n{ex}")
+        except Exception as ex:  # noqa: BLE001
+            QMessageBox.warning(
+                self, "Adjust Sample Placement", f"Couldn't parse the folder:\n\n{ex}"
+            )
             return
         finally:
             self._placement_button.setEnabled(True)
 
         zones = bank.presets[0].voices[0].zones
-        rows = [{"name": z.sample_name, "lo": z.lo_key, "root": z.root_key,
-                 "hi": z.hi_key, "lo_vel": z.lo_vel, "hi_vel": z.hi_vel}
-                for z in zones]
+        rows = [
+            {
+                "name": z.sample_name,
+                "lo": z.lo_key,
+                "root": z.root_key,
+                "hi": z.hi_key,
+                "lo_vel": z.lo_vel,
+                "hi_vel": z.hi_vel,
+            }
+            for z in zones
+        ]
 
         # Velocity columns only when the folder actually HAS layers. mpc2emu's
         # parser reads a velocity token in the filename (`-v40`, `-ff`) and
@@ -200,8 +233,7 @@ class SampleDirImportDialog(FormatConvertDialog):
             octave = self.octave_offset()
             if octave is None:
                 octave = _NAME_OCTAVE_FALLBACK
-            scheme = names_from_base(bank, base, octave,
-                                      self.sample_name_with_key())
+            scheme = names_from_base(bank, base, octave, self.sample_name_with_key())
             for row in rows:
                 if row["name"] in scheme:
                     row["scheme_name"] = scheme[row["name"]]
@@ -209,28 +241,40 @@ class SampleDirImportDialog(FormatConvertDialog):
         display_octave = self.octave_offset()
         if display_octave is None:
             display_octave = _DISPLAY_OCTAVE_OFFSET_FALLBACK
-        dialog = SamplePlacementDialog(rows, octave_offset=display_octave,
-                                        parent=self, show_velocity=layered)
+        dialog = SamplePlacementDialog(
+            rows, octave_offset=display_octave, parent=self, show_velocity=layered
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._zone_overrides = dialog.overrides()
             before = {r["name"]: (r["lo_vel"], r["hi_vel"]) for r in rows}
-            moved = {n: v for n, v in dialog.velocity_overrides().items()
-                     if v != before.get(n)}
+            moved = {
+                n: v
+                for n, v in dialog.velocity_overrides().items()
+                if v != before.get(n)
+            }
             self._velocity_overrides = moved or None
             self._name_overrides = dialog.name_overrides()
             self._placement_status.setText(
-                f"Custom placement set for {len(self._zone_overrides)} sample(s)")
+                f"Custom placement set for {len(self._zone_overrides)} sample(s)"
+            )
         # Cancel: whatever override (if any) was already set stays as-is.
 
     @staticmethod
-    def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
-                            title: str = "Import Sample Folder", warning_text: Optional[str] = None,
-                            locked_format: Optional[str] = None,
-                            sample_loader: Optional[Callable[[Optional[int]], list]] = None,
-                            placement_loader: Optional[Callable[[Optional[int]], Any]] = None,
-                            source_text: str = ""
-                            ) -> tuple[Optional[ConversionOptions], Optional[int],
-                                        Optional[dict], str]:
+    def get_import_options(
+        parent=None,
+        initial: Optional[ConversionOptions] = None,  # noqa: UP045
+        title: str = "Import Sample Folder",
+        warning_text: Optional[str] = None,  # noqa: UP045
+        locked_format: Optional[str] = None,  # noqa: UP045
+        sample_loader: Optional[Callable[[Optional[int]], list]] = None,  # noqa: UP045
+        placement_loader: Optional[Callable[[Optional[int]], Any]] = None,  # noqa: UP045
+        source_text: str = "",
+    ) -> tuple[
+        Optional[ConversionOptions],  # noqa: UP045
+        Optional[int],  # noqa: UP045
+        Optional[dict],  # noqa: UP045
+        str,
+    ]:  # noqa: RUF100, UP045
         """Returns (opts, octave_offset, zone_overrides,
         (name_base, with_key, name_overrides)) -- the last tuple is the
         "Sample names" section plus any names typed per row in the placement
@@ -241,12 +285,26 @@ class SampleDirImportDialog(FormatConvertDialog):
         None if it was never opened or never accepted; name_base is the
         "Sample names" section's base name, or "" to keep whatever names the
         conversion produced."""
-        dialog = SampleDirImportDialog(parent, initial=initial, title=title,
-                                        warning_text=warning_text, locked_format=locked_format,
-                                        sample_loader=sample_loader, placement_loader=placement_loader,
-                                        source_text=source_text)
+        dialog = SampleDirImportDialog(
+            parent,
+            initial=initial,
+            title=title,
+            warning_text=warning_text,
+            locked_format=locked_format,
+            sample_loader=sample_loader,
+            placement_loader=placement_loader,
+            source_text=source_text,
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None, None, None, ("", True, {}), None
-        return (dialog._to_options(), dialog.octave_offset(), dialog.zone_overrides(),
-                (dialog.sample_name_base(), dialog.sample_name_with_key(),
-                 dialog.sample_name_overrides()), dialog.velocity_overrides())
+        return (
+            dialog._to_options(),
+            dialog.octave_offset(),
+            dialog.zone_overrides(),
+            (
+                dialog.sample_name_base(),
+                dialog.sample_name_with_key(),
+                dialog.sample_name_overrides(),
+            ),
+            dialog.velocity_overrides(),
+        )

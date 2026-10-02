@@ -39,7 +39,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator  # noqa: UP035
 
 #: Every prefix this project stages under. Listed in one place so
 #: reap_stale() cannot miss one that some module invented on its own.

@@ -44,7 +44,7 @@ implementation here would be a second thing to get wrong for no gain. See
 `build/akai_image.py`, which drives that writer.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import os
 import struct
@@ -54,23 +54,23 @@ from .base import Entry, EntryKind, Volume
 from ..banks import akai as vs_akai
 
 # ── block geometry ───────────────────────────────────────────────────────────
-HD_BLOCK = 0x2000                   # 8 KB
-FL_BLOCK = 0x0400                   # 1 KB
+HD_BLOCK = 0x2000  # 8 KB
+FL_BLOCK = 0x0400  # 1 KB
 
 PARTHEAD_BLKS = 3
 VOLDIR_HD_BLKS = 2
 VOLDIR_FL_BLKS = 12
-FLL_HEAD_BLKS = 4                    # low-density floppy header
-FLH_HEAD_BLKS = 5                    # high-density floppy header
+FLL_HEAD_BLKS = 4  # low-density floppy header
+FLH_HEAD_BLKS = 5  # high-density floppy header
 
-FLL_SIZE = 0x0320                    # 800 blocks = 800 KB
-FLH_SIZE = 0x0640                    # 1600 blocks = 1.6 MB
+FLL_SIZE = 0x0320  # 800 blocks = 800 KB
+FLH_SIZE = 0x0640  # 1600 blocks = 1.6 MB
 
 # ── capacity limits ──────────────────────────────────────────────────────────
-PART_MAX_BLOCKS = 0x1E00             # 60 MB — the sampler's per-partition cap
+PART_MAX_BLOCKS = 0x1E00  # 60 MB — the sampler's per-partition cap
 MAX_PARTITIONS = 18
-ROOTDIR_ENTRIES = 100                # volumes per partition
-VOLDIR_ENTRIES = 510                 # files per volume
+ROOTDIR_ENTRIES = 100  # volumes per partition
+VOLDIR_ENTRIES = 510  # files per volume
 
 # ── offsets within a partition header ────────────────────────────────────────
 _OFF_MAGIC = 0x0002
@@ -82,9 +82,9 @@ _MAGICNUM, _MAGICVAL = 98, 3333
 
 # ── FAT codes ────────────────────────────────────────────────────────────────
 FAT_FREE = 0x0000
-FAT_SYS = 0x4000                     # reserved for the system (headers)
-FAT_DIREND = 0x8000                  # end of a volume-directory chain
-FAT_FILEEND = 0xC000                 # end of a file chain
+FAT_SYS = 0x4000  # reserved for the system (headers)
+FAT_DIREND = 0x8000  # end of a volume-directory chain
+FAT_FILEEND = 0xC000  # end of a file chain
 
 VOL_TYPE_INACTIVE = 0x00
 VOL_TYPE_S1000 = 0x01
@@ -115,8 +115,11 @@ CDINFO_BLKS = 3
 #: slot is what marks it as carrying an S3000 volume directory.
 _FL_S3000_FLAG_TYPE = 0xFF
 
-_VOL_TYPE_NAMES = {VOL_TYPE_S1000: "S1000", VOL_TYPE_S3000: "S3000",
-                   VOL_TYPE_CD3000: "CD3000"}
+_VOL_TYPE_NAMES = {
+    VOL_TYPE_S1000: "S1000",
+    VOL_TYPE_S3000: "S3000",
+    VOL_TYPE_CD3000: "CD3000",
+}
 
 
 class AkaiImageError(ValueError):
@@ -133,6 +136,7 @@ def _u24(data: bytes, off: int) -> int:
 
 # ── detection ────────────────────────────────────────────────────────────────
 
+
 def _has_parthead_magic(head: bytes) -> bool:
     """The 98 magic fields are what marks a medium as an AKAI hard disk.
 
@@ -143,8 +147,10 @@ def _has_parthead_magic(head: bytes) -> bool:
     """
     if len(head) < _OFF_ROOTDIR:
         return False
-    return all(_u16(head, _OFF_MAGIC + 2 * i) == (i * _MAGICVAL) & 0xFFFF
-               for i in (1, 2, 3, 17, 50, 97))
+    return all(
+        _u16(head, _OFF_MAGIC + 2 * i) == (i * _MAGICVAL) & 0xFFFF
+        for i in (1, 2, 3, 17, 50, 97)
+    )
 
 
 def _is_akai_floppy(head: bytes, size: int) -> bool:
@@ -190,8 +196,10 @@ def is_akai_image(path: str) -> bool:
 
 # ── FAT walking ──────────────────────────────────────────────────────────────
 
-def _chain(fat: list[int], start: int, limit: int,
-           end_codes: tuple[int, ...]) -> list[int]:
+
+def _chain(
+    fat: list[int], start: int, limit: int, end_codes: tuple[int, ...]
+) -> list[int]:
     """Follow a FAT chain from `start`, refusing to loop forever.
 
     A damaged image can point a block at itself or back into the chain. A
@@ -243,8 +251,9 @@ class AkaiVolume(Volume):
             raise AkaiImageError(
                 f"{path} is not an AKAI disk image — the partition header "
                 f"magic is missing, and it is not an 800 KB / 1.6 MB AKAI "
-                f"floppy either.")
-        self._parts: Optional[list[dict]] = None
+                f"floppy either."
+            )
+        self._parts: Optional[list[dict]] = None  # noqa: UP045
         #: Files listed in a directory whose data is not in this image --
         #: see truncation_warning().
         self._truncated = 0
@@ -269,33 +278,42 @@ class AkaiVolume(Volume):
             # then laid end to end. A corrupt count must not walk off the end
             # of the table into the tag names, hence the clamp.
             partnum = min(table[0x100], MAX_PARTITIONS) if len(table) > 0x100 else 0
-            sizes = [_u16(table, 0x102 + 2 * i) for i in range(partnum)
-                     if 0x104 + 2 * i <= len(table)]
+            sizes = [
+                _u16(table, 0x102 + 2 * i)
+                for i in range(partnum)
+                if 0x104 + 2 * i <= len(table)
+            ]
 
             parts: list[dict] = []
             start = 0
             if not sizes:
                 f.seek(0)
-                sizes = [_u16(f.read(2), 0)]     # single partition, no table
+                sizes = [_u16(f.read(2), 0)]  # single partition, no table
             for pi, psize in enumerate(sizes):
                 base = start * HD_BLOCK
                 if psize == 0 or base >= self._size:
-                    break                         # table over-declares
+                    break  # table over-declares
                 start += psize
                 f.seek(base)
                 head = f.read(PARTHEAD_BLKS * HD_BLOCK)
                 if not _has_parthead_magic(head):
-                    continue                      # a DD partition, or junk
+                    continue  # a DD partition, or junk
                 nblocks = min(psize, _u16(head, 0) or psize, PART_MAX_BLOCKS)
                 fat = [_u16(head, _OFF_FAT + 2 * i) for i in range(PART_MAX_BLOCKS)]
-                parts.append(dict(
-                    letter=chr(ord("A") + pi), base=base, nblocks=nblocks,
-                    block=HD_BLOCK, fat=fat,
-                    volumes=self._root_volumes(head, nblocks),
-                    has_cdinfo=self._has_cdinfo(head),
-                    is_cdrom=(self._has_cdinfo(head)
-                              or self._has_cd3000_volumes(head)),
-                ))
+                parts.append(
+                    dict(  # noqa: C408
+                        letter=chr(ord("A") + pi),
+                        base=base,
+                        nblocks=nblocks,
+                        block=HD_BLOCK,
+                        fat=fat,
+                        volumes=self._root_volumes(head, nblocks),
+                        has_cdinfo=self._has_cdinfo(head),
+                        is_cdrom=(
+                            self._has_cdinfo(head) or self._has_cd3000_volumes(head)
+                        ),
+                    )
+                )
             return parts
 
     @staticmethod
@@ -308,8 +326,14 @@ class AkaiVolume(Volume):
             vstart = _u16(head, o + 14)
             if vstart >= nblocks:
                 continue
-            vols.append(dict(name=vs_akai.akai_to_str(head[o:o + vs_akai.NAME_LEN]),
-                             vtype=head[o + 12], start=vstart, index=vi))
+            vols.append(
+                dict(  # noqa: C408
+                    name=vs_akai.akai_to_str(head[o : o + vs_akai.NAME_LEN]),  # noqa: C408, RUF100
+                    vtype=head[o + 12],
+                    start=vstart,
+                    index=vi,
+                )
+            )
         return vols
 
     @staticmethod
@@ -321,8 +345,10 @@ class AkaiVolume(Volume):
         Reported for information only; nothing here reads that index. It is a
         cache the sampler browses, the files live where the FAT says, and a
         disc whose index went stale still reads correctly here."""
-        return all(_u16(head, _OFF_FAT + 2 * b) == FAT_SYS
-                   for b in range(CDINFO_BLK, CDINFO_BLK + CDINFO_BLKS))
+        return all(
+            _u16(head, _OFF_FAT + 2 * b) == FAT_SYS
+            for b in range(CDINFO_BLK, CDINFO_BLK + CDINFO_BLKS)
+        )
 
     @staticmethod
     def _has_cd3000_volumes(head: bytes) -> bool:
@@ -332,9 +358,11 @@ class AkaiVolume(Volume):
         only real discs revealed: of eight commercial library CD-ROMs, seven
         are CD3000-typed but just three carry the info block, and one is
         typed plain S3000. Either alone would mislabel half of them."""
-        return any(head[_OFF_ROOTDIR + 16 * i + 12] == VOL_TYPE_CD3000
-                   for i in range(ROOTDIR_ENTRIES)
-                   if _OFF_ROOTDIR + 16 * i + 12 < len(head))
+        return any(
+            head[_OFF_ROOTDIR + 16 * i + 12] == VOL_TYPE_CD3000
+            for i in range(ROOTDIR_ENTRIES)
+            if _OFF_ROOTDIR + 16 * i + 12 < len(head)
+        )
 
     def _read_floppy(self) -> list[dict]:
         hd = self._size == FLH_SIZE * FL_BLOCK
@@ -348,13 +376,27 @@ class AkaiVolume(Volume):
         fat_at = 64 * 24
         fat = [_u16(head, fat_at + 2 * i) for i in range(total)]
         label_at = fat_at + total * 2
-        name = vs_akai.akai_to_str(head[label_at:label_at + vs_akai.NAME_LEN])
-        return [dict(
-            letter="FL", base=0, nblocks=total, block=FL_BLOCK, fat=fat,
-            volumes=[dict(name=name or "FLOPPY", vtype=VOL_TYPE_S3000,
-                          start=head_blks, index=0, dir_blocks=VOLDIR_FL_BLKS)],
-            is_cdrom=False, has_cdinfo=False,
-        )]
+        name = vs_akai.akai_to_str(head[label_at : label_at + vs_akai.NAME_LEN])
+        return [
+            dict(  # noqa: C408
+                letter="FL",
+                base=0,
+                nblocks=total,
+                block=FL_BLOCK,
+                fat=fat,
+                volumes=[
+                    dict(  # noqa: C408
+                        name=name or "FLOPPY",
+                        vtype=VOL_TYPE_S3000,  # noqa: C408, RUF100
+                        start=head_blks,
+                        index=0,
+                        dir_blocks=VOLDIR_FL_BLKS,
+                    )
+                ],
+                is_cdrom=False,
+                has_cdinfo=False,
+            )
+        ]
 
     def _volume_dir(self, part: dict, vol: dict) -> tuple[bytes, int]:
         """One volume's directory bytes, and how many entries it may hold.
@@ -371,8 +413,9 @@ class AkaiVolume(Volume):
             max_entries = 510
         else:
             dir_blks, max_entries = _VOLDIR_LAYOUT.get(vol["vtype"], _VOLDIR_DEFAULT)
-            blocks = _chain(part["fat"], vol["start"], part["nblocks"],
-                            (FAT_DIREND, FAT_FILEEND))[:dir_blks]
+            blocks = _chain(
+                part["fat"], vol["start"], part["nblocks"], (FAT_DIREND, FAT_FILEEND)
+            )[:dir_blks]
         return self._read_blocks(part["base"], blocks, block), max_entries
 
     def _read_blocks(self, base: int, blocks: list[int], block: int) -> bytes:
@@ -385,7 +428,7 @@ class AkaiVolume(Volume):
 
     # ── Volume interface ─────────────────────────────────────────────────────
 
-    def list(self, folder: Optional[Entry] = None) -> list[Entry]:
+    def list(self, folder: Optional[Entry] = None) -> list[Entry]:  # noqa: UP045
         if folder is None:
             return self._list_volumes()
         pi, vi = folder.ref
@@ -406,15 +449,29 @@ class AkaiVolume(Volume):
                 # hard disk (two partitions may hold a volume of the same
                 # name and neither is wrong), and meaningless on a floppy.
                 label = name if self._floppy else f"{part['letter']}/{name}"
-                out.append(Entry(
-                    name=label, kind=EntryKind.FOLDER, ref=(pi, vi),
-                    meta={"format": "AKAI", "akai_volume": True,
-                          "partition": part["letter"],
-                          "volume_name": name,
-                          "media": ("floppy" if self._floppy
-                                    else "cdrom" if part["is_cdrom"] else "harddisk"),
-                          "vol_type": _VOL_TYPE_NAMES.get(vol["vtype"],
-                                                          f"type {vol['vtype']}")}))
+                out.append(
+                    Entry(
+                        name=label,
+                        kind=EntryKind.FOLDER,
+                        ref=(pi, vi),
+                        meta={
+                            "format": "AKAI",
+                            "akai_volume": True,
+                            "partition": part["letter"],
+                            "volume_name": name,
+                            "media": (
+                                "floppy"
+                                if self._floppy
+                                else "cdrom"
+                                if part["is_cdrom"]
+                                else "harddisk"
+                            ),
+                            "vol_type": _VOL_TYPE_NAMES.get(
+                                vol["vtype"], f"type {vol['vtype']}"
+                            ),
+                        },
+                    )
+                )
         return out
 
     def _list_files(self, part: dict, vol: dict) -> list[Entry]:
@@ -425,10 +482,10 @@ class AkaiVolume(Volume):
         block, base, nblocks = part["block"], part["base"], part["nblocks"]
         out: list[Entry] = []
         for i in range(min(max_entries, len(dirbytes) // 24)):
-            e = dirbytes[24 * i:24 * i + 24]
+            e = dirbytes[24 * i : 24 * i + 24]
             ftype = e[16]
             if ftype in (0x00, _FL_S3000_FLAG_TYPE):
-                continue                          # free slot, or the floppy marker
+                continue  # free slot, or the floppy marker
             size = _u24(e, 17)
             start = _u16(e, 20)
             if size == 0 or start >= nblocks:
@@ -466,18 +523,31 @@ class AkaiVolume(Volume):
             if len(blocks) * block < size:
                 self._short_chain += 1
                 continue
-            name = vs_akai.akai_to_str(e[0:vs_akai.NAME_LEN])
+            name = vs_akai.akai_to_str(e[0 : vs_akai.NAME_LEN])
             ext = vs_akai.ftype_to_ext(ftype)
-            kind = (EntryKind.BANK if ftype in vs_akai.PROGRAM_TYPES
-                    else EntryKind.OTHER_FILE)
-            out.append(Entry(
-                name=f"{name}.{ext}", kind=kind, size=size,
-                ref=(base, block, tuple(blocks), size),
-                meta={"format": "AKAI", "akai_type": ftype,
-                      "akai_name": name,
-                      "role": "program" if ftype in vs_akai.PROGRAM_TYPES
-                              else "sample" if ftype in vs_akai.SAMPLE_TYPES
-                              else "other"}))
+            kind = (
+                EntryKind.BANK
+                if ftype in vs_akai.PROGRAM_TYPES
+                else EntryKind.OTHER_FILE
+            )
+            out.append(
+                Entry(
+                    name=f"{name}.{ext}",
+                    kind=kind,
+                    size=size,
+                    ref=(base, block, tuple(blocks), size),
+                    meta={
+                        "format": "AKAI",
+                        "akai_type": ftype,
+                        "akai_name": name,
+                        "role": "program"
+                        if ftype in vs_akai.PROGRAM_TYPES
+                        else "sample"
+                        if ftype in vs_akai.SAMPLE_TYPES
+                        else "other",
+                    },
+                )
+            )
         return out
 
     def read(self, entry: Entry) -> bytes:
@@ -504,9 +574,11 @@ class AkaiVolume(Volume):
             if e.meta.get("role") != "program":
                 continue
             prog = vs_akai.parse_program(
-                self.read(e), e.name,
+                self.read(e),
+                e.name,
                 s3000=vs_akai.generation_of_ftype(e.meta.get("akai_type")),
-                typed=True)
+                typed=True,
+            )
             if prog is not None:
                 out.append(prog)
         return out
@@ -517,7 +589,8 @@ class AkaiVolume(Volume):
             self.volume_files(folder),
             name=folder.meta.get("volume_name", folder.name),
             path=f"{self.path}:{folder.name}",
-            partition=folder.meta.get("partition", ""))
+            partition=folder.meta.get("partition", ""),
+        )
 
     def label(self) -> str:
         """The medium's own label: a CD3000 disc's, or a floppy's. A hard
@@ -532,8 +605,7 @@ class AkaiVolume(Volume):
         return ""
 
     def _cd_label(self, part: dict) -> str:
-        off = (part["base"] + CDINFO_BLK * HD_BLOCK
-               + 2 + 2 * ROOTDIR_ENTRIES)
+        off = part["base"] + CDINFO_BLK * HD_BLOCK + 2 + 2 * ROOTDIR_ENTRIES
         with open(self.path, "rb") as f:
             f.seek(off)
             return vs_akai.akai_to_str(f.read(vs_akai.NAME_LEN))
@@ -558,11 +630,17 @@ class AkaiVolume(Volume):
         if declared <= self._size and not self._truncated:
             return ""
         pct = 100.0 * self._size / declared if declared else 100.0
-        return (f"this image holds {self._size:,} bytes of the "
-                f"{declared:,} its own partition table declares ({pct:.0f}%)"
-                + (f"; {self._truncated} file(s) listed in its directories are "
-                   f"not in it and were skipped" if self._truncated else "")
-                + ". It looks like an incomplete copy.")
+        return (
+            f"this image holds {self._size:,} bytes of the "
+            f"{declared:,} its own partition table declares ({pct:.0f}%)"
+            + (
+                f"; {self._truncated} file(s) listed in its directories are "
+                f"not in it and were skipped"
+                if self._truncated
+                else ""
+            )
+            + ". It looks like an incomplete copy."
+        )
 
     def media_kind(self) -> str:
         """'floppy' | 'cdrom' | 'harddisk' — what the image actually is,

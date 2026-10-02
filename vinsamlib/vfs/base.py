@@ -14,10 +14,10 @@ from typing import Any, Optional
 
 
 class EntryKind(Enum):
-    DIRECTORY = auto()   # plain filesystem directory
-    FOLDER = auto()       # in-image folder (EMU3 root entry, FAT directory)
-    BANK = auto()         # a bank file: .E4B, .KRZ, or a whole-bank blob in an image
-    OTHER_FILE = auto()   # anything else on disk (WAV, SFZ, unrelated file...)
+    DIRECTORY = auto()  # plain filesystem directory
+    FOLDER = auto()  # in-image folder (EMU3 root entry, FAT directory)
+    BANK = auto()  # a bank file: .E4B, .KRZ, or a whole-bank blob in an image
+    OTHER_FILE = auto()  # anything else on disk (WAV, SFZ, unrelated file...)
 
 
 @dataclass
@@ -40,7 +40,7 @@ class Volume:
 
     path: str
 
-    def list(self, folder: Optional[Entry] = None) -> list[Entry]:
+    def list(self, folder: Optional[Entry] = None) -> list[Entry]:  # noqa: UP045
         """List entries at the root (folder=None) or inside a FOLDER entry."""
         raise NotImplementedError
 
@@ -51,7 +51,7 @@ class Volume:
     def close(self) -> None:
         pass
 
-    def __enter__(self) -> "Volume":
+    def __enter__(self) -> "Volume":  # noqa: PYI034, UP037
         return self
 
     def __exit__(self, *exc) -> None:
@@ -64,7 +64,7 @@ class WritableVolume(Volume):
     append, delete/rename, export (export is just `read` + write-to-disk,
     so it needs no dedicated verb)."""
 
-    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
+    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:  # noqa: UP045
         raise NotImplementedError
 
     def delete(self, entry: Entry) -> None:

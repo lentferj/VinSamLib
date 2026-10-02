@@ -60,7 +60,7 @@ Two things here have no counterpart in the MPC import:
   row at all.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import os
 import shutil
@@ -144,8 +144,7 @@ FOREIGN_FORMATS = frozenset(FOREIGN_EXT_FORMAT.values()) | set(IMAGE_CONTENT_FOR
 # keygroup program, and so earn a single "MPC" chip in the format dropdown --
 # these are five unrelated ecosystems that happen to share a job. A user
 # looking for a SoundFont is not looking for an EXS24 instrument.
-FORMAT_FILTERS = ("SF2", "SFZ", "EXS24", "TAL", "GIG",
-                  EPS_FORMAT, ROLAND_FORMAT)
+FORMAT_FILTERS = ("SF2", "SFZ", "EXS24", "TAL", "GIG", EPS_FORMAT, ROLAND_FORMAT)
 
 # macOS writes a metadata fork beside every real file on a non-HFS volume.
 # There are 22 of them among this author's .exs files alone, each carrying the
@@ -162,7 +161,7 @@ _MAX_SAMPLES = 100_000
 
 # ── availability ───────────────────────────────────────────────────────────
 
-_available: Optional[bool] = None
+_available: Optional[bool] = None  # noqa: UP045
 
 
 def set_available(ok: bool) -> None:
@@ -188,12 +187,13 @@ def available() -> bool:
     if _available is None:
         try:
             _available = Config.load().check_foreign_import_support()[0]
-        except Exception:
+        except Exception:  # noqa: BLE001
             _available = False
     return _available
 
 
 # ── what a file is, and whether to show it ─────────────────────────────────
+
 
 @dataclass(frozen=True)
 class FileVerdict:
@@ -206,6 +206,7 @@ class FileVerdict:
     one ui/models.py already draws between ``empty_reason`` and ``error``:
     never claim a failure that did not happen.
     """
+
     format: str
     label: str
     container: bool = False
@@ -217,7 +218,7 @@ class FileVerdict:
         return not self.empty_reason
 
 
-_fw_available: Optional[bool] = None
+_fw_available: Optional[bool] = None  # noqa: UP045
 
 
 def set_firmware_available(ok: bool) -> None:
@@ -238,12 +239,12 @@ def firmware_available() -> bool:
     if _fw_available is None:
         try:
             _fw_available = Config.load().check_firmware_import_support()[0]
-        except Exception:
+        except Exception:  # noqa: BLE001
             _fw_available = False
     return _fw_available
 
 
-def format_for(path) -> Optional[str]:
+def format_for(path) -> Optional[str]:  # noqa: UP045
     """The format label for a path, or None if it is not ours.
 
     Extension for the five soft-sampler formats; content for the two disc
@@ -268,7 +269,7 @@ def format_for(path) -> Optional[str]:
 #: independently, and an audition asks three more. Each is an open() and a
 #: read; on an NFS share that is latency per call, multiplied by the number
 #: of image rows in the folder.
-_FORMAT_CACHE: "OrderedDict" = OrderedDict()
+_FORMAT_CACHE: "OrderedDict" = OrderedDict()  # noqa: UP037
 _FORMAT_CACHE_MAX = 256
 
 
@@ -280,7 +281,7 @@ def _image_stamp(path):
         return None
 
 
-def image_content_format(path) -> Optional[str]:
+def image_content_format(path) -> Optional[str]:  # noqa: UP045
     key = _image_stamp(path)
     if key is not None and key in _FORMAT_CACHE:
         _FORMAT_CACHE.move_to_end(key)
@@ -294,7 +295,7 @@ def image_content_format(path) -> Optional[str]:
     return answer
 
 
-def _image_content_format_uncached(path) -> Optional[str]:
+def _image_content_format_uncached(path) -> Optional[str]:  # noqa: UP045
     """``"EPS"``, ``"Roland"`` or None for a disc image.
 
     **Order is load-bearing and is not ours to reorder casually.** A disc a
@@ -315,9 +316,10 @@ def _image_content_format_uncached(path) -> Optional[str]:
         return None
     try:
         from ..vfs.detect import sniff
+
         if sniff(str(path)) is not None:
             return None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _note_disc_failure(path, "vfs.detect.sniff", exc)
         return None
     try:
@@ -325,7 +327,7 @@ def _image_content_format_uncached(path) -> Optional[str]:
             return EPS_FORMAT
         if mpc2emu_bridge.roland_parser.is_roland_image(str(path)):
             return ROLAND_FORMAT
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _note_disc_failure(path, "content test", exc)
         return None
     return None
@@ -347,7 +349,7 @@ def _roland_partial_sizes(path, parts) -> dict:
     """
     try:
         samples = mpc2emu_bridge.roland_parser.read_roland_samples(str(path))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
     out = {}
     for i, part in enumerate(parts):
@@ -367,9 +369,10 @@ def _roland_partial_sizes(path, parts) -> dict:
     return out
     try:
         from ..vfs.detect import sniff
+
         if sniff(str(path)) is not None:
             return None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _note_disc_failure(path, "vfs.detect.sniff", exc)
         return None
     try:
@@ -377,7 +380,7 @@ def _roland_partial_sizes(path, parts) -> dict:
             return EPS_FORMAT
         if mpc2emu_bridge.roland_parser.is_roland_image(str(path)):
             return ROLAND_FORMAT
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _note_disc_failure(path, "content test", exc)
         return None
     return None
@@ -393,13 +396,17 @@ def _note_disc_failure(path, stage: str, exc: BaseException) -> None:
     off by default and costs nothing when it is.
     """
     try:
-        convert_mod.calllog.note("disc-detect-failed", source=str(path),
-                                 stage=stage, error=f"{type(exc).__name__}: {exc}")
-    except Exception:
+        convert_mod.calllog.note(
+            "disc-detect-failed",
+            source=str(path),
+            stage=stage,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    except Exception:  # noqa: BLE001, S110
         pass
 
 
-def inspect(path) -> Optional[FileVerdict]:
+def inspect(path) -> Optional[FileVerdict]:  # noqa: UP045
     """What row, if any, *path* should produce.
 
     None means "not one of ours, do not list" -- an unknown extension, a
@@ -442,41 +449,69 @@ def inspect(path) -> Optional[FileVerdict]:
     if ext == ".exs":
         name = foreign_names.exs_instrument_name(p)
         if name is None:
-            return FileVerdict(fmt, p.stem, empty_reason=(
-                f"{p.name} does not read as an EXS24 instrument — its header "
-                f"carries no EXS magic."))
+            return FileVerdict(
+                fmt,
+                p.stem,
+                empty_reason=(
+                    f"{p.name} does not read as an EXS24 instrument — its header "
+                    f"carries no EXS magic."
+                ),
+            )
         return FileVerdict(fmt, name)
 
     if ext == ".sfz":
         if not foreign_names.sfz_is_listable(p):
-            return FileVerdict(fmt, p.stem, empty_reason=(
-                f"{p.name} defines no region and includes no file, so there "
-                f"is nothing to import — it is settings for regions that are "
-                f"somewhere else."))
+            return FileVerdict(
+                fmt,
+                p.stem,
+                empty_reason=(
+                    f"{p.name} defines no region and includes no file, so there "
+                    f"is nothing to import — it is settings for regions that are "
+                    f"somewhere else."
+                ),
+            )
         return FileVerdict(fmt, p.stem)
 
     if ext == ".talsmpl":
         verdict = foreign_names.talsmpl_state(p)
         if verdict is None:
-            return FileVerdict(fmt, p.stem, empty_reason=(
-                f"{p.name} does not read as a TAL-Sampler preset."))
+            return FileVerdict(
+                fmt,
+                p.stem,
+                empty_reason=(f"{p.name} does not read as a TAL-Sampler preset."),
+            )
         if verdict.state is foreign_names.TalState.ENCRYPTED:
-            return FileVerdict(fmt, verdict.program_name, empty_reason=(
-                f"every sample this preset uses is an encrypted .talwav, "
-                f"which only TAL-Sampler itself can decode — the preset is "
-                f"readable, its audio is not."))
+            return FileVerdict(
+                fmt,
+                verdict.program_name,
+                empty_reason=(
+                    f"every sample this preset uses is an encrypted .talwav, "  # noqa: F541
+                    f"which only TAL-Sampler itself can decode — the preset is "  # noqa: F541
+                    f"readable, its audio is not."  # noqa: F541
+                ),
+            )  # noqa: F541, RUF100
         if verdict.state is foreign_names.TalState.ROM_ONLY:
-            return FileVerdict(fmt, verdict.program_name, empty_reason=(
-                f"this preset plays TAL-Sampler's own built-in waveforms, "
-                f"not sampled audio — there is no sample here to convert."))
+            return FileVerdict(
+                fmt,
+                verdict.program_name,
+                empty_reason=(
+                    f"this preset plays TAL-Sampler's own built-in waveforms, "  # noqa: F541
+                    f"not sampled audio — there is no sample here to convert."  # noqa: F541
+                ),
+            )  # noqa: F541, RUF100
         if verdict.state is foreign_names.TalState.NO_SAMPLES:
-            return FileVerdict(fmt, verdict.program_name, empty_reason=(
-                f"{p.name} references no sample at all."))
+            return FileVerdict(
+                fmt,
+                verdict.program_name,
+                empty_reason=(f"{p.name} references no sample at all."),
+            )
         note = ""
         if verdict.state is foreign_names.TalState.PARTIAL:
-            note = (f"{verdict.encrypted} of {verdict.total} samples are "
-                    f"encrypted .talwav and will be left out; the rest import "
-                    f"normally.")
+            note = (
+                f"{verdict.encrypted} of {verdict.total} samples are "
+                f"encrypted .talwav and will be left out; the rest import "
+                f"normally."
+            )
         return FileVerdict(fmt, verdict.program_name, note=note)
 
     if ext in IMAGE_CONTENT_EXTS:
@@ -488,24 +523,37 @@ def inspect(path) -> Optional[FileVerdict]:
         # a folder of images multiplies by every row; detection alone is
         # 0.1 ms. An empty disc shows a row that expands to nothing, which
         # is the cheaper wrong answer of the two.
-        return FileVerdict(fmt, p.stem, container=True, note=(
-            f"{fmt} import is experimental: it reproduces what the target "
-            f"sampler's own firmware does with this disc, and no {fmt} "
-            f"instrument exists here to check the result against."))
+        return FileVerdict(
+            fmt,
+            p.stem,
+            container=True,
+            note=(
+                f"{fmt} import is experimental: it reproduces what the target "
+                f"sampler's own firmware does with this disc, and no {fmt} "
+                f"instrument exists here to check the result against."
+            ),
+        )
 
     # Containers: SF2 and GIG.
     listed = list_presets(p)
     if listed is None:
-        return FileVerdict(fmt, p.stem, container=True, empty_reason=(
-            f"{p.name} does not read as a {fmt} file — it is empty, "
-            f"truncated, or something else with this extension."))
+        return FileVerdict(
+            fmt,
+            p.stem,
+            container=True,
+            empty_reason=(
+                f"{p.name} does not read as a {fmt} file — it is empty, "
+                f"truncated, or something else with this extension."
+            ),
+        )
     if not listed:
-        return FileVerdict(fmt, p.stem, container=True, empty_reason=(
-            f"{p.name} holds no preset."))
+        return FileVerdict(
+            fmt, p.stem, container=True, empty_reason=(f"{p.name} holds no preset.")
+        )
     return FileVerdict(fmt, p.stem, container=True)
 
 
-def list_presets(path) -> Optional[list]:
+def list_presets(path) -> Optional[list]:  # noqa: UP045
     """The rows a container file expands into, read from its header only.
 
     Returns ``list[foreign_names.ListedPreset]``, ``[]`` for a readable file
@@ -521,7 +569,7 @@ def list_presets(path) -> Optional[list]:
     return None
 
 
-def _list_disc_presets(path) -> Optional[list]:
+def _list_disc_presets(path) -> Optional[list]:  # noqa: UP045
     """Rows for an EPS or Roland disc, WITHOUT decoding any audio.
 
     Measured on the reference discs: the directory read is 0.01 s for EPS
@@ -541,24 +589,27 @@ def _list_disc_presets(path) -> Optional[list]:
         return None
     try:
         if fmt == EPS_FORMAT:
-            ents = mpc2emu_bridge.eps_parser.eps_instruments(str(path),
-                                                             quiet=True)
+            ents = mpc2emu_bridge.eps_parser.eps_instruments(str(path), quiet=True)
             # `size` is already on the directory entry and was being thrown
             # away. Measured on the reference disc: audio is 117.4 MB of
             # 127.2 MB of instrument files, so this is the file's size and
             # ~92 % of it is audio -- the row says which, rather than
             # implying an exact audio figure it did not measure.
-            return [foreign_names.ListedPreset(
-                        name=e.name, program=i,
-                        size=int(getattr(e, "size", 0) or 0) or None)
-                    for i, e in enumerate(ents)]
+            return [
+                foreign_names.ListedPreset(
+                    name=e.name, program=i, size=int(getattr(e, "size", 0) or 0) or None
+                )
+                for i, e in enumerate(ents)
+            ]
         parts = mpc2emu_bridge.roland_parser.read_roland_partials(str(path))
         sizes = _roland_partial_sizes(path, parts)
-        return [foreign_names.ListedPreset(name=part.get("name", ""),
-                                           program=i,
-                                           size=sizes.get(i))
-                for i, part in enumerate(parts)]
-    except Exception as exc:
+        return [
+            foreign_names.ListedPreset(
+                name=part.get("name", ""), program=i, size=sizes.get(i)
+            )
+            for i, part in enumerate(parts)
+        ]
+    except Exception as exc:  # noqa: BLE001
         _note_disc_failure(path, "directory listing", exc)
         return None
 
@@ -572,6 +623,7 @@ def is_container(path) -> bool:
 
 
 # ── parsing, via mpc2emu ───────────────────────────────────────────────────
+
 
 def _stage_tal_samples(path: Path):
     """Gather a TAL preset's samples into one directory, under the names
@@ -639,9 +691,12 @@ def _stage_tal_samples(path: Path):
     return staged
 
 
-def parse_foreign(path, wav_dir: Optional[str] = None,
-                  max_presets: Optional[int] = None,
-                  firmware_sim: bool = False):
+def parse_foreign(
+    path,
+    wav_dir: Optional[str] = None,  # noqa: UP045
+    max_presets: Optional[int] = None,  # noqa: UP045
+    firmware_sim: bool = False,
+):
     """Parse any of the five formats into an mpc2emu Bank.
 
     Goes through mpc2emu's own ``parsers/registry.py`` rather than five
@@ -690,7 +745,8 @@ def parse_foreign(path, wav_dir: Optional[str] = None,
                 raise ValueError(
                     "This mpc2emu checkout's disc parsers cannot simulate "
                     "the firmware. Convert as good as possible instead, or "
-                    "point Settings at a checkout that carries it.")
+                    "point Settings at a checkout that carries it."
+                )
             kw["firmware_sim"] = True
     else:
         kw = {"max_samples": _MAX_SAMPLES}
@@ -716,16 +772,18 @@ def _disc_parser_takes_firmware_sim() -> bool:
     convert a Roland one.
     """
     try:
-        for fn in (mpc2emu_bridge.eps_parser.parse_eps_image,
-                   mpc2emu_bridge.roland_parser.parse_roland_image):
+        for fn in (
+            mpc2emu_bridge.eps_parser.parse_eps_image,
+            mpc2emu_bridge.roland_parser.parse_roland_image,
+        ):
             if "firmware_sim" not in fn.__code__.co_varnames:
                 return False
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
     return True
 
 
-def _listed_count(path) -> Optional[int]:
+def _listed_count(path) -> Optional[int]:  # noqa: UP045
     listed = list_presets(path) if is_container(path) else None
     return len(listed) if listed else None
 
@@ -739,7 +797,7 @@ _EPS_VARIANT_SUFFIXES = ("00", "0*", "*0", "**")
 def _eps_base_name(name: str) -> str:
     for suffix in _EPS_VARIANT_SUFFIXES:
         if name.endswith(suffix):
-            return name[:-len(suffix)]
+            return name[: -len(suffix)]
     return name
 
 
@@ -772,7 +830,8 @@ def disc_preset_indices(bank, listed: list, ordinal: int) -> list:
     if not 0 <= ordinal < len(listed):
         raise ValueError(
             f"row {ordinal + 1} is not on this disc any more — it holds "
-            f"{len(listed)}. Collapse and re-expand it to re-read.")
+            f"{len(listed)}. Collapse and re-expand it to re-read."
+        )
     i = 0
     for row, entry in enumerate(listed):
         want = entry.name if hasattr(entry, "name") else str(entry)
@@ -829,16 +888,19 @@ def resolve_ordinal(bank, listed: list, ordinal: int) -> int:
     if not 0 <= ordinal < len(listed):
         raise ValueError(
             f"preset {ordinal + 1} is not in this file any more — it holds "
-            f"{len(listed)}. Collapse and re-expand it to re-read.")
+            f"{len(listed)}. Collapse and re-expand it to re-read."
+        )
     if len(parsed) == len(listed):
         return ordinal
     if len(parsed) > len(listed):
         raise ValueError(
             f"this file parsed to {len(parsed)} presets but its header lists "
             f"{len(listed)}; import the whole file rather than one preset of "
-            f"it.")
+            f"it."
+        )
 
     safe_name = getattr(xpm_parser, "_safe_name", None)
+
     def norm(text: str) -> str:
         return safe_name(text) if safe_name else text.strip()
 
@@ -853,13 +915,15 @@ def resolve_ordinal(bank, listed: list, ordinal: int) -> int:
             raise ValueError(
                 f"this file's presets could not be matched to its header "
                 f"({len(listed)} listed, {len(parsed)} read); import the "
-                f"whole file rather than one preset of it.")
+                f"whole file rather than one preset of it."
+            )
         mapping[i] = parsed_index
         i += 1
     if ordinal not in mapping:
         raise ValueError(
             f"'{listed[ordinal].display}' holds no sampled content — it has "
-            f"no zone referencing a sample, so there is nothing to import.")
+            f"no zone referencing a sample, so there is nothing to import."
+        )
     return mapping[ordinal]
 
 
@@ -889,14 +953,19 @@ def summary_is_cheap(path) -> bool:
 def whole_disc_reason(path) -> str:
     """Why an instrument on this disc cannot be summarised on a click."""
     fmt = image_content_format(path) or "This"
-    return (f"{fmt} discs parse as a whole — reading one instrument costs "
-            f"what reading all of them costs (about 19 s on the reference "
-            f"disc), so the zone table is not drawn on a click. Import it, "
-            f"or audition it, to read its zones.")
+    return (
+        f"{fmt} discs parse as a whole — reading one instrument costs "
+        f"what reading all of them costs (about 19 s on the reference "
+        f"disc), so the zone table is not drawn on a click. Import it, "
+        f"or audition it, to read its zones."
+    )
 
 
-def summarize_foreign(path, ordinal: Optional[int] = None,
-                      wav_dir: Optional[str] = None) -> XpmSummary:
+def summarize_foreign(
+    path,
+    ordinal: Optional[int] = None,  # noqa: UP045
+    wav_dir: Optional[str] = None,  # noqa: UP045
+) -> XpmSummary:  # noqa: RUF100, UP045
     """One instrument's zones, for the Detail pane.
 
     Reuses ``xpm_import.summarize_program`` rather than growing a second
@@ -941,8 +1010,11 @@ def index_for_row(bank, listed: list, ordinal: int, path) -> int:
     return resolve_ordinal(bank, listed, ordinal)
 
 
-def load_samples_for_test(path, ordinal: Optional[int] = None,
-                          wav_dir: Optional[str] = None) -> list:
+def load_samples_for_test(
+    path,
+    ordinal: Optional[int] = None,  # noqa: UP045
+    wav_dir: Optional[str] = None,  # noqa: UP045
+) -> list:  # noqa: RUF100, UP045
     """Read-only sample list for the Convert Options dialog's stereo Test
     button. Same parse the Detail pane preview does; never writes."""
     bank = parse_foreign(path, wav_dir, max_presets=_listed_count(path))
@@ -950,18 +1022,24 @@ def load_samples_for_test(path, ordinal: Optional[int] = None,
         return bank.samples
     listed = list_presets(path) or []
     return _preset_samples(
-        bank, bank.presets[index_for_row(bank, listed, ordinal, path)])
+        bank, bank.presets[index_for_row(bank, listed, ordinal, path)]
+    )
 
 
 # ── the import ─────────────────────────────────────────────────────────────
 
-def import_foreign(path, opts: ConversionOptions,
-                   ordinal: Optional[int] = None,
-                   wav_dir: Optional[str] = None,
-                   risks_out: Optional[list] = None,
-                   name_base: str = "", name_octave: int = 2,
-                   name_with_key: bool = True,
-                   name_overrides: Optional[dict] = None) -> str:
+
+def import_foreign(
+    path,
+    opts: ConversionOptions,
+    ordinal: Optional[int] = None,  # noqa: UP045
+    wav_dir: Optional[str] = None,  # noqa: UP045
+    risks_out: Optional[list] = None,  # noqa: UP045
+    name_base: str = "",
+    name_octave: int = 2,
+    name_with_key: bool = True,
+    name_overrides: Optional[dict] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Convert a soft-sampler instrument into a real E4B/KRZ/EIII bank file
     in a fresh temp dir, and return its path. Never touches *path*.
 
@@ -1004,12 +1082,17 @@ def import_foreign(path, opts: ConversionOptions,
         # is belt and braces -- but the day it stops ignoring it, an EPS
         # import would silently keep 613 of 2396 presets.)
         cap = None if p.suffix.lower() in IMAGE_CONTENT_EXTS else _listed_count(p)
-        bank = parse_foreign(p, wav_dir, max_presets=cap,
-                             firmware_sim=bool(getattr(opts, "match_device_import", False)))
+        bank = parse_foreign(
+            p,
+            wav_dir,
+            max_presets=cap,
+            firmware_sim=bool(getattr(opts, "match_device_import", False)),
+        )
     if not bank.presets:
         raise ValueError(
             f"{p.name} holds no sampled content: nothing in it references a "
-            f"sample, so there is nothing to import.")
+            f"sample, so there is nothing to import."
+        )
     if ordinal is not None and is_container(p):
         # Narrow the freshly-parsed Bank in place -- safe because it was
         # built for this call alone. Dropping the other presets' samples is
@@ -1029,7 +1112,8 @@ def import_foreign(path, opts: ConversionOptions,
                 raise ValueError(
                     f"{name!r} yielded no preset — the disc lists it, but "
                     f"nothing in it references a sample. Two instruments on "
-                    f"the reference disc are like this.")
+                    f"the reference disc are like this."
+                )
             chosen = [bank.presets[i] for i in indices]
             for n, preset in enumerate(chosen):
                 preset.program_number = n
@@ -1057,7 +1141,8 @@ def import_foreign(path, opts: ConversionOptions,
         raise ValueError(
             f"{p.name} yielded no playable zone — its samples could not be "
             f"read. For a TAL-Sampler preset this normally means they are "
-            f"encrypted .talwav files.")
+            f"encrypted .talwav files."
+        )
     # Base scheme first, then per-sample edits on top, as import_xpm does.
     wanted = names_from_base(bank, name_base, name_octave, name_with_key)
     wanted.update(name_overrides or {})

@@ -47,7 +47,7 @@ _TARGET_BYTES_PER_SAMPLE = 2
 _HEADER_PROBE = 4096
 
 
-def _wav_loadable_bytes(head: bytes) -> Optional[int]:
+def _wav_loadable_bytes(head: bytes) -> Optional[int]:  # noqa: UP045
     """Loadable bytes from a RIFF header, or None if this cannot read it.
 
     `data` chunk size x 16 / bitsPerSample. That is the whole conversion: the
@@ -64,18 +64,18 @@ def _wav_loadable_bytes(head: bytes) -> Optional[int]:
     bits = channels = None
     pos = 12
     while pos + 8 <= len(head):
-        cid = head[pos:pos + 4]
-        size = int.from_bytes(head[pos + 4:pos + 8], "little")
+        cid = head[pos : pos + 4]
+        size = int.from_bytes(head[pos + 4 : pos + 8], "little")
         if cid == b"fmt " and pos + 24 <= len(head):
-            channels = int.from_bytes(head[pos + 10:pos + 12], "little")
-            bits = int.from_bytes(head[pos + 22:pos + 24], "little")
+            channels = int.from_bytes(head[pos + 10 : pos + 12], "little")
+            bits = int.from_bytes(head[pos + 22 : pos + 24], "little")
         elif cid == b"data":
             if not bits or not channels:
                 return None
             return size * (_TARGET_BYTES_PER_SAMPLE * 8) // bits
         if size <= 0:
             return None
-        pos += 8 + size + (size & 1)          # chunks are word-aligned
+        pos += 8 + size + (size & 1)  # chunks are word-aligned
     return None
 
 
@@ -104,7 +104,7 @@ def _audio_bytes(path: Path) -> int:
     try:
         with wave.open(str(path)) as w:
             return w.getnframes() * w.getnchannels() * _TARGET_BYTES_PER_SAMPLE
-    except Exception:
+    except Exception:  # noqa: BLE001
         try:
             return path.stat().st_size
         except OSError:
@@ -153,11 +153,15 @@ def _tal_audio(path: Path, blob: bytes) -> int:
 #: and a half-right figure is worse than none. SF2 and GIG are absent for the
 #: opposite reason -- they EMBED their audio, so their file size is already
 #: the honest answer.
-HANDLED = {".xpm": _xpm_audio, ".xty": _xpm_audio, ".xpj": _xpm_audio,
-           ".talsmpl": _tal_audio}
+HANDLED = {
+    ".xpm": _xpm_audio,
+    ".xty": _xpm_audio,
+    ".xpj": _xpm_audio,
+    ".talsmpl": _tal_audio,
+}
 
 
-def referenced_audio_bytes(path: str) -> Optional[int]:
+def referenced_audio_bytes(path: str) -> Optional[int]:  # noqa: UP045
     """Bytes of audio the instrument at `path` references, or None.
 
     None means "not a format this can answer for", which is a different thing
@@ -174,7 +178,7 @@ def referenced_audio_bytes(path: str) -> Optional[int]:
         return None
     try:
         return fn(p, blob)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -204,16 +208,19 @@ def embedded_preset_audio(path: str) -> dict[str, int]:
     reaching one sample twice pays for it once.
     """
     from . import foreign_import
+
     listed = foreign_import.list_presets(path) or []
     bank = foreign_import.parse_foreign(path, None, max_presets=len(listed) + 5)
     # A zone names its sample; it carries no index. The first version of this
     # looked for `sample_index`, found none on any zone, and reported 0.00 MB
     # for every preset -- a figure that is wrong and looks deliberate.
-    by_name = {(getattr(s, "name", "") or "").strip(): s
-               for s in (getattr(bank, "samples", []) or [])}
+    by_name = {
+        (getattr(s, "name", "") or "").strip(): s
+        for s in (getattr(bank, "samples", []) or [])
+    }
     out: dict[str, int] = {}
     for preset in getattr(bank, "presets", []) or []:
-        seen: dict[str, int] = {}          # by sample name -- deduped per preset
+        seen: dict[str, int] = {}  # by sample name -- deduped per preset
         for voice in getattr(preset, "voices", []) or []:
             for zone in getattr(voice, "zones", []) or []:
                 nm = (getattr(zone, "sample_name", "") or "").strip()
@@ -227,6 +234,8 @@ def embedded_preset_audio(path: str) -> dict[str, int]:
     # file, counted once. NOT the sum of the presets -- they share samples,
     # and on a multi-instrument library that sum runs well past what the file
     # holds. Same distinction the bank rows have made all along.
-    out[CONTAINER_KEY] = sum(len(getattr(s, "data", b"") or b"")
-                             for s in (getattr(bank, "samples", []) or []))
+    out[CONTAINER_KEY] = sum(
+        len(getattr(s, "data", b"") or b"")
+        for s in (getattr(bank, "samples", []) or [])
+    )
     return out

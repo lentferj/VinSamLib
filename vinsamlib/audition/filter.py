@@ -21,7 +21,7 @@ the approximation -- and nowhere else.
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple  # noqa: UP035
 
 from .caveats import AuditionReport, Severity
 
@@ -44,7 +44,7 @@ class SVF:
     (spec §4.6).
     """
 
-    __slots__ = ("rate", "_g", "_k", "_a1", "_a2", "_a3", "_ic1", "_ic2")
+    __slots__ = ("rate", "_g", "_k", "_a1", "_a2", "_a3", "_ic1", "_ic2")  # noqa: RUF023
 
     def __init__(self, rate: int):
         self.rate = int(rate)
@@ -55,7 +55,7 @@ class SVF:
         self._recompute()
 
     def set(self, f0_hz: float, q: float) -> None:
-        nyquist = 0.5 * self.rate
+        nyquist = 0.5 * self.rate  # noqa: F841
         f0 = min(max(float(f0_hz), _MIN_F0_HZ), 0.45 * self.rate)
         q = max(float(q), 0.05)
         self._g = math.tan(math.pi * f0 / self.rate)
@@ -155,16 +155,19 @@ class Cascade:
             raise ValueError(f"unknown filter mode {mode!r}")
         self.mode = mode
         self.sections = [SVF(rate) for _ in range(max(0, sections))]
-        self._idx = {"lp": 0, "hp": 1, "bp": 2, "notch": 3}[mode] \
-            if mode != "bypass" else 0
+        self._idx = (
+            {"lp": 0, "hp": 1, "bp": 2, "notch": 3}[mode] if mode != "bypass" else 0
+        )
         # Decided ONCE, here, rather than per sample. `active` was a property
         # evaluated 4.4 million times in one render, and the tap was chosen by
         # indexing a freshly built tuple every sample of every section; both
         # are answers that cannot change after construction.
         self._active = mode != "bypass" and bool(self.sections)
-        self._chain = tuple(
-            getattr(s, f"process_{mode}") for s in self.sections) \
-            if self._active else ()
+        self._chain = (
+            tuple(getattr(s, f"process_{mode}") for s in self.sections)
+            if self._active
+            else ()
+        )
 
     @property
     def active(self) -> bool:
@@ -182,7 +185,7 @@ class Cascade:
         return x
 
 
-def topology_for(filter_type: int) -> Tuple[str, int]:
+def topology_for(filter_type: int) -> Tuple[str, int]:  # noqa: UP006
     """XPM FilterType (0–29) -> ``(mode, poles)``.
 
     Off is a genuine bypass. Types with no implementation here -- BandBoost
@@ -195,15 +198,34 @@ def topology_for(filter_type: int) -> Tuple[str, int]:
     """
     table = {
         0: ("bypass", 0),
-        1: ("lp", 2), 2: ("lp", 2), 3: ("lp", 4),
-        4: ("lp", 6), 5: ("lp", 8),
-        6: ("hp", 2), 7: ("hp", 2), 8: ("hp", 4),
-        9: ("hp", 6), 10: ("hp", 8),
-        11: ("bp", 2), 12: ("bp", 4), 13: ("bp", 6), 14: ("bp", 8),
-        15: ("notch", 2), 16: ("notch", 4), 17: ("notch", 6), 18: ("notch", 8),
-        19: ("bp", 2), 20: ("bp", 4), 21: ("bp", 6), 22: ("bp", 8),
-        23: ("lp", 4), 24: ("lp", 4), 25: ("lp", 4),
-        26: ("bp", 2), 27: ("bp", 2), 28: ("bp", 2),
+        1: ("lp", 2),
+        2: ("lp", 2),
+        3: ("lp", 4),
+        4: ("lp", 6),
+        5: ("lp", 8),
+        6: ("hp", 2),
+        7: ("hp", 2),
+        8: ("hp", 4),
+        9: ("hp", 6),
+        10: ("hp", 8),
+        11: ("bp", 2),
+        12: ("bp", 4),
+        13: ("bp", 6),
+        14: ("bp", 8),
+        15: ("notch", 2),
+        16: ("notch", 4),
+        17: ("notch", 6),
+        18: ("notch", 8),
+        19: ("bp", 2),
+        20: ("bp", 4),
+        21: ("bp", 6),
+        22: ("bp", 8),
+        23: ("lp", 4),
+        24: ("lp", 4),
+        25: ("lp", 4),
+        26: ("bp", 2),
+        27: ("bp", 2),
+        28: ("bp", 2),
         29: ("lp", 2),
     }
     return table.get(int(filter_type), ("bypass", 0))
@@ -211,10 +233,16 @@ def topology_for(filter_type: int) -> Tuple[str, int]:
 
 #: Types whose fallback is a lie worth naming. Type -> human name.
 _NOT_MODELLED_TYPES = {
-    19: "BandBoost 2-pole", 20: "BandBoost 4-pole",
-    21: "BandBoost 6-pole", 22: "BandBoost 8-pole",
-    23: "Model 1", 24: "Model 2", 25: "Model 3",
-    26: "Vocal 1", 27: "Vocal 2", 28: "Vocal 3",
+    19: "BandBoost 2-pole",
+    20: "BandBoost 4-pole",
+    21: "BandBoost 6-pole",
+    22: "BandBoost 8-pole",
+    23: "Model 1",
+    24: "Model 2",
+    25: "Model 3",
+    26: "Vocal 1",
+    27: "Vocal 2",
+    28: "Vocal 3",
     29: "MPC3000 LPF",
 }
 
@@ -225,8 +253,12 @@ def sections_for(poles: int) -> int:
     return max(1, poles // 2)
 
 
-def corner_to_f0(corner_hz: float, poles: int, fmt: str,
-                 report: Optional[AuditionReport] = None) -> float:
+def corner_to_f0(
+    corner_hz: float,
+    poles: int,
+    fmt: str,
+    report: Optional[AuditionReport] = None,  # noqa: UP045
+) -> float:  # noqa: RUF100, UP045
     """A format's stated cutoff -> this filter's f0.
 
     ``KRZ`` is passed straight through: the K2000's displayed cutoff *is* f0
@@ -243,12 +275,14 @@ def corner_to_f0(corner_hz: float, poles: int, fmt: str,
         # authored below the floor would be silently opened up with nothing
         # said. A K2000 cutoff really does go this low.
         report.note(
-            Severity.FITTED, "filter cutoff clamped",
+            Severity.FITTED,
+            "filter cutoff clamped",
             f"This voice states a cutoff of {float(corner_hz):.0f} Hz, below "
             f"the {_MIN_F0_HZ:.0f} Hz floor this renderer's filter can run. It "
             f"was raised to the floor, so the audition is more open than the "
             f"preset asks for. The machine has its own floor and it is not "
-            f"this one.")
+            f"this one.",
+        )
     if fmt == "KRZ":
         return corner
     sections = sections_for(poles)
@@ -256,18 +290,23 @@ def corner_to_f0(corner_hz: float, poles: int, fmt: str,
         return corner
     if report is not None:
         report.note(
-            Severity.FITTED, "filter corner → f0",
+            Severity.FITTED,
+            "filter corner → f0",
             f"The {fmt} cutoff is a −3 dB corner; it was converted to the "
             f"filter's natural frequency at the nominal Q, using the measured "
             f"{CASCADE_3DB_RATIO:.3f} ratio of a {sections}-section cascade. "
             f"Every machine labels its corner at its own resonance setting and "
             f"none was measured that way, so the conversion holds at nominal Q "
-            f"only.")
+            f"only.",
+        )
     return corner / CASCADE_3DB_RATIO
 
 
-def resonance_to_q(resonance01: float, fmt: str,
-                   report: Optional[AuditionReport] = None) -> float:
+def resonance_to_q(
+    resonance01: float,
+    fmt: str,
+    report: Optional[AuditionReport] = None,  # noqa: UP045
+) -> float:  # noqa: RUF100, UP045
     """A format's normalised resonance knob -> Q.
 
     **KRZ** carries a *measured* quantity: the byte is dB of peak boost,
@@ -295,9 +334,11 @@ def resonance_to_q(resonance01: float, fmt: str,
                 hi = mid
         if report is not None and r > 0.0:
             report.note(
-                Severity.FITTED, "K2000 resonance",
+                Severity.FITTED,
+                "K2000 resonance",
                 f"Resonance was derived from the K2000's measured "
-                f"{db:.1f} dB of peak boost, solved for Q.")
+                f"{db:.1f} dB of peak boost, solved for Q.",
+            )
         return 0.5 * (lo + hi)
     # Exponential 0.7071 .. 8. A conservative curve rather than a linear one:
     # Q = 4 where the machine does 1.2 is a whistle on every note, and the
@@ -305,10 +346,12 @@ def resonance_to_q(resonance01: float, fmt: str,
     q = 0.70710678 * (8.0 / 0.70710678) ** r
     if report is not None and r > 0.0:
         report.note(
-            Severity.UNMEASURED, "resonance → Q",
+            Severity.UNMEASURED,
+            "resonance → Q",
             "Resonance mapped from a normalised knob onto Q 0.707…8 with no "
             "measured Q law for this machine. This is the most invented number "
-            "in the chain.")
+            "in the chain.",
+        )
     return q
 
 
@@ -319,9 +362,11 @@ def caveat_for_type(filter_type: int, report: AuditionReport) -> None:
         return
     mode, _ = topology_for(filter_type)
     report.note(
-        Severity.NOT_MODELLED, f"filter type {name}",
+        Severity.NOT_MODELLED,
+        f"filter type {name}",
         f"This voice's filter is a {name}. The audition plays a {mode} in its "
-        f"place, because nothing here models that type.")
+        f"place, because nothing here models that type.",
+    )
 
 
 #: Types whose resonance law is the invented one -- used by the report so the

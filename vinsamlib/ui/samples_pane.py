@@ -4,13 +4,21 @@ hidden by default (View ▸ Show Samples Column), and the natural drag-source
 for individual samples once M5 adds drag-and-drop.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHeaderView, QLabel,
-                                QStyle, QStyledItemDelegate, QTableView, QVBoxLayout,
-                                QWidget)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QHeaderView,
+    QLabel,
+    QStyle,
+    QStyledItemDelegate,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import workers
 from .models import TreeNode
@@ -19,15 +27,16 @@ from ..build import xpm_import
 
 
 class ZoneTableModel(QAbstractTableModel):
-    HEADERS = ["Sample", "Key range", "Vel range", "Root", "Loop"]
+    HEADERS = ["Sample", "Key range", "Vel range", "Root", "Loop"]  # noqa: RUF012
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._zones: list[summary.ZoneSummary] = []
         self._full_names: dict[str, str] = {}
 
-    def set_zones(self, zones: list[summary.ZoneSummary],
-                  full_names: dict[str, str] | None = None) -> None:
+    def set_zones(
+        self, zones: list[summary.ZoneSummary], full_names: dict[str, str] | None = None
+    ) -> None:
         """`full_names` maps a shortened sample name to the whole name it came
         from, for programs that have not been imported yet -- see
         build/xpm_import.full_sample_names(). Without it the stored names are
@@ -57,21 +66,26 @@ class ZoneTableModel(QAbstractTableModel):
         full = self._full_names.get(stored)
         if not full or len(full) <= len(stored):
             return None
-        if full.endswith(stored):                  # the tail survived
-            return [(full[:len(full) - len(stored)], "drop"), (stored, "keep")]
-        if full.startswith(stored):                # the head survived
-            return [(stored, "keep"), (full[len(stored):], "drop")]
-        cut = len(full) - len(stored)              # renamed: split by length
+        if full.endswith(stored):  # the tail survived
+            return [(full[: len(full) - len(stored)], "drop"), (stored, "keep")]
+        if full.startswith(stored):  # the head survived
+            return [(stored, "keep"), (full[len(stored) :], "drop")]
+        cut = len(full) - len(stored)  # renamed: split by length
         return [(full[:cut], "drop"), (full[cut:], "renamed")]
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
         return 0 if parent.isValid() else len(self._zones)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
         return len(self.HEADERS)
 
-    def headerData(self, section: int, orientation: int, role: int = Qt.ItemDataRole.DisplayRole):
-        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
+    def headerData(
+        self, section: int, orientation: int, role: int = Qt.ItemDataRole.DisplayRole
+    ):
+        if (
+            role == Qt.ItemDataRole.DisplayRole
+            and orientation == Qt.Orientation.Horizontal
+        ):
             return self.HEADERS[section]
         return None
 
@@ -86,14 +100,18 @@ class ZoneTableModel(QAbstractTableModel):
                 stored = self._zones[index.row()].sample_name
                 whole = "".join(text for text, _ in parts)
                 kept_end = "END" if parts[0][1] == "drop" else "START"
-                tip = (f"{whole}\n\nImports as '{stored}' — an E4B or KRZ sample "
-                       f"name holds 16 characters, and this program keeps the "
-                       f"{kept_end} of each name, which is where its samples "
-                       f"differ from one another.")
+                tip = (
+                    f"{whole}\n\nImports as '{stored}' — an E4B or KRZ sample "
+                    f"name holds 16 characters, and this program keeps the "
+                    f"{kept_end} of each name, which is where its samples "
+                    f"differ from one another."
+                )
                 if any(kind == "renamed" for _, kind in parts):
-                    tip += ("\n\nRenamed: another sample already had that name, and "
-                            "a zone finds its audio by name alone — two samples "
-                            "sharing one would silence the second.")
+                    tip += (
+                        "\n\nRenamed: another sample already had that name, and "
+                        "a zone finds its audio by name alone — two samples "
+                        "sharing one would silence the second."
+                    )
                 return tip
         if role != Qt.ItemDataRole.DisplayRole:
             return None
@@ -133,19 +151,26 @@ class TruncatedNameDelegate(QStyledItemDelegate):
             super().paint(painter, option, index)
             return
         self.initStyleOption(option, index)
-        option.text = ""                      # the style draws everything but the text
+        option.text = ""  # the style draws everything but the text
         style = option.widget.style() if option.widget else QApplication.style()
-        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, option, painter, option.widget)
+        style.drawControl(
+            QStyle.ControlElement.CE_ItemViewItem, option, painter, option.widget
+        )
 
-        rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, option.widget)
+        rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText, option, option.widget
+        )
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         metrics = painter.fontMetrics()
-        baseline = rect.top() + (rect.height() + metrics.ascent() - metrics.descent()) // 2
+        baseline = (
+            rect.top() + (rect.height() + metrics.ascent() - metrics.descent()) // 2
+        )
         x = rect.left()
 
         kept_pen = option.palette.color(
             QPalette.ColorGroup.Normal,
-            QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
+            QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text,
+        )
         pens = {
             "drop": _DROP_RED_SELECTED if selected else _DROP_RED,
             "renamed": _RENAMED_AMBER_SELECTED if selected else _RENAMED_AMBER,
@@ -179,8 +204,10 @@ class SamplesPane(QWidget):
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.verticalHeader().setVisible(False)
         header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)          # Sample: flexible
-        for col in (1, 2, 3, 4):                                     # Key/Vel/Root/Loop: compact
+        header.setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )  # Sample: flexible
+        for col in (1, 2, 3, 4):  # Key/Vel/Root/Loop: compact
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self._table)
 
@@ -197,7 +224,9 @@ class SamplesPane(QWidget):
             self._show_foreign(node, gen)
             return
         if node is None or node.kind != "preset":
-            self._title.setText("Select a preset or program to list the samples it uses.")
+            self._title.setText(
+                "Select a preset or program to list the samples it uses."
+            )
             self._model.set_zones([])
             return
 
@@ -206,8 +235,12 @@ class SamplesPane(QWidget):
         w = workers.Worker(summary.summarize_preset, bank, preset_obj)
         w.signals.finished.connect(lambda ps, g=gen: self._apply(g, ps))
         w.signals.error.connect(lambda msg, g=gen: self._apply_error(g, msg))
-        w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
-        w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         self._live_workers.append(w)
         workers.run(w)
 
@@ -227,14 +260,29 @@ class SamplesPane(QWidget):
             path, preset_index = node.payload
             project = node.parent.handle if node.parent is not None else None
             if project is not None:
-                self._run(xpm_import.summarize_program, (project, preset_index),
-                          gen, path, node.label)
+                self._run(
+                    xpm_import.summarize_program,
+                    (project, preset_index),
+                    gen,
+                    path,
+                    node.label,
+                )
                 return
-            self._run(xpm_import.summarize_xpm, (str(path), None, preset_index),
-                      gen, path, node.label)
+            self._run(
+                xpm_import.summarize_xpm,
+                (str(path), None, preset_index),
+                gen,
+                path,
+                node.label,
+            )
             return
-        self._run(xpm_import.summarize_xpm, (str(node.payload),), gen,
-                  node.payload, node.label)
+        self._run(
+            xpm_import.summarize_xpm,
+            (str(node.payload),),
+            gen,
+            node.payload,
+            node.label,
+        )
 
     def _show_foreign(self, node: TreeNode, gen: int) -> None:
         """A soundfont-style instrument lists its samples like any preset.
@@ -246,13 +294,15 @@ class SamplesPane(QWidget):
         declaration instead of being parsed to prove it again.
         """
         from ..build import foreign_import
+
         if node.empty_reason:
             self._title.setText(f"{node.label} — {node.empty_reason}")
             self._model.set_zones([])
             return
         if node.kind == "foreign_bank":
             self._title.setText(
-                f"{node.label} — expand it in the tree and pick an instrument.")
+                f"{node.label} — expand it in the tree and pick an instrument."
+            )
             self._model.set_zones([])
             return
         path, ordinal = node.payload
@@ -262,30 +312,42 @@ class SamplesPane(QWidget):
             # the other pane had just declined -- so the careful wording over
             # there was undone by looking at the same row here.
             self._title.setText(
-                f"{node.label} — {foreign_import.whole_disc_reason(path)}")
+                f"{node.label} — {foreign_import.whole_disc_reason(path)}"
+            )
             self._model.set_zones([])
             return
         self._title.setText(f"Loading {node.label}…")
-        self._run(foreign_import.summarize_foreign, (str(path), ordinal), gen,
-                  None, node.label)
+        self._run(
+            foreign_import.summarize_foreign,
+            (str(path), ordinal),
+            gen,
+            None,
+            node.label,
+        )
 
     def _run(self, fn, args: tuple, gen: int, source=None, label: str = "") -> None:
         # The whole names come off the same worker thread as the summary --
         # reading them opens the file again, which the GUI thread must not do.
         def work():
             xs = fn(*args)
-            names = ({} if source is None else
-                     xpm_import.full_sample_names([z.sample_name for z in xs.zones],
-                                                   str(source)))
+            names = (
+                {}
+                if source is None
+                else xpm_import.full_sample_names(
+                    [z.sample_name for z in xs.zones], str(source)
+                )
+            )
             return xs, names, label
 
         w = workers.Worker(work)
         w.signals.finished.connect(lambda xs, g=gen: self._apply_program(g, xs))
         w.signals.error.connect(lambda msg, g=gen: self._apply_error(g, msg))
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         self._live_workers.append(w)
         workers.run(w)
 

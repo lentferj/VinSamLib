@@ -6,7 +6,7 @@ stored chain (folder/bank names, preset native ids) back down to the hit,
 exactly as the scanner walked it when building the index.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from pathlib import Path
 from typing import Optional
@@ -17,7 +17,7 @@ from ..index.db import SearchResult
 from ..vfs.detect import open_volume, sniff
 
 
-def resolve_result(result: SearchResult) -> Optional[TreeNode]:
+def resolve_result(result: SearchResult) -> Optional[TreeNode]:  # noqa: UP045
     if result.kind in ("xpm", "mpc_project"):
         # An MPC hit's container *is* the .xpm/.xty/.xpj file itself (see
         # index/scanner.py's _scan_xpm_container -- one lightweight
@@ -29,8 +29,13 @@ def resolve_result(result: SearchResult) -> Optional[TreeNode]:
         # shows its size and says to expand it in the tree: parsing here
         # would load every WAV just to render one search result, and the
         # results list has no rows to expand into anyway.
-        return TreeNode(result.kind, result.name, None, Path(result.container_path),
-                         format_label=result.format or "XPM")
+        return TreeNode(
+            result.kind,
+            result.name,
+            None,
+            Path(result.container_path),
+            format_label=result.format or "XPM",
+        )
     if result.kind == "mpc_program":
         return _resolve_project_program(result)
     if result.kind in ("foreign_bank", "foreign_preset"):
@@ -43,7 +48,7 @@ def resolve_result(result: SearchResult) -> Optional[TreeNode]:
     return _resolve_in_image(container_path, result)
 
 
-def _resolve_foreign(result: SearchResult) -> Optional[TreeNode]:
+def _resolve_foreign(result: SearchResult) -> Optional[TreeNode]:  # noqa: UP045
     """A soundfont-style hit: the file itself, or one instrument in it.
 
     The happier version of _resolve_project_program below. That one has to
@@ -53,15 +58,22 @@ def _resolve_foreign(result: SearchResult) -> Optional[TreeNode]:
     the index, so a file edited since the last scan resolves to the right
     instrument instead of its neighbour.
     """
-    from ..build import foreign_import                      # circular at import time
+    from ..build import foreign_import  # circular at import time  # noqa: I001, RUF100
+
     path = Path(result.container_path)
     verdict = foreign_import.inspect(path)
     if verdict is None:
         return None
     if result.kind == "foreign_bank":
-        return TreeNode("foreign_bank", path.name, None, path,
-                        format_label=verdict.format, note=verdict.note,
-                        empty_reason=verdict.empty_reason)
+        return TreeNode(
+            "foreign_bank",
+            path.name,
+            None,
+            path,
+            format_label=verdict.format,
+            note=verdict.note,
+            empty_reason=verdict.empty_reason,
+        )
     ordinal = None
     if foreign_import.is_container(path):
         listed = foreign_import.list_presets(path) or []
@@ -70,20 +82,30 @@ def _resolve_foreign(result: SearchResult) -> Optional[TreeNode]:
         # is matched afresh against the file rather than trusted from the
         # index, so an edited file resolves to the right instrument.
         wanted = result.name.strip()
-        matches = [i for i, entry in enumerate(listed)
-                   if entry.display == wanted or entry.name.strip() == wanted]
+        matches = [
+            i
+            for i, entry in enumerate(listed)
+            if entry.display == wanted or entry.name.strip() == wanted
+        ]
         if not matches:
             # Gone from the file since the scan. The container row is the
             # honest answer -- that is where the user can see what it holds.
-            return TreeNode("foreign_bank", path.name, None, path,
-                            format_label=verdict.format)
+            return TreeNode(
+                "foreign_bank", path.name, None, path, format_label=verdict.format
+            )
         ordinal = matches[0]
-    return TreeNode("foreign_preset", result.name, None, (path, ordinal),
-                    format_label=verdict.format, note=verdict.note,
-                    empty_reason=verdict.empty_reason)
+    return TreeNode(
+        "foreign_preset",
+        result.name,
+        None,
+        (path, ordinal),
+        format_label=verdict.format,
+        note=verdict.note,
+        empty_reason=verdict.empty_reason,
+    )
 
 
-def _resolve_akai_dir(container_path: str, result: SearchResult) -> Optional[TreeNode]:
+def _resolve_akai_dir(container_path: str, result: SearchResult) -> Optional[TreeNode]:  # noqa: UP045
     """A folder of loose AKAI files, which the index stores as one bank.
 
     The only container here that is a DIRECTORY rather than a file, so it
@@ -91,13 +113,19 @@ def _resolve_akai_dir(container_path: str, result: SearchResult) -> Optional[Tre
     as a bank file, and a directory does neither -- `read_bytes()` on one
     raises, which is how this used to return None and drop the hit."""
     from ..banks import akai as vs_akai
+
     try:
         bank = vs_akai.parse_dir(container_path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
-    bank_node = TreeNode("bank", Path(container_path).name, None,
-                          (None, Path(container_path)), handle=bank,
-                          format_label="AKAI")
+    bank_node = TreeNode(
+        "bank",
+        Path(container_path).name,
+        None,
+        (None, Path(container_path)),
+        handle=bank,
+        format_label="AKAI",
+    )
     if result.kind == "bank":
         return bank_node
     native_id = result.chain[-1].native_id if result.chain else None
@@ -107,7 +135,7 @@ def _resolve_akai_dir(container_path: str, result: SearchResult) -> Optional[Tre
     return TreeNode("preset", result.name, bank_node, (bank, prog))
 
 
-def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:
+def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:  # noqa: UP045
     """A program inside an MPC 3 project, indexed by name only.
 
     Unlike every other hit here this one has to parse -- a program only
@@ -117,12 +145,21 @@ def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:
     expands it (same code, same caching, same row labels) and the row is
     found by name. If it is not there, the project row itself is the honest
     answer: that is where the user can see what it does hold."""
-    from .models import TreeNode as _TreeNode, _fetch_mpc_project   # circular at import time
-    project = _TreeNode("mpc_project", Path(result.container_path).name, None,
-                         Path(result.container_path), format_label=result.format or "XPJ")
+    from .models import (  # noqa: I001
+        TreeNode as _TreeNode,
+        _fetch_mpc_project,
+    )  # circular at import time  # noqa: I001, RUF100
+
+    project = _TreeNode(
+        "mpc_project",
+        Path(result.container_path).name,
+        None,
+        Path(result.container_path),
+        format_label=result.format or "XPJ",
+    )
     try:
         rows = _fetch_mpc_project(project)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return project
     wanted = result.name.strip()
     for row in rows:
@@ -134,7 +171,9 @@ def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:
     return project
 
 
-def _resolve_loose_bank(container_path: str, result: SearchResult) -> Optional[TreeNode]:
+def _resolve_loose_bank(
+    container_path: str, result: SearchResult
+) -> Optional[TreeNode]:  # noqa: UP045
     try:
         data = Path(container_path).read_bytes()
     except OSError:
@@ -142,8 +181,9 @@ def _resolve_loose_bank(container_path: str, result: SearchResult) -> Optional[T
     fmt, bank = _parse_bank_bytes(data, container_path)
     if bank is None:
         return None
-    bank_node = TreeNode("bank", Path(container_path).name, None, None,
-                          handle=bank, format_label=fmt)
+    bank_node = TreeNode(
+        "bank", Path(container_path).name, None, None, handle=bank, format_label=fmt
+    )
     if result.kind == "bank":
         return bank_node
     preset_native_id = result.chain[-1].native_id if result.chain else None
@@ -153,54 +193,71 @@ def _resolve_loose_bank(container_path: str, result: SearchResult) -> Optional[T
     return TreeNode("preset", result.name, bank_node, (bank, preset_obj))
 
 
-def _resolve_in_image(container_path: str, result: SearchResult) -> Optional[TreeNode]:
+def _resolve_in_image(container_path: str, result: SearchResult) -> Optional[TreeNode]:  # noqa: UP045
     vol = open_volume(container_path)
     if vol is None:
         return None
     current_entry = None
-    node: Optional[TreeNode] = None
+    node: Optional[TreeNode] = None  # noqa: UP045
     for chain_entry in result.chain:
         if chain_entry.kind in ("folder", "bank"):
-            found = next((e for e in vol.list(current_entry) if e.name == chain_entry.native_id), None)
+            found = next(
+                (e for e in vol.list(current_entry) if e.name == chain_entry.native_id),
+                None,
+            )
             if found is None:
                 return node
             current_entry = found
-            node = TreeNode(chain_entry.kind, found.name, node, (vol, found), size=found.size)
+            node = TreeNode(
+                chain_entry.kind, found.name, node, (vol, found), size=found.size
+            )
             if chain_entry.kind == "bank" and found.meta.get("akai_volume"):
                 # An AKAI bank is a whole volume, not a file to read bytes
                 # from -- see banks/akai.py. Same branch the tree takes.
                 try:
                     node.handle = vol.volume_bank(found)
                     node.format_label = "AKAI"
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
                 continue
             if chain_entry.kind == "bank":
                 try:
                     data = vol.read(found)
-                except Exception:
+                except Exception:  # noqa: BLE001, S112
                     continue
                 fmt, bank = _parse_bank_bytes(data, found.name)
                 if bank is not None:
                     node.handle = bank
                     node.format_label = fmt
-        elif chain_entry.kind == "preset" and node is not None and node.handle is not None:
-            preset_obj = _find_preset(node.handle, node.format_label, chain_entry.native_id)
+        elif (
+            chain_entry.kind == "preset"
+            and node is not None
+            and node.handle is not None
+        ):
+            preset_obj = _find_preset(
+                node.handle, node.format_label, chain_entry.native_id
+            )
             if preset_obj is None:
                 return node
             node = TreeNode("preset", chain_entry.name, node, (node.handle, preset_obj))
     return node
 
 
-def _find_preset(bank, fmt: str, native_id: Optional[str]):
+def _find_preset(bank, fmt: str, native_id: Optional[str]):  # noqa: UP045
     if native_id is None:
         return None
     if fmt == "AKAI":
         # An AKAI program has neither index nor id -- it is a file in a
         # volume, so its filename is what identifies it. Falls back to the
         # name for a program that reached the index without one.
-        return next((p for p in getattr(bank, "programs", [])
-                     if (p.filename or p.name) == native_id), None)
+        return next(
+            (
+                p
+                for p in getattr(bank, "programs", [])
+                if (p.filename or p.name) == native_id
+            ),
+            None,
+        )
     try:
         if fmt == "E4B" or fmt == "EIII":
             idx = int(native_id)
@@ -216,16 +273,16 @@ def _parse_bank_bytes(data: bytes, label: str):
     if data[:4] == b"FORM" and data[8:12] == b"E4B0":
         try:
             return "E4B", e4b.parse_bytes(data, label)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "E4B", None
     if data[:4] == b"PRAM":
         try:
             return "KRZ", krz.parse_bytes(data, label)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "KRZ", None
     if eiii.detect_format(data) is not None:
         try:
             return "EIII", eiii.parse_bytes(data, label)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "EIII", None
     return "", None

@@ -106,16 +106,18 @@ import hashlib
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional  # noqa: UP035
 
 # ── name codec ───────────────────────────────────────────────────────────────
 # Names are not ASCII: a 41-symbol alphabet, one byte per character
 # (AKAI_S3000_FORMAT.md "Character encoding"). Both of that document's
 # references agree on this table exactly.
-AKAI_ALPHABET = ("0123456789"                    # 0x00-0x09
-                 " "                              # 0x0A
-                 "ABCDEFGHIJKLMNOPQRSTUVWXYZ"    # 0x0B-0x24
-                 "#+-.")                          # 0x25-0x28
+AKAI_ALPHABET = (
+    "0123456789"  # 0x00-0x09
+    " "  # 0x0A
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # 0x0B-0x24
+    "#+-."
+)  # 0x25-0x28
 
 _AKAI_REVERSE = {c: i for i, c in enumerate(AKAI_ALPHABET)}
 _AKAI_SPACE = _AKAI_REVERSE[" "]
@@ -145,6 +147,7 @@ KEYGROUP_LEN = S3000_BLOCK_LEN
 
 def block_len(s3000: bool) -> int:
     return S3000_BLOCK_LEN if s3000 else S1000_BLOCK_LEN
+
 
 #: Velocity-zone offsets within a keygroup: a **uniform 0x18 stride**, which
 #: is 12 name bytes plus a 12-byte parameter record. The same for both
@@ -205,8 +208,8 @@ _S900_RANGE = (ord("A"), ord("Z"))
 _S1000_RANGE = (ord("a"), ord("z"))
 _S3000_RANGE = (ord("a") | 0x80, ord("z") | 0x80)
 
-_FTYPE_CDSETUP = ord("T")                 # CD3000 CD-ROM setup   -> .CD
-_FTYPE_CDSAMPLE = ord("h") | 0x80         # CD3000 sample params  -> .s+
+_FTYPE_CDSETUP = ord("T")  # CD3000 CD-ROM setup   -> .CD
+_FTYPE_CDSAMPLE = ord("h") | 0x80  # CD3000 sample params  -> .s+
 
 #: The types this project itself writes, kept as names for readability.
 FILE_TYPES = {
@@ -242,14 +245,18 @@ def ftype_to_ext(ftype: int) -> str:
     return f"x{ftype:02x}"
 
 
-_EXT_FTYPE = {ftype_to_ext(t).upper(): t
-              for t in (list(range(_S900_RANGE[0], _S900_RANGE[1] + 1))
-                        + list(range(_S1000_RANGE[0], _S1000_RANGE[1] + 1))
-                        + list(range(_S3000_RANGE[0], _S3000_RANGE[1] + 1))
-                        + [_FTYPE_CDSETUP, _FTYPE_CDSAMPLE])}
+_EXT_FTYPE = {
+    ftype_to_ext(t).upper(): t
+    for t in (
+        list(range(_S900_RANGE[0], _S900_RANGE[1] + 1))
+        + list(range(_S1000_RANGE[0], _S1000_RANGE[1] + 1))
+        + list(range(_S3000_RANGE[0], _S3000_RANGE[1] + 1))
+        + [_FTYPE_CDSETUP, _FTYPE_CDSAMPLE]
+    )
+}
 
 
-def generation_of_ftype(ftype: Optional[int]) -> Optional[bool]:
+def generation_of_ftype(ftype: Optional[int]) -> Optional[bool]:  # noqa: UP045
     """Which sampler generation a directory entry's type byte names, or None.
 
     This is the authoritative source for the generation -- it is not in the
@@ -264,11 +271,12 @@ def generation_of_ftype(ftype: Optional[int]) -> Optional[bool]:
     return None
 
 
-def ext_to_ftype(ext: str) -> Optional[int]:
+def ext_to_ftype(ext: str) -> Optional[int]:  # noqa: UP045
     """The file-type byte an extension stands for, or None if it names no
     AKAI type at all. The inverse of `ftype_to_ext`, built from it so the
     two cannot drift."""
     return _EXT_FTYPE.get(ext.upper().lstrip("."))
+
 
 SAMPLE_TYPES = {FILE_TYPES["S3"], FILE_TYPES["S1"]}
 PROGRAM_TYPES = {FILE_TYPES["P3"], FILE_TYPES["P1"]}
@@ -279,7 +287,7 @@ MAX_FILES_PER_VOLUME = 510
 
 #: MIDI program number inside a program file (see the header map above).
 #: 0-based; the S3000XL panel displays it 1-based.
-_OFF_PRGNUM = 0x0f
+_OFF_PRGNUM = 0x0F
 
 #: Highest MIDI program number the field can express. Past this many programs
 #: some collision is unavoidable -- 128 numbers is the whole MIDI address
@@ -304,8 +312,9 @@ def akai_to_str(raw: bytes) -> str:
     """Decode an AKAI-encoded name, trailing blanks removed. An
     out-of-alphabet byte becomes '.', as both of the format's references do —
     one stray byte in one name must not stop a whole disk from listing."""
-    return "".join(AKAI_ALPHABET[b] if b < len(AKAI_ALPHABET) else "."
-                   for b in raw).rstrip()
+    return "".join(
+        AKAI_ALPHABET[b] if b < len(AKAI_ALPHABET) else "." for b in raw
+    ).rstrip()
 
 
 def str_to_akai(name: str, length: int = NAME_LEN) -> bytes:
@@ -347,12 +356,13 @@ def _u32(data: bytes, off: int) -> int:
 
 # ── samples ──────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class AkaiSample:
     """One `.S3`/`.S1` file, held verbatim."""
 
     name: str
-    body: bytes                  # header block + 16-bit mono PCM
+    body: bytes  # header block + 16-bit mono PCM
     filename: str = ""
     #: Which generation wrote it, which is what sizes the header block. Not
     #: derivable from the bytes -- see BLOCK_ID_PROGRAM.
@@ -471,7 +481,7 @@ class AkaiSample:
 
         Neither reading was wrong. The test comparing them was.
         """
-        semis = int(self.tune_cents / 100.0)   # toward zero, as mpc2emu does
+        semis = int(self.tune_cents / 100.0)  # toward zero, as mpc2emu does
         return max(0, min(127, self.root_key - semis))
 
     @property
@@ -505,9 +515,11 @@ class AkaiSample:
         signature of audio written at a rate that was never snapped.
         """
         declared = self.declared_rate
-        return bool(declared
-                    and declared not in self._PLAYBACK_RATES
-                    and declared != self.sample_rate)
+        return bool(
+            declared
+            and declared not in self._PLAYBACK_RATES
+            and declared != self.sample_rate
+        )
 
     @property
     def rate_cents_off(self) -> float:
@@ -516,6 +528,7 @@ class AkaiSample:
         if not self.rate_is_unplayable:
             return 0.0
         import math
+
         return 1200.0 * math.log2(self.sample_rate / float(self.declared_rate))
 
     @property
@@ -532,7 +545,7 @@ class AkaiSample:
     @property
     def pcm(self) -> bytes:
         start = self.header_len
-        return self.body[start:start + self.frame_count * 2]
+        return self.body[start : start + self.frame_count * 2]
 
     @property
     def loop(self) -> str:
@@ -549,9 +562,12 @@ class AkaiSample:
         return "none"
 
 
-def parse_sample(data: bytes, filename: str = "",
-                 s3000: Optional[bool] = None,
-                 typed: bool = False) -> Optional[AkaiSample]:
+def parse_sample(
+    data: bytes,
+    filename: str = "",
+    s3000: Optional[bool] = None,  # noqa: UP045
+    typed: bool = False,
+) -> Optional[AkaiSample]:  # noqa: UP045
     """One AKAI sample file -> AkaiSample, or None if it is not one.
 
     `s3000` is the generation, and it decides where the PCM starts. Pass it
@@ -566,7 +582,7 @@ def parse_sample(data: bytes, filename: str = "",
         s3000 = _infer_sample_gen(data)
     if len(data) < block_len(s3000):
         return None
-    name = akai_to_str(data[0x03:0x03 + NAME_LEN])
+    name = akai_to_str(data[0x03 : 0x03 + NAME_LEN])
     if not name:
         name = Path(filename).stem.upper()[:NAME_LEN]
     return AkaiSample(name=name, body=data, filename=filename, is_s3000=s3000)
@@ -588,10 +604,11 @@ def _infer_sample_gen(data: bytes) -> bool:
 
 # ── programs ─────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class AkaiZone:
     sample_name: str
-    name_offset: int             # absolute offset of the 12-byte name in the program body
+    name_offset: int  # absolute offset of the 12-byte name in the program body
     lo_vel: int
     hi_vel: int
     #: As stored, and never scaled or displayed here. This is VTUNO1..4 --
@@ -742,6 +759,7 @@ class AkaiKeygroup:
     swept. Do not inherit. STUNO is the disproof — same wording as the tuning
     field, round-trips perfectly, does nothing at all.
     """
+
     lo_key: int
     hi_key: int
     tune: int
@@ -778,8 +796,9 @@ class AkaiProgram:
         every velocity zone — the AKAI counterpart of `E4BPreset.zone_refs`,
         and the hook `assemble()` patches a rename through. A name, not an
         index, because that is genuinely what the format stores."""
-        return [(z.name_offset, z.sample_name)
-                for kg in self.keygroups for z in kg.zones]
+        return [
+            (z.name_offset, z.sample_name) for kg in self.keygroups for z in kg.zones
+        ]
 
     @property
     def sample_names(self) -> list[str]:
@@ -789,10 +808,10 @@ class AkaiProgram:
         return list(seen)
 
 
-def _parse_zone(body: bytes, base: int) -> Optional[AkaiZone]:
+def _parse_zone(body: bytes, base: int) -> Optional[AkaiZone]:  # noqa: UP045
     if base + 0x14 > len(body):
         return None
-    raw = body[base:base + NAME_LEN]
+    raw = body[base : base + NAME_LEN]
     # An unused zone is blank, and "blank" has two spellings — one of which
     # is a trap. 0x00 decodes to the DIGIT '0', not to a space, so a
     # never-populated zone reads as the perfectly valid name "000000000000"
@@ -833,17 +852,24 @@ def _parse_zone(body: bytes, base: int) -> Optional[AkaiZone]:
     hi_vel = body[base + 0x0D]
     if hi_vel == 0:
         return None
-    lo_vel = body[base + 0x0C]
+    lo_vel = body[base + 0x0C]  # noqa: F841
     return AkaiZone(
-        sample_name=name, name_offset=base,
-        lo_vel=body[base + 0x0C], hi_vel=body[base + 0x0D],
+        sample_name=name,
+        name_offset=base,
+        lo_vel=body[base + 0x0C],
+        hi_vel=body[base + 0x0D],
         tune=_s16(body, base + 0x0E),
-        loudness=_s8(body[base + 0x10]), pan=_s8(body[base + 0x12]))
+        loudness=_s8(body[base + 0x10]),
+        pan=_s8(body[base + 0x12]),
+    )
 
 
-def parse_program(data: bytes, filename: str = "",
-                  s3000: Optional[bool] = None,
-                  typed: bool = False) -> Optional[AkaiProgram]:
+def parse_program(
+    data: bytes,
+    filename: str = "",
+    s3000: Optional[bool] = None,  # noqa: UP045
+    typed: bool = False,
+) -> Optional[AkaiProgram]:  # noqa: UP045
     """One AKAI program file -> AkaiProgram, or None if it is not one.
 
     `s3000` is the generation, which sizes the common block and every
@@ -883,18 +909,26 @@ def parse_program(data: bytes, filename: str = "",
         zones = [z for z in (_parse_zone(data, off + b) for b in ZONE_OFFSETS) if z]
         if not zones:
             continue
-        keygroups.append(AkaiKeygroup(
-            lo_key=data[off + 0x03], hi_key=data[off + 0x04],
-            tune=_s16(data, off + 0x05), filter_freq=data[off + 0x07],
-            amp_attack=data[off + 0x0C], amp_decay=data[off + 0x0D],
-            amp_sustain=data[off + 0x0E], amp_release=data[off + 0x0F],
-            zones=zones))
+        keygroups.append(
+            AkaiKeygroup(
+                lo_key=data[off + 0x03],
+                hi_key=data[off + 0x04],
+                tune=_s16(data, off + 0x05),
+                filter_freq=data[off + 0x07],
+                amp_attack=data[off + 0x0C],
+                amp_decay=data[off + 0x0D],
+                amp_sustain=data[off + 0x0E],
+                amp_release=data[off + 0x0F],
+                zones=zones,
+            )
+        )
 
-    name = akai_to_str(data[0x03:0x03 + NAME_LEN])
+    name = akai_to_str(data[0x03 : 0x03 + NAME_LEN])
     if not name:
         name = Path(filename).stem.upper()[:NAME_LEN]
-    return AkaiProgram(name=name, body=data, filename=filename,
-                       keygroups=keygroups, is_s3000=s3000)
+    return AkaiProgram(
+        name=name, body=data, filename=filename, keygroups=keygroups, is_s3000=s3000
+    )
 
 
 def _infer_program_gen(data: bytes) -> bool:
@@ -904,32 +938,34 @@ def _infer_program_gen(data: bytes) -> bool:
     it is what everything written this century produces."""
     fits3000 = len(data) % S3000_BLOCK_LEN == 0
     fits1000 = len(data) % S1000_BLOCK_LEN == 0
-    if fits1000 and not fits3000:
+    if fits1000 and not fits3000:  # noqa: SIM103
         return False
     return True
 
 
 # ── a volume ─────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class AkaiBank:
     """One AKAI **volume**: the programs and samples that resolve against
     each other. The unit `banks/e4b.py` calls a bank file."""
 
-    path: str                    # "<image>:A/NAME", or a directory path
+    path: str  # "<image>:A/NAME", or a directory path
     name: str
     programs: list[AkaiProgram] = field(default_factory=list)
-    samples: dict[str, AkaiSample] = field(default_factory=dict)   # keyed by UPPER name
+    samples: dict[str, AkaiSample] = field(default_factory=dict)  # keyed by UPPER name
     partition: str = ""
     warnings: list[str] = field(default_factory=list)
 
-    def find_sample(self, name: str) -> Optional[AkaiSample]:
+    def find_sample(self, name: str) -> Optional[AkaiSample]:  # noqa: UP045
         return self.samples.get(name.strip().upper())
 
     @property
     def total_size(self) -> int:
-        return (sum(p.size for p in self.programs)
-                + sum(s.size for s in self.samples.values()))
+        return sum(p.size for p in self.programs) + sum(
+            s.size for s in self.samples.values()
+        )
 
     #: Bytes of header in front of a sample's audio on disk. MEASURED, not
     #: documented: across all 60 samples s3ked could compare against their
@@ -976,10 +1012,12 @@ class AkaiBank:
         bytes, so one file caps at 16 777 215 bytes (~3.2 minutes mono at
         44.1 kHz). A volume overflows by having many files, never one.
         """
-        return sum(max(0, s.size - self.SAMPLE_HEADER_BYTES) // 2
-                   for s in self.samples.values())
+        return sum(
+            max(0, s.size - self.SAMPLE_HEADER_BYTES) // 2
+            for s in self.samples.values()
+        )
 
-    def missing_samples(self, program: Optional[AkaiProgram] = None) -> list[str]:
+    def missing_samples(self, program: Optional[AkaiProgram] = None) -> list[str]:  # noqa: UP045
         """Sample names this volume's programs play but do not contain.
 
         Not automatically damage: AKAI libraries were routinely shipped with
@@ -995,8 +1033,12 @@ class AkaiBank:
         return list(missing)
 
 
-def parse_volume(files: Iterable[tuple[str, bytes]], name: str = "",
-                 path: str = "", partition: str = "") -> AkaiBank:
+def parse_volume(
+    files: Iterable[tuple[str, bytes]],
+    name: str = "",
+    path: str = "",
+    partition: str = "",
+) -> AkaiBank:
     """Build an AkaiBank from `(filename, data)` pairs — one volume's files,
     however they were obtained (a disk image, a folder, an archive).
 
@@ -1048,7 +1090,7 @@ def parse_volume(files: Iterable[tuple[str, bytes]], name: str = "",
     return bank
 
 
-def _gen_of_ext(ext: str) -> Optional[bool]:
+def _gen_of_ext(ext: str) -> Optional[bool]:  # noqa: UP045
     """The sampler generation an extension names, or None if it names none.
 
     `.P1`/`.S1` are the S1000 forms and `.P3`/`.S3` the S3000 ones; the
@@ -1069,7 +1111,8 @@ def _add_sample(bank: AkaiBank, samp: AkaiSample, filename: str) -> None:
         # so a duplicate is a damaged directory rather than a choice. Keep
         # the first and say so, instead of silently letting the last win.
         bank.warnings.append(
-            f"{filename}: a second sample also named {samp.name!r} — kept the first")
+            f"{filename}: a second sample also named {samp.name!r} — kept the first"
+        )
         return
     bank.samples[key] = samp
 
@@ -1082,6 +1125,7 @@ def parse_dir(directory: str) -> AkaiBank:
 
 
 # ── assembly ─────────────────────────────────────────────────────────────────
+
 
 def _claim_akai_name(wanted: str, content: bytes, taken: dict) -> str:
     """A name for `wanted` that no DIFFERENT content already holds.
@@ -1114,7 +1158,7 @@ def _claim_akai_name(wanted: str, content: bytes, taken: dict) -> str:
     digest = hashlib.blake2b(content, digest_size=16).digest()
     base = (display_name(wanted).strip() or "SAMPLE")[:NAME_LEN]
     if taken.get(base.upper()) == digest:
-        return base                      # identical content already has it
+        return base  # identical content already has it
     final = _unique_akai_name(base, taken)
     taken[final.upper()] = digest
     return final
@@ -1132,17 +1176,19 @@ def _unique_akai_name(base: str, taken) -> str:
         return base
     for n in range(1, 10000):
         suffix = str(n)
-        cand = (base[:NAME_LEN - len(suffix)].rstrip() + suffix)[:NAME_LEN]
+        cand = (base[: NAME_LEN - len(suffix)].rstrip() + suffix)[:NAME_LEN]
         if cand.upper() not in taken:
             return cand
     raise AkaiFormatError(f"cannot find a free name near {base!r}")
 
 
-def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
-             sample_names: Optional[dict] = None,
-             volume_name: str = "",
-             taken_samples: Optional[dict] = None,
-             taken_programs: Optional[dict] = None) -> list[tuple[str, bytes]]:
+def assemble(
+    selections: list[tuple[AkaiBank, AkaiProgram]],
+    sample_names: Optional[dict] = None,  # noqa: UP045
+    volume_name: str = "",
+    taken_samples: Optional[dict] = None,  # noqa: UP045
+    taken_programs: Optional[dict] = None,  # noqa: UP045
+) -> list[tuple[str, bytes]]:  # noqa: RUF100, UP045
     """Build one new AKAI volume from selected (source volume, program) pairs.
 
     Returns `[(filename, data), ...]` — a volume is a set of files, so that
@@ -1215,20 +1261,22 @@ def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
                     final = _claim_akai_name(wanted, samp.body, taken_samples)
                     written[dedupe] = final
                     sbody = bytearray(samp.body)
-                    sbody[0x03:0x03 + NAME_LEN] = str_to_akai(final)
+                    sbody[0x03 : 0x03 + NAME_LEN] = str_to_akai(final)
                     ext = "S1" if not samp.is_s3000 else "S3"
                     files.append((f"{final.strip()}.{ext}", bytes(sbody)))
                 resolved[key] = final
             if final.strip().upper() != zone_name.strip().upper():
-                body[name_off:name_off + NAME_LEN] = str_to_akai(final)
+                body[name_off : name_off + NAME_LEN] = str_to_akai(final)
 
         pname = _claim_akai_name(
             volume_name if (volume_name and len(selections) == 1) else program.name,
-            program.body, taken_programs)
+            program.body,
+            taken_programs,
+        )
         # The name lives in the file's own header as well as in its filename;
         # patching one and not the other would show two different names
         # depending on which one a reader trusts.
-        body[0x03:0x03 + NAME_LEN] = str_to_akai(pname)
+        body[0x03 : 0x03 + NAME_LEN] = str_to_akai(pname)
         # MIDI program number, byte 0x0f: assigned from this program's
         # POSITION in the assembled volume, not copied from its source.
         #
@@ -1258,7 +1306,8 @@ def assemble(selections: list[tuple[AkaiBank, AkaiProgram]],
     if len(files) > MAX_FILES_PER_VOLUME:
         raise ValueError(
             f"{len(files)} files — an AKAI volume holds at most "
-            f"{MAX_FILES_PER_VOLUME}. Split the selection across volumes.")
+            f"{MAX_FILES_PER_VOLUME}. Split the selection across volumes."
+        )
     return files
 
 

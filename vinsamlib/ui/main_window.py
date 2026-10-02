@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QInputDialog,
-    QMainWindow,  # noqa: F401
+    QMainWindow,  # noqa: F401, RUF100
     QMessageBox,
     QSplitter,
 )
@@ -310,7 +310,7 @@ class MainWindow(QMainWindow):
             self._config.window_width = size.width()
             self._config.window_height = size.height()
             self._config.save()
-        except Exception:  # noqa: S110
+        except Exception:  # noqa: BLE001, S110
             pass  # never let remembering a size block a quit
 
     def _build_menu(self) -> None:
@@ -321,7 +321,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(add_action)
 
         remove_action = QAction("Remove Library Folder…", self)
-        remove_action.triggered.connect(lambda: self._remove_library_folder())  # noqa: PLW0108
+        remove_action.triggered.connect(lambda: self._remove_library_folder())  # noqa: PLW0108, RUF100
         file_menu.addAction(remove_action)
 
         rescan_action = QAction("Rescan Library", self)
@@ -343,7 +343,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
 
         import_xpm_action = QAction("Import MPC Program…", self)
-        import_xpm_action.triggered.connect(lambda: self._import_xpm())  # noqa: PLW0108
+        import_xpm_action.triggered.connect(lambda: self._import_xpm())  # noqa: PLW0108, RUF100
         xpm_ok, xpm_reason = self._config.check_xpm_import_support()
         import_xpm_action.setEnabled(xpm_ok)
         import_xpm_action.setToolTip(
@@ -442,7 +442,7 @@ class MainWindow(QMainWindow):
         # refusals). It sits under the audition entry because that is the
         # feature it changes, and it is a statement rather than a control:
         # the engine is chosen at import and cannot be switched from a menu.
-        from ..audition import render as _render_mod  # noqa: PLC0415
+        from ..audition import render as _render_mod  # noqa: PLC0415, RUF100
 
         renderer_action = QAction(
             f"Audition renderer: {_render_mod.renderer_description()}", self
@@ -684,8 +684,8 @@ class MainWindow(QMainWindow):
         The render rate is decided HERE and passed into the renderer, so
         render rate and sink rate are never decided in two places.
         """
-        from ..audition import AuditionOptions, parse_notes  # noqa: PLC0415
-        from .audition_player import negotiate_format  # noqa: PLC0415
+        from ..audition import AuditionOptions, parse_notes  # noqa: PLC0415, RUF100
+        from .audition_player import negotiate_format  # noqa: PLC0415, RUF100
 
         notes = parse_notes(self._config.audition_notes)
         got = negotiate_format()
@@ -701,7 +701,7 @@ class MainWindow(QMainWindow):
 
     def _audition_node(self, node) -> None:
         """Explorer node -> a background render, then the dialog."""
-        from ..audition import render_node  # noqa: PLC0415
+        from ..audition import render_node  # noqa: PLC0415, RUF100
 
         try:
             opts = self._audition_options()
@@ -718,7 +718,7 @@ class MainWindow(QMainWindow):
         # A repeat of the same preset with the same settings is already
         # rendered. Looked up HERE, on the GUI thread, so it costs no worker
         # and no progress window -- it just plays.
-        from ..audition import cached_render, render_cache_key  # noqa: PLC0415
+        from ..audition import cached_render, render_cache_key  # noqa: PLC0415, RUF100
 
         hit = cached_render(render_cache_key(node.kind, node.payload, opts))
         if hit is not None:
@@ -741,7 +741,7 @@ class MainWindow(QMainWindow):
 
     def _audition_staged(self, bank, preset_obj, name: str, edits=None) -> None:
         """New Bank row -> a background render of the preset AS STAGED."""
-        from ..audition import render_staged  # noqa: PLC0415
+        from ..audition import render_staged  # noqa: PLC0415, RUF100
 
         try:
             opts = self._audition_options()
@@ -787,7 +787,7 @@ class MainWindow(QMainWindow):
         left open and merely silenced: someone may be reading it, and its
         transport will show "Play" because that is now true of it.
         """
-        from .audition_dialog import AuditionNotice  # noqa: PLC0415
+        from .audition_dialog import AuditionNotice  # noqa: PLC0415, RUF100
 
         for window in list(self._audition_dialogs):
             player = getattr(window, "_player", None)
@@ -814,7 +814,7 @@ class MainWindow(QMainWindow):
         should call. The window is up BEFORE the work starts, which is the
         whole point -- rendering a big multisample used to look like nothing
         happening followed by a window."""
-        from .audition_dialog import AuditionProgress  # noqa: PLC0415
+        from .audition_dialog import AuditionProgress  # noqa: PLC0415, RUF100
 
         dialog = AuditionProgress(label, parent=self)
         relay = _ProgressRelay(self)
@@ -884,7 +884,7 @@ class MainWindow(QMainWindow):
         self._end_audition_progress()
         self.statusBar().clearMessage()
         if not self._config.audition_show_report:
-            from .audition_player import check_playback  # noqa: PLC0415
+            from .audition_player import check_playback  # noqa: PLC0415, RUF100
 
             # Opting out of the REPORT must not become opting out of the
             # audition. With nothing to play through, the notice would show a
@@ -897,7 +897,7 @@ class MainWindow(QMainWindow):
     def _show_audition_notice(self, rendering, node) -> bool:
         """The small "Auditioning <name>" window. False if it would not play,
         so the caller can fall back to the report."""
-        from .audition_dialog import AuditionNotice  # noqa: PLC0415
+        from .audition_dialog import AuditionNotice  # noqa: PLC0415, RUF100
 
         notice = AuditionNotice(
             rendering,
@@ -922,7 +922,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _show_audition_report(self, rendering, node, player=None) -> None:
-        from .audition_dialog import AuditionDialog  # noqa: PLC0415
+        from .audition_dialog import AuditionDialog  # noqa: PLC0415, RUF100
 
         # `player` arrives still PLAYING when this was reached from the
         # notice's "Show report": the report describes the sound, so reading
@@ -962,8 +962,8 @@ class MainWindow(QMainWindow):
     def _import_xpm(
         self,
         path: Optional[str] = None,  # noqa: UP045
-        preset_index: Optional[int] = None,
-    ) -> None:  # noqa: UP045
+        preset_index: Optional[int] = None,  # noqa: UP045
+    ) -> None:  # noqa: RUF100, UP045
         """path: pre-chosen (e.g. Explorer's "Import…" on an MPC row/hit --
         see importXpmRequested) or None to prompt with a file picker
         (File > Import MPC Program…).
@@ -1020,8 +1020,8 @@ class MainWindow(QMainWindow):
         xpm_path: str,
         opts: convert.ConversionOptions,
         risks: Optional[list] = None,  # noqa: UP045
-        preset_index: Optional[int] = None,
-    ) -> None:  # noqa: UP045
+        preset_index: Optional[int] = None,  # noqa: UP045
+    ) -> None:  # noqa: RUF100, UP045
         # No save dialog, no library folder at all -- what came out is one
         # or more programs, and they belong in New Bank the same way
         # dragging presets in from Explorer does, not as a "bank" of their
@@ -1083,7 +1083,7 @@ class MainWindow(QMainWindow):
             [
                 (bank, preset, opts.target_format, name)
                 for (bank, preset), name in zip(pairs, names)
-            ],  # noqa: B905
+            ],  # noqa: B905, RUF100
             # A conversion: mpc2emu's writer has already reported any zone
             # over the rate ceiling, and two boxes about one fact is worse
             # than none.
@@ -1226,7 +1226,7 @@ class MainWindow(QMainWindow):
         if target is None or opts is None:
             return opts
         self._pending_shrink_target = None
-        from dataclasses import replace  # noqa: PLC0415
+        from dataclasses import replace  # noqa: PLC0415, RUF100
 
         try:
             return replace(opts, shrink_to_bytes=int(target), shrink_by_pct=None)
@@ -1669,7 +1669,7 @@ class MainWindow(QMainWindow):
                 # what lands in New Bank is an ordinary AkaiBank/AkaiProgram
                 # pair and the whole downstream -- the object budget, the
                 # partition breaks, Build Image -- works on it unchanged.
-                from ..banks import akai as vs_akai  # noqa: PLC0415
+                from ..banks import akai as vs_akai  # noqa: PLC0415, RUF100
 
                 bank = vs_akai.parse_dir(tmp_path)
                 bank.path = label_path
@@ -1685,7 +1685,7 @@ class MainWindow(QMainWindow):
                 bank = e4b.parse_bytes(data, label_path)
                 presets = list(bank.presets)
             return [(bank, preset) for preset in presets]
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
             QMessageBox.warning(
                 self,
                 "Import via mpc2emu",
@@ -1772,7 +1772,7 @@ class MainWindow(QMainWindow):
           * more presets than `_VELOCITY_COUNT_BUDGET`, where counting would
             cost seconds of frozen window.
         """
-        from ..banks import summary as _summary  # noqa: PLC0415
+        from ..banks import summary as _summary  # noqa: PLC0415, RUF100
 
         seen = False
         counted = 0
@@ -1797,7 +1797,7 @@ class MainWindow(QMainWindow):
                 else:
                     return None
                 stats = _summary.zone_stats(getattr(ps, "zones", []) or [])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # A preset we cannot read is a preset we know nothing about,
                 # so the answer is "unknown", which hides nothing. Caught here
                 # rather than left to propagate: this runs while building the
@@ -1974,7 +1974,7 @@ class MainWindow(QMainWindow):
             [
                 (bank, preset, opts.target_format, name)
                 for (bank, preset), name in zip(pairs, names)
-            ],  # noqa: B905
+            ],  # noqa: B905, RUF100
             # A conversion: mpc2emu's writer has already reported any zone
             # over the rate ceiling, and two boxes about one fact is worse
             # than none.
@@ -2190,7 +2190,7 @@ class MainWindow(QMainWindow):
             # one that would offer an empty project back after the next crash.
             project.clear_autosave()
             return
-        args = dict(
+        args = dict(  # noqa: C408
             bank_items=list(bp._items),
             bank_format=bp.format,
             bank_name=bp._name_edit.text(),
@@ -2250,7 +2250,7 @@ class MainWindow(QMainWindow):
             return
         try:
             rep = project.load(str(path))
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
             QMessageBox.warning(
                 self,
                 "Recover Unsaved Work",
@@ -2291,7 +2291,7 @@ class MainWindow(QMainWindow):
                 image=self._image_state(),
                 explorer=self._explorer.view_state(),
             )
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
             QMessageBox.warning(self, "Save Project", f"Could not save:\n\n{ex}")
             return
         self.statusBar().showMessage(summary, 10000)
@@ -2322,7 +2322,7 @@ class MainWindow(QMainWindow):
             return
         try:
             rep = project.load(path)
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
             QMessageBox.warning(self, "Load Project", f"Could not load:\n\n{ex}")
             return
         self._apply_loaded_project(rep, path)
@@ -2334,7 +2334,7 @@ class MainWindow(QMainWindow):
             return None
         return {"path": str(path), "kind": getattr(self._image_pane, "_kind", None)}
 
-    def _apply_loaded_project(self, rep, path: str) -> None:  # noqa: C901
+    def _apply_loaded_project(self, rep, path: str) -> None:  # noqa: C901, RUF100
         """Put a loaded project into the panes. Shared with crash recovery,
         which has to land in exactly the same state a manual load does."""
         bp, pp = self._bank_pane, self._pending_pane
@@ -2362,7 +2362,7 @@ class MainWindow(QMainWindow):
                 f"rather than guessed at."
             )
         else:
-            for row, item in zip(rep.banks, bp._items):  # noqa: B905
+            for row, item in zip(rep.banks, bp._items):  # noqa: B905, RUF100
                 edits = item[3]
                 src = row[3] if len(row) > 3 else {}
                 edits.setdefault("placement", {}).update(src.get("placement") or {})
@@ -2529,7 +2529,7 @@ class MainWindow(QMainWindow):
             )
 
     def _show_about(self) -> None:
-        from ..audition import render as _render_mod  # noqa: PLC0415
+        from ..audition import render as _render_mod  # noqa: PLC0415, RUF100
 
         QMessageBox.about(
             self,

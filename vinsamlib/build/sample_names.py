@@ -23,8 +23,9 @@ from ..mpc2emu_bridge import xpm_parser
 from ..notes import midi_to_name
 
 
-def names_from_base(bank: Any, base: str, octave_offset: int,
-                     with_key: bool = True) -> dict[str, str]:
+def names_from_base(
+    bank: Any, base: str, octave_offset: int, with_key: bool = True
+) -> dict[str, str]:
     """{current sample name: `<base>-<key>`} for every sample the bank's zones
     reference, keyed by the note each one plays.
 
@@ -59,8 +60,11 @@ def names_from_base(bank: Any, base: str, octave_offset: int,
                 # "#" is not one of the characters an E4B name field keeps --
                 # _safe_name turns it into "_", so C#1 would read "C_1" and be
                 # mistaken for C1. Spell the sharp instead: Cs1.
-                key = (midi_to_name(int(root), octave_offset).replace("#", "s")
-                       if with_key and root is not None else "")
+                key = (
+                    midi_to_name(int(root), octave_offset).replace("#", "s")
+                    if with_key and root is not None
+                    else ""
+                )
                 out[current] = f"{base}-{key}" if key else base
     return out
 
@@ -92,8 +96,8 @@ def apply_sample_names(bank: Any, names: dict[str, str]) -> dict[str, str]:
         final = safe_name(wanted, tail=False) if safe_name else wanted[:16]
         if unique_name is not None:
             final = unique_name(final, taken)
-        elif final in taken:                      # no helper: fall back rather
-            continue                              # than create a collision
+        elif final in taken:  # no helper: fall back rather
+            continue  # than create a collision
         taken.add(final)
         applied[sample.name] = final
 
@@ -108,7 +112,10 @@ def apply_sample_names(bank: Any, names: dict[str, str]) -> dict[str, str]:
     return applied
 
 
-def preview_conflicts(names: dict[str, str], existing: Optional[set] = None) -> list[str]:
+def preview_conflicts(
+    names: dict[str, str],
+    existing: Optional[set] = None,  # noqa: UP045
+) -> list[str]:  # noqa: RUF100, UP045
     """Which wanted names cannot be given as asked -- for a dialog to show
     BEFORE anything is applied.
 
@@ -118,7 +125,7 @@ def preview_conflicts(names: dict[str, str], existing: Optional[set] = None) -> 
     who typed one name and got another deserves to see it coming."""
     safe_name = getattr(xpm_parser, "_safe_name", None)
     out, seen = [], set(existing or ())
-    for current, wanted in names.items():
+    for current, wanted in names.items():  # noqa: PERF102
         final = safe_name(wanted, tail=False) if safe_name else wanted[:16]
         if final != wanted:
             out.append(f"{wanted!r} does not fit 16 characters — becomes {final!r}")

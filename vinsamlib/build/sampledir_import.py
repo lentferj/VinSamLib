@@ -23,7 +23,7 @@ zones already carry real MIDI key numbers; a bare WAV folder's filenames
 don't, so where "middle C" falls has to come from somewhere).
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import os
 import shutil
@@ -100,35 +100,41 @@ def selection_label(paths: list[str]) -> str:
     return "Imported Samples"
 
 
-def load_samples_for_test(dir_path: str, octave_offset: Optional[int] = None) -> list:
+def load_samples_for_test(dir_path: str, octave_offset: Optional[int] = None) -> list:  # noqa: UP045
     """Read-only: parses just far enough to list samples, for the Convert
     Options dialog's stereo Test button -- same parse
     import_sample_dir() itself does, never writes anything."""
-    bank = _run_captured(sampledir_parser.parse_sample_dir, dir_path,
-                          octave_offset=octave_offset)
+    bank = _run_captured(
+        sampledir_parser.parse_sample_dir, dir_path, octave_offset=octave_offset
+    )
     return bank.samples
 
 
-def parse_preview(dir_path: str, octave_offset: Optional[int] = None) -> Any:
+def parse_preview(dir_path: str, octave_offset: Optional[int] = None) -> Any:  # noqa: UP045
     """Read-only: the same parse import_sample_dir() itself does, for the
     Sample Placement dialog -- never writes anything. Returns the full
     mpc2emu Bank (one preset, one voice, one zone per sample; see
     parsers/sampledir_parser.py) so a caller can inspect or override each
     zone's auto-computed key-range assignment before the real import
     commits to it."""
-    return _run_captured(sampledir_parser.parse_sample_dir, dir_path,
-                          octave_offset=octave_offset)
+    return _run_captured(
+        sampledir_parser.parse_sample_dir, dir_path, octave_offset=octave_offset
+    )
 
 
-def import_sample_dir(dir_path: str, opts: ConversionOptions,
-                       octave_offset: Optional[int] = None,
-                       zone_overrides: Optional[dict] = None,
-                       velocity_overrides: Optional[dict] = None,
-                       risks_out: Optional[list] = None,
-                       bank_name: Optional[str] = None,
-                       name_base: str = "", name_octave: int = 2,
-                       name_with_key: bool = True,
-                       name_overrides: Optional[dict] = None) -> str:
+def import_sample_dir(
+    dir_path: str,
+    opts: ConversionOptions,
+    octave_offset: Optional[int] = None,  # noqa: UP045
+    zone_overrides: Optional[dict] = None,  # noqa: UP045
+    velocity_overrides: Optional[dict] = None,  # noqa: UP045
+    risks_out: Optional[list] = None,  # noqa: UP045
+    bank_name: Optional[str] = None,  # noqa: UP045
+    name_base: str = "",
+    name_octave: int = 2,
+    name_with_key: bool = True,
+    name_overrides: Optional[dict] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Parses a folder of WAV files (via mpc2emu's own parse_sample_dir)
     into a single multisampled preset and writes it out as a real E4B/
     KRZ/EIII bank file in a fresh temp dir, applying whatever resample/
@@ -159,8 +165,9 @@ def import_sample_dir(dir_path: str, opts: ConversionOptions,
     bank. Manual placement overrides feed straight into it -- widening
     several zones over the same keys is exactly how a folder that placed
     cleanly ends up stacking voices on one note."""
-    bank = _run_captured(sampledir_parser.parse_sample_dir, dir_path,
-                          octave_offset=octave_offset)
+    bank = _run_captured(
+        sampledir_parser.parse_sample_dir, dir_path, octave_offset=octave_offset
+    )
     if zone_overrides or velocity_overrides:
         for voice in bank.presets[0].voices:
             for zone in voice.zones:

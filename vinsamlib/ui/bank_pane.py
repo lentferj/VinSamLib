@@ -25,7 +25,7 @@ here via load_pending(), replacing whatever's currently staged — the same
 frozen copy of already-assembled bytes.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import functools
 import re
@@ -35,11 +35,25 @@ from typing import Any, Optional
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QFrame, QHBoxLayout,
-                             QInputDialog,
-                             QGridLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                             QMenu,
-                             QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QInputDialog,
+    QGridLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import dnd, workers
 from .models import human_size
@@ -65,11 +79,11 @@ _E4B_MAX_PRESETS = 1000
 # with banks/krz.py's MAX_PRESETS so the meter warns before assemble() refuses,
 # rather than letting a user stage 900 presets and only find out at the end.
 _KRZ_MAX_PRESETS = krz.MAX_PRESETS
-_EIII_MAX_PRESETS = 256   # EMULATOR_3X/ESI_32_V3 -- the tighter of the two
-                           # write targets; eiii.assemble() itself enforces
-                           # the exact physical-preset-slot count (a preset
-                           # with several linked layers can use more than
-                           # one slot), this is just the meter's proxy.
+_EIII_MAX_PRESETS = 256  # EMULATOR_3X/ESI_32_V3 -- the tighter of the two
+# write targets; eiii.assemble() itself enforces
+# the exact physical-preset-slot count (a preset
+# with several linked layers can use more than
+# one slot), this is just the meter's proxy.
 
 #: An AKAI volume holds at most this many FILES, and samples and programs
 #: share the budget (banks/akai.py's MAX_FILES_PER_VOLUME) -- unlike every
@@ -77,8 +91,12 @@ _EIII_MAX_PRESETS = 256   # EMULATOR_3X/ESI_32_V3 -- the tighter of the two
 #: counts files, not presets: 200 one-sample programs is 400 files, not 200.
 _AKAI_MAX_FILES = akai.MAX_FILES_PER_VOLUME
 
-_ASSEMBLE_FNS = {"E4B": e4b.assemble, "KRZ": krz.assemble, "EIII": eiii.assemble,
-                 "AKAI": akai.assemble}
+_ASSEMBLE_FNS = {
+    "E4B": e4b.assemble,
+    "KRZ": krz.assemble,
+    "EIII": eiii.assemble,
+    "AKAI": akai.assemble,
+}
 
 #: Formats whose assemble() takes `loop_repair`. Named explicitly rather than
 #: left ungated on the reasoning "all three formats store loop points" -- that
@@ -149,7 +167,9 @@ def new_edits() -> dict:
 
 class BankPane(QWidget):
     statusMessage = Signal(str)
-    sendToPendingRequested = Signal(str, str, list, dict, dict, dict, dict)   # (+ loop_repair)
+    sendToPendingRequested = Signal(
+        str, str, list, dict, dict, dict, dict
+    )  # (+ loop_repair)
     #: A soundfont-style source was dropped here: list of import-request
     #: dicts (see ui/dnd.build_import_mime_data). MainWindow converts them
     #: and calls back into add_presets() with what they became.
@@ -169,12 +189,12 @@ class BankPane(QWidget):
     #: worse than none.
     ceilingZonesAdded = Signal(list)
 
-    def __init__(self, config: Optional[Config] = None, parent=None):
+    def __init__(self, config: Optional[Config] = None, parent=None):  # noqa: UP045
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._config = config or Config()
 
-        self._format: Optional[str] = None
+        self._format: Optional[str] = None  # noqa: UP045
         #: `(bank, preset_obj, name, edits)` per staged item. The EDITS dict
         #: -- `{"placement": {...}, "velocity": {...}}` -- rides on the item
         #: rather than beside it, and that is the whole point of the fourth
@@ -188,6 +208,7 @@ class BankPane(QWidget):
         #: that sample -- Jan staged a preset twice, narrowed one copy and
         #: found both changed (2026-09-28).
         self.__items: list[tuple[Any, Any, str, dict]] = []
+        self._risk_batch: list[dict] = []
         #: {sample name: "snap"|"nudge"|"fade"}, from the Clicking Loops
         #: dialog. Applies to all three formats, unlike the renames and the
         #: placement edits beside it, because every format stores loop points.
@@ -204,15 +225,15 @@ class BankPane(QWidget):
         #: Cleared with the bank, exactly like the renames.
         self._dedupe_enabled = True
         self._prompt_on_duplicate = True
-        self._last_bytes: Optional[bytes] = None
+        self._last_bytes: Optional[bytes] = None  # noqa: UP045
         self._gen = 0
         #: _preset_key(...) -> its own audio bytes. See _preset_audio.
-        self._audio_memo: dict[tuple, Optional[int]] = {}
+        self._audio_memo: dict[tuple, Optional[int]] = {}  # noqa: UP045
         #: Set by MainWindow while an import it can repeat is the most
         #: recent thing that landed here.
         self._can_redo_import = False
         self._info_gen = 0
-        self._pre_add_snapshot: Optional[list] = None
+        self._pre_add_snapshot: Optional[list] = None  # noqa: UP045
         self._was_over_limit = False
         #: Set by "Keep Anyway", cleared the moment the bank fits again.
         #: Settings promises this button to someone whose hardware is
@@ -243,8 +264,10 @@ class BankPane(QWidget):
         layout.setSpacing(0)
 
         self._head = QLabel("New Bank")
-        self._head.setStyleSheet("font-weight: 600; padding: 6px 10px;"
-                                  "border-bottom: 1px solid palette(mid);")
+        self._head.setStyleSheet(
+            "font-weight: 600; padding: 6px 10px;"
+            "border-bottom: 1px solid palette(mid);"
+        )
         layout.addWidget(self._head)
 
         self._stack = QStackedWidget()
@@ -259,7 +282,9 @@ class BankPane(QWidget):
         outer = QVBoxLayout(page)
         outer.setContentsMargins(10, 10, 10, 10)
         box = QFrame()
-        box.setStyleSheet("QFrame { border: 1px dashed palette(mid); border-radius: 6px; }")
+        box.setStyleSheet(
+            "QFrame { border: 1px dashed palette(mid); border-radius: 6px; }"
+        )
         box_layout = QVBoxLayout(box)
         box_layout.addStretch()
         hint = QLabel("Drag presets here from the library\nto start a new bank.")
@@ -282,12 +307,15 @@ class BankPane(QWidget):
         self._name_edit.setToolTip(
             "Used as the filename wherever this bank ends up (Save as… / "
             "Send to Image Column) — that filename is what a real E4XT or "
-            "K2000 actually shows as the bank's name.")
+            "K2000 actually shows as the bank's name."
+        )
         name_row.addWidget(self._name_edit, 1)
         layout.addLayout(name_row)
 
         self._meter_label = QLabel("")
-        self._meter_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        self._meter_label.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         layout.addWidget(self._meter_label)
 
         self._list = QListWidget()
@@ -309,7 +337,9 @@ class BankPane(QWidget):
 
         self._info_label = QLabel("")
         self._info_label.setWordWrap(True)
-        self._info_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        self._info_label.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         self._info_label.setContentsMargins(0, 4, 0, 6)
         layout.addWidget(self._info_label)
 
@@ -339,7 +369,8 @@ class BankPane(QWidget):
         self._loops_btn = QPushButton("Check Loops…")
         self._loops_btn.setToolTip(
             "Look for loops that click where they wrap, and choose per sample "
-            "what to do about it. Nothing is changed unless you pick a repair.")
+            "what to do about it. Nothing is changed unless you pick a repair."
+        )
         self._loops_btn.clicked.connect(self._check_loops)
         buttons.addWidget(self._loops_btn, 2, 1)
         # Second cell left empty rather than filled with the status: a label
@@ -347,13 +378,15 @@ class BankPane(QWidget):
         # it was what knocked the row out of line in the first place.
         self._rename_status = QLabel("")
         self._rename_status.setStyleSheet(
-            "color: palette(placeholdertext); font-size: 11px;")
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         buttons.addWidget(self._rename_status, 2, 0)
 
         self._send_to_image_btn = QPushButton("Send to Image Column")
         self._send_to_image_btn.setToolTip(
             "Add this bank to the Pending for Image queue — nothing is "
-            "written to a real image until Build Image → is clicked there")
+            "written to a real image until Build Image → is clicked there"
+        )
         self._send_to_image_btn.clicked.connect(self._send_to_pending)
         buttons.addWidget(self._send_to_image_btn, 3, 0)
         self._save_btn = QPushButton("Save as…")
@@ -366,10 +399,13 @@ class BankPane(QWidget):
     def _send_to_pending(self) -> None:
         if not self._items or self._format is None or self._last_bytes is None:
             self.statusMessage.emit(
-                "Nothing ready to send yet — wait for the size to finish calculating")
+                "Nothing ready to send yet — wait for the size to finish calculating"
+            )
             return
         if not self._save_btn.isEnabled():
-            self.statusMessage.emit("Can't send an over-limit bank — remove some presets first")
+            self.statusMessage.emit(
+                "Can't send an over-limit bank — remove some presets first"
+            )
             return
         if self._format == "AKAI":
             # Still refused at the button rather than at the end of a build,
@@ -382,7 +418,8 @@ class BankPane(QWidget):
             if not ok:
                 self.statusMessage.emit(
                     f"AKAI can't go to the Image column here — {reason} "
-                    f"Use Save as… to write the volume as a folder.")
+                    f"Use Save as… to write the volume as a folder."
+                )
                 return
         name = _sanitize_bank_name(self._name_edit.text())
         # The renames travel WITH the recipe. Pending re-assembles from
@@ -401,15 +438,30 @@ class BankPane(QWidget):
         # would change under the user after they queued it. The old code
         # copied the bank-wide maps here for exactly this reason; copying per
         # item is the same guarantee.
-        queued = [(b, p, n, {"placement": dict(e.get("placement") or {}),
-                             "velocity": dict(e.get("velocity") or {})})
-                  for b, p, n, e in self._items]
-        self.sendToPendingRequested.emit(name, self._format, queued,
-                                          dict(self._sample_renames), {}, {},
-                                          dict(self._loop_repairs))
+        queued = [
+            (
+                b,
+                p,
+                n,
+                {
+                    "placement": dict(e.get("placement") or {}),
+                    "velocity": dict(e.get("velocity") or {}),
+                },
+            )
+            for b, p, n, e in self._items
+        ]
+        self.sendToPendingRequested.emit(
+            name,
+            self._format,
+            queued,
+            dict(self._sample_renames),
+            {},
+            {},
+            dict(self._loop_repairs),
+        )
 
     @property
-    def format(self) -> Optional[str]:
+    def format(self) -> Optional[str]:  # noqa: UP045
         """The format this bank is currently locked to ("E4B"/"KRZ"), or
         None while still empty/unlocked -- lets callers that open a
         target-format picker (FormatConvertDialog) know when only one choice
@@ -433,11 +485,16 @@ class BankPane(QWidget):
     def set_prompt_on_duplicate(self, enabled: bool) -> None:
         self._prompt_on_duplicate = enabled
 
-    def load_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
-                      sample_renames: Optional[dict] = None,
-                      zone_placement: Optional[dict] = None,
-                      voice_velocity: Optional[dict] = None,
-                      loop_repair: Optional[dict] = None) -> None:
+    def load_pending(
+        self,
+        name: str,
+        fmt: str,
+        items: list[tuple[Any, Any, str]],
+        sample_renames: Optional[dict] = None,  # noqa: UP045
+        zone_placement: Optional[dict] = None,  # noqa: UP045
+        voice_velocity: Optional[dict] = None,  # noqa: UP045
+        loop_repair: Optional[dict] = None,  # noqa: UP045
+    ) -> None:
         """Public entry point for the Pending column's double-click "send
         back to New Bank" — replaces whatever's currently staged here with
         the given recipe, exactly as if it had been assembled from scratch."""
@@ -489,8 +546,10 @@ class BankPane(QWidget):
             return
         descriptor = dnd.descriptor_from(mime)
         payload = dnd.payload_from(mime)
-        items = [(bank, preset_obj, d["format"], d.get("name") or "(untitled)")
-                 for (bank, preset_obj), d in zip(payload, descriptor)]
+        items = [
+            (bank, preset_obj, d["format"], d.get("name") or "(untitled)")
+            for (bank, preset_obj), d in zip(payload, descriptor)
+        ]
         event.acceptProposedAction()
         _added, dupes = self._add_items(items)
         # A drop is a plain add like any other, and was the one route that
@@ -498,8 +557,7 @@ class BankPane(QWidget):
         if _added and self._format == "E4B":
             self._report_ceiling_zones(items)
         if dupes:
-            self.statusMessage.emit(
-                f"Already in New Bank, skipped: {', '.join(dupes)}")
+            self.statusMessage.emit(f"Already in New Bank, skipped: {', '.join(dupes)}")
 
     def _acceptable(self, mime) -> bool:
         if dnd.has_import_request(mime):
@@ -519,7 +577,9 @@ class BankPane(QWidget):
         if self._rejects_format(fmt):
             return False
         if self._format is not None and fmt != self._format:
-            self.statusMessage.emit(f"This bank is already {self._format} — can't add a {fmt} preset")
+            self.statusMessage.emit(
+                f"This bank is already {self._format} — can't add a {fmt} preset"
+            )
             return False
         return True
 
@@ -540,7 +600,8 @@ class BankPane(QWidget):
             return False
         self.statusMessage.emit(
             f"New Bank builds {', '.join(sorted(_ASSEMBLE_FNS))} banks — "
-            f"{fmt} is an import source, not an output format")
+            f"{fmt} is an import source, not an output format"
+        )
         return True
 
     def unique_name(self, base: str) -> str:
@@ -581,12 +642,17 @@ class BankPane(QWidget):
         all working and keeps the invariant absolute inside: every item in
         this list has its own edits, so nothing downstream has to ask.
         """
-        self.__items = [it if len(it) >= 4 else (it[0], it[1], it[2], new_edits())
-                        for it in items]
+        self.__items = [
+            it if len(it) >= 4 else (it[0], it[1], it[2], new_edits()) for it in items
+        ]
 
-    def add_presets(self, items: list[tuple[Any, Any, str, str]],
-                    restoring: bool = False,
-                    check_ceiling: bool = True) -> bool:
+    def add_presets(
+        self,
+        items: list[tuple[Any, Any, str, str]],
+        restoring: bool = False,
+        check_ceiling: bool = True,
+        risk_batch: bool = False,
+    ) -> bool:
         """items: list of (bank, preset_obj, format, name) -- the in-process
         equivalent of a drag-drop, for callers that aren't dragging (the
         Explorer tree's context menu). Same format-lock rules as a drop.
@@ -597,7 +663,7 @@ class BankPane(QWidget):
         popped "'909 Defined E2' is already in this bank" for a preset the
         user had already answered that question about, by renaming it, in
         the session that built the file.
-        
+
         It is not merely redundant: the check keys on the SOURCE identity
         (_preset_key), so two staged items converted from one file with
         different options are a duplicate by that key however they are
@@ -614,16 +680,20 @@ class BankPane(QWidget):
         if self._rejects_format(fmt):
             return False
         if self._format is not None and fmt != self._format:
-            self.statusMessage.emit(f"This bank is already {self._format} — can't add a {fmt} preset")
+            self.statusMessage.emit(
+                f"This bank is already {self._format} — can't add a {fmt} preset"
+            )
             return False
-        added, dupes = self._add_items(items, restoring=restoring)
+        added, dupes = self._add_items(
+            items, restoring=restoring, risk_batch=risk_batch
+        )
         if added and check_ceiling and fmt == "E4B" and not restoring:
             # The items just appended, by position. NOT looked up by
             # (id(bank), id(preset)): staging the same preset twice gives two
             # items sharing both objects, so such a lookup collapses to one
             # entry and a warning raised for one copy could be applied to the
             # other.
-            self._report_ceiling_zones(self._items[-len(added):])
+            self._report_ceiling_zones(self._items[-len(added) :])
         if added:
             names = ", ".join(f'"{name}"' for name in added)
             msg = f"Added {names} to New Bank"
@@ -631,8 +701,7 @@ class BankPane(QWidget):
                 msg += f" ({len(dupes)} already present, skipped)"
             self.statusMessage.emit(msg)
         elif dupes:
-            self.statusMessage.emit(
-                f"Already in New Bank, skipped: {', '.join(dupes)}")
+            self.statusMessage.emit(f"Already in New Bank, skipped: {', '.join(dupes)}")
         return bool(added)
 
     def _report_ceiling_zones(self, staged_items: list) -> None:
@@ -649,8 +718,8 @@ class BankPane(QWidget):
         for bank, preset, _name, edits in staged_items:
             try:
                 found = e4b.zones_above_playback_ceiling(bank, preset)
-            except Exception:
-                continue        # never let a warning stop an add
+            except Exception:  # noqa: BLE001, S112
+                continue  # never let a warning stop an add
             # TAG EACH FINDING WITH THE ITEM IT CAME FROM, by handing it that
             # item's own edits map. Narrowing then writes into exactly the
             # preset that was warned about, and a reorder or a delete in
@@ -672,8 +741,58 @@ class BankPane(QWidget):
         if findings:
             self.ceilingZonesAdded.emit(findings)
 
-    def _add_items(self, items: list[tuple[Any, Any, str, str]],
-                    restoring: bool = False) -> tuple[list[str], list[str]]:
+    def _stage(self, bank, preset_obj, name: str, in_risk_batch: bool = False) -> str:
+        """Append one staged item -- the ONLY place an item enters the list."""
+        edits = new_edits()
+        self.__items.append((bank, preset_obj, name, edits))
+        if in_risk_batch:
+            self._risk_batch.append(edits)
+        return name
+
+    def take_risk_batch(self) -> list[dict]:
+        """The edits maps this import staged, and forgets them."""
+        batch, self._risk_batch = self._risk_batch, []
+        if not batch:
+            return []
+        live = {id(e) for _b, _p, _n, e in self.__items}
+        return [e for e in batch if id(e) in live]
+
+    def tag_ceiling_findings(self, risks: list, batch: list[dict]) -> int:
+        """Give writer-path ceiling findings the identity of the items just added."""
+        if len(batch) != 1:
+            return 0
+        edits = batch[0]
+        tagged = 0
+        for i, risk in enumerate(risks or ()):
+            if not isinstance(risk, dict):
+                continue
+            detail = risk.get("detail")
+            if not isinstance(detail, dict):
+                continue
+            if detail.get("highest_safe_key") is None or "lo_key" not in detail:
+                continue
+            self._ceiling_token += 1
+            risks[i] = dict(risk, detail=dict(detail, token=self._ceiling_token))
+            self._ceiling_edits[self._ceiling_token] = edits
+            tagged += 1
+        self._prune_ceiling_edits()
+        return tagged
+
+    def _prune_ceiling_edits(self, keep: int = 256) -> None:
+        """Forget the oldest token -> edits mappings, bounded."""
+        if len(self._ceiling_edits) <= keep:
+            return
+        floor = self._ceiling_token - keep
+        self._ceiling_edits = {
+            t: e for t, e in self._ceiling_edits.items() if t > floor
+        }
+
+    def _add_items(
+        self,
+        items: list[tuple[Any, Any, str, str]],
+        restoring: bool = False,
+        risk_batch: bool = False,
+    ) -> tuple[list[str], list[str]]:
         """Appends items, optionally skipping ones already present -- keyed
         by bank path + preset index/id rather than Python object identity:
         presets reached through search results are re-parsed from scratch
@@ -700,31 +819,34 @@ class BankPane(QWidget):
         if not self._dedupe_enabled or restoring:
             added_names = [name for _bank, _preset, _fmt, name in items]
             for bank, preset_obj, _fmt, name in items:
-                self._items.append((bank, preset_obj, name, new_edits()))
+                self._stage(bank, preset_obj, name, risk_batch)
             self._refresh()
             return added_names, []
-        existing = {_preset_key(bank, preset_obj, self._format)
-                    for bank, preset_obj, _name, _edits in self._items}
+        existing = {
+            _preset_key(bank, preset_obj, self._format)
+            for bank, preset_obj, _name, _edits in self._items
+        }
         added_names = []
         dupe_names = []
         for bank, preset_obj, _fmt, name in items:
             key = _preset_key(bank, preset_obj, self._format)
             if key in existing:
-                chosen = (self._confirm_duplicate(name)
-                          if self._prompt_on_duplicate else None)
+                chosen = (
+                    self._confirm_duplicate(name) if self._prompt_on_duplicate else None
+                )
                 if chosen is not None:
-                    self._items.append((bank, preset_obj, chosen, new_edits()))
+                    self._stage(bank, preset_obj, chosen, risk_batch)
                     added_names.append(chosen)
                     continue
                 dupe_names.append(name)
                 continue
             existing.add(key)
-            self._items.append((bank, preset_obj, name, new_edits()))
+            self._stage(bank, preset_obj, name, risk_batch)
             added_names.append(name)
         self._refresh()
         return added_names, dupe_names
 
-    def _confirm_duplicate(self, name: str) -> Optional[str]:
+    def _confirm_duplicate(self, name: str) -> Optional[str]:  # noqa: UP045
         """What to call this duplicate, or None to skip it.
 
         THREE ANSWERS, NOT TWO. "Add anyway" used to be the only way to keep
@@ -763,7 +885,8 @@ class BankPane(QWidget):
         # dialog unchanged still leaves the two rows distinguishable.
         suggestion = self.unique_name(name)
         new_name, ok = QInputDialog.getText(
-            self, "Rename Preset", "Name for this copy:", text=suggestion)
+            self, "Rename Preset", "Name for this copy:", text=suggestion
+        )
         if not ok:
             return None
         new_name = new_name.strip()
@@ -791,11 +914,15 @@ class BankPane(QWidget):
             # 0-based byte, 1-based panel: confirmed on hardware twice, for
             # this field and for the volume register, so it is a machine-wide
             # convention rather than a quirk of one screen.
-            return (f"MIDI program number {number} — the sampler's panel "
-                    f"shows this as {number + 1}. Reorder to change it.")
+            return (
+                f"MIDI program number {number} — the sampler's panel "
+                f"shows this as {number + 1}. Reorder to change it."
+            )
         if self._format == "KRZ":
-            return (f"Program {number} on the K2000 — the number you dial up "
-                    f"to hear it. Reorder to change it.")
+            return (
+                f"Program {number} on the K2000 — the number you dial up "
+                f"to hear it. Reorder to change it."
+            )
         return f"Preset {number} in the built bank. Reorder to change it."
 
     def _move_rows(self, delta: int) -> None:
@@ -812,7 +939,7 @@ class BankPane(QWidget):
         items = list(self._items)
         # Nearest-edge first, so a block of adjacent rows cannot overwrite
         # itself on the way past its neighbour.
-        for row in (rows if delta < 0 else reversed(rows)):
+        for row in rows if delta < 0 else reversed(rows):
             items[row + delta], items[row] = items[row], items[row + delta]
         self._items = items
         moved = {r + delta for r in rows}
@@ -834,7 +961,9 @@ class BankPane(QWidget):
         if not self._items:
             return
         index = self._list.indexAt(pos)
-        if index.isValid() and index.row() not in {i.row() for i in self._list.selectedIndexes()}:
+        if index.isValid() and index.row() not in {
+            i.row() for i in self._list.selectedIndexes()
+        }:
             self._list.setCurrentRow(index.row())
         if not self._list.selectedIndexes():
             return
@@ -847,9 +976,9 @@ class BankPane(QWidget):
             # in a message box, where the rest of the feature answers "why
             # can I not audition this" where the question is asked.
             from ..audition import available as _audition_available
+
             ok, why = _audition_available(self._config)
-            audition_action = menu.addAction(
-                "Audition" if ok else f"Audition — {why}")
+            audition_action = menu.addAction("Audition" if ok else f"Audition — {why}")
             audition_action.setEnabled(ok)
             if not ok:
                 audition_action.setToolTip(why)
@@ -868,7 +997,8 @@ class BankPane(QWidget):
         # used; the dialog says which other staged presets that is.
         n_sel = len(self._list.selectedIndexes())
         rename_action = menu.addAction(
-            "Rename Samples of Selected…" if n_sel > 1 else "Rename Samples…")
+            "Rename Samples of Selected…" if n_sel > 1 else "Rename Samples…"
+        )
         rename_action.setEnabled(self._rename_btn.isEnabled())
         rename_action.setToolTip(self._rename_btn.toolTip())
 
@@ -885,8 +1015,11 @@ class BankPane(QWidget):
         down_action = menu.addAction("Move Down")
         down_action.setEnabled(self._can_move(rows, +1))
         if self._format in _FIRST_PRESET_NUMBER:
-            hint = ("renumbers the programs" if self._format in ("KRZ", "AKAI")
-                    else "renumbers the presets")
+            hint = (
+                "renumbers the programs"
+                if self._format in ("KRZ", "AKAI")
+                else "renumbers the presets"
+            )
             up_action.setToolTip(f"Move earlier — {hint}")
             down_action.setToolTip(f"Move later — {hint}")
 
@@ -903,7 +1036,8 @@ class BankPane(QWidget):
                 # passed separately, as `_edit_kwargs()` has always done.
                 bank, preset_obj, name = item[0], item[1], item[2]
                 self.auditionStagedRequested.emit(
-                    bank, preset_obj, name, self._edit_kwargs())
+                    bank, preset_obj, name, self._edit_kwargs()
+                )
             return
         if chosen is up_action:
             self._move_rows(-1)
@@ -942,7 +1076,7 @@ class BankPane(QWidget):
         self._format = None
         self._head.setText("New Bank")
 
-    def _preset_audio(self, bank, preset) -> Optional[int]:
+    def _preset_audio(self, bank, preset) -> Optional[int]:  # noqa: UP045
         """Audio this staged preset needs on its own, memoised.
 
         Same figure and same source as the Explorer's preset rows
@@ -973,8 +1107,9 @@ class BankPane(QWidget):
             return self._audio_memo[key]
         try:
             from ..banks import summary
+
             value = summary.summarize_preset(bank, preset).total_sample_bytes
-        except Exception:
+        except Exception:  # noqa: BLE001
             # None means "unknown", which the row renders as no figure at
             # all -- distinct from 0, which means a preset that genuinely
             # needs no audio (ROM-only) and is rendered as such. A summary
@@ -992,8 +1127,9 @@ class BankPane(QWidget):
         exists to avoid.
         """
         live = {id(bank) for bank, _p, _n, _e in self._items}
-        self._audio_memo = {k: v for k, v in self._audio_memo.items()
-                            if k and k[0] in live}
+        self._audio_memo = {
+            k: v for k, v in self._audio_memo.items() if k and k[0] in live
+        }
 
     def _refresh(self) -> None:
         # QListWidget.clear() doesn't reliably emit itemSelectionChanged in
@@ -1030,9 +1166,11 @@ class BankPane(QWidget):
             # kept the number in the label and silently dropped its
             # explanation -- the half of a conflict that resolves itself
             # into looking fine.
-            tip = ("Audio this preset needs on its own. The bank's figure "
-                   "above is DEDUPED, so these will not add up to it "
-                   "whenever two presets share a sample.")
+            tip = (
+                "Audio this preset needs on its own. The bank's figure "
+                "above is DEDUPED, so these will not add up to it "
+                "whenever two presets share a sample."
+            )
             if number is not None:
                 tip = f"{self._number_tooltip(number)}\n\n{tip}"
             widget_item.setToolTip(tip)
@@ -1046,7 +1184,8 @@ class BankPane(QWidget):
         self._send_to_image_btn.setEnabled(True)
         self._send_to_image_btn.setToolTip(
             "Add this bank to the Pending for Image queue — nothing is "
-            "written to a real image until Build Image → is clicked there")
+            "written to a real image until Build Image → is clicked there"
+        )
         # Here rather than only at drop time: the format lock can change (a
         # Clear, or a bank loaded back from Pending), and the button has to
         # follow it or it would offer a rename for a format that cannot.
@@ -1102,14 +1241,24 @@ class BankPane(QWidget):
         bank, preset_obj, name = selected[0].data(Qt.ItemDataRole.UserRole)[:3]
         self._info_label.setText("Loading…")
         w = workers.Worker(summary.summarize_preset, bank, preset_obj)
-        w.signals.finished.connect(lambda ps, g=gen, n=name: self._apply_preset_info(g, n, ps))
-        w.signals.error.connect(lambda msg, g=gen: self._apply_preset_info_error(g, msg))
-        w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
-        w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+        w.signals.finished.connect(
+            lambda ps, g=gen, n=name: self._apply_preset_info(g, n, ps)
+        )
+        w.signals.error.connect(
+            lambda msg, g=gen: self._apply_preset_info_error(g, msg)
+        )
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         self._live_workers.append(w)
         workers.run(w)
 
-    def _apply_preset_info(self, gen: int, name: str, ps: summary.PresetSummary) -> None:
+    def _apply_preset_info(
+        self, gen: int, name: str, ps: summary.PresetSummary
+    ) -> None:
         if gen != self._info_gen:
             return
         voice_label = "Keymaps" if ps.format == "KRZ" else "Voices"
@@ -1118,7 +1267,8 @@ class BankPane(QWidget):
             f"{voice_label}: {ps.voice_count} &middot; "
             f"Total sample size: {_human(ps.total_sample_bytes)}<br>"
             f"{zone_stats_lines(ps.zones)}"
-            f"{unplayable_rate_line(ps)}")
+            f"{unplayable_rate_line(ps)}"
+        )
 
     def _apply_preset_info_error(self, gen: int, message: str) -> None:
         if gen != self._info_gen:
@@ -1138,8 +1288,12 @@ class BankPane(QWidget):
         w = workers.Worker(fn, selections)
         w.signals.finished.connect(lambda data, g=gen: self._apply_size(g, data))
         w.signals.error.connect(lambda msg, g=gen: self._apply_size_error(g, msg))
-        w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
-        w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         self._live_workers.append(w)
         workers.run(w)
 
@@ -1244,8 +1398,14 @@ class BankPane(QWidget):
                 vel = vel_by_name.get(name) if vel_informative else None
                 if name in vel_edits_seen:
                     vel = vel_edits_seen[name]
-                rows.append({"name": name, "root": root, "vel": vel,
-                             "shared_with": sorted(elsewhere.get(name, ()))})
+                rows.append(
+                    {
+                        "name": name,
+                        "root": root,
+                        "vel": vel,
+                        "shared_with": sorted(elsewhere.get(name, ())),
+                    }
+                )
         return rows
 
     def _samples_of(self, bank, preset):
@@ -1283,7 +1443,7 @@ class BankPane(QWidget):
                 yield samp.name, roots.get(idx)
 
     @staticmethod
-    def _krz_root(samp) -> Optional[int]:
+    def _krz_root(samp) -> Optional[int]:  # noqa: UP045
         """A KRZ sample carries its own root in Soundfilehead byte 0 -- there
         is no zone entry to read it from, unlike E4B and EIII. Same byte
         banks/summary.py's _krz_zone() uses."""
@@ -1318,7 +1478,7 @@ class BankPane(QWidget):
         for off, raw in refs:
             if self._format == "E4B":
                 idx, root_off, bias = raw, off + 14, 0
-            else:                                   # EIII
+            else:  # EIII
                 idx, root_off, bias = raw & 0x3FFF, off - 1, _EIII_KEY_OFFSET
             if idx in out or not (0 <= root_off < len(body)):
                 continue
@@ -1338,21 +1498,26 @@ class BankPane(QWidget):
         # the E4B/EIII zone reader and raised TypeError out of _refresh().
         # Formats that cannot rename never needed the answer.
         renameable = self._format in self._RENAMEABLE
-        has_samples = bool(self._sample_rows_in_bank()) if (self._items and renameable) else False
+        has_samples = (
+            bool(self._sample_rows_in_bank()) if (self._items and renameable) else False
+        )
         ok = renameable and has_samples
         self._rename_btn.setEnabled(ok)
         if self._items and renameable and not has_samples:
             self._rename_btn.setToolTip(
                 "These presets use only sounds from the sampler's own ROM, so "
-                "the bank holds no samples to rename.")
+                "the bank holds no samples to rename."
+            )
         elif self._format and self._format not in self._RENAMEABLE:
             self._rename_btn.setToolTip(
                 f"{self._format} stores a sample name in a slot sized exactly "
                 f"to the name already there, so renaming means rebuilding the "
-                f"block. Not offered rather than half-offered.")
+                f"block. Not offered rather than half-offered."
+            )
         else:
             self._rename_btn.setToolTip(
-                "Rename the samples inside this bank. The audio is untouched.")
+                "Rename the samples inside this bank. The audio is untouched."
+            )
         n = len(self._sample_renames)
         self._rename_status.setText(f"{n} sample(s) renamed" if n else "")
 
@@ -1371,7 +1536,8 @@ class BankPane(QWidget):
             self._placement_btn.setToolTip(
                 f"{self._format} does not store a key range per zone, so a "
                 f"sample cannot be moved by patching one. Not offered rather "
-                f"than half-offered.")
+                f"than half-offered."
+            )
         else:
             self._placement_btn.setToolTip(
                 "Move where the samples in this bank play: key range, root "
@@ -1379,7 +1545,8 @@ class BankPane(QWidget):
                 "untouched.\n⚠ Experimental — neither placement nor velocity "
                 "has been confirmed on hardware. A velocity change also "
                 "rebuilds the preset's voices, since an E4B keeps that window "
-                "on the voice rather than the zone.")
+                "on the voice rather than the zone."
+            )
 
     def _placement_rows(self, items) -> list[dict]:
         """[{"name","orig","lo","root","hi"}] for the staged presets, read from
@@ -1403,8 +1570,9 @@ class BankPane(QWidget):
         order: list = []
         used: dict = {}
         for bank, preset, _label, *_ in items:
-            for idx, (lo, root, hi, lo_vel, hi_vel, v_start) in \
-                    self._zone_ranges(bank, preset).items():
+            for idx, (lo, root, hi, lo_vel, hi_vel, v_start) in self._zone_ranges(
+                bank, preset
+            ).items():
                 samp = bank.samples.get(idx)
                 if samp is None:
                     continue
@@ -1432,9 +1600,15 @@ class BankPane(QWidget):
                 # folder is a single voice holding every zone (156 of them,
                 # measured). assemble() now splits the voice instead, so the
                 # window shown is a starting value rather than a shared fate.
-                seen[samp.name] = {"name": shown, "orig": samp.name,
-                                    "lo": lo, "root": root, "hi": hi,
-                                    "lo_vel": lo_vel, "hi_vel": hi_vel}
+                seen[samp.name] = {
+                    "name": shown,
+                    "orig": samp.name,
+                    "lo": lo,
+                    "root": root,
+                    "hi": hi,
+                    "lo_vel": lo_vel,
+                    "hi_vel": hi_vel,
+                }
                 order.append(samp.name)
         return [seen[n] for n in order]
 
@@ -1472,8 +1646,14 @@ class BankPane(QWidget):
                 hi = min(vhi, body[eo + e4b.ZONE_HI_KEY])
                 prev = out.get(idx)
                 if prev is None:
-                    out[idx] = (lo, body[eo + e4b.ZONE_ROOT_KEY], hi,
-                                vlov, vhiv, v_start)
+                    out[idx] = (
+                        lo,
+                        body[eo + e4b.ZONE_ROOT_KEY],
+                        hi,
+                        vlov,
+                        vhiv,
+                        v_start,
+                    )
                     continue
                 # WIDEST SPAN across every zone using this sample, not the
                 # first one found. Skipping the later zones here made the
@@ -1486,8 +1666,14 @@ class BankPane(QWidget):
                 # Root and velocity stay FIRST-WINS: a sample has one root
                 # worth showing, and an edit applies to every zone using it,
                 # so a second opinion here would only be lost again.
-                out[idx] = (min(prev[0], lo), prev[1], max(prev[2], hi),
-                            prev[3], prev[4], prev[5])
+                out[idx] = (
+                    min(prev[0], lo),
+                    prev[1],
+                    max(prev[2], hi),
+                    prev[3],
+                    prev[4],
+                    prev[5],
+                )
         return out
 
     def narrow_zones_to_ceiling(self, findings: list) -> tuple:
@@ -1548,8 +1734,10 @@ class BankPane(QWidget):
         wanted_edits: dict = {}
         for det in findings:
             try:
-                lo = int(det["lo_key"]); hi = int(det["hi_key"])
-                root = int(det["root_key"]); safe = int(det["highest_safe_key"])
+                lo = int(det["lo_key"])
+                hi = int(det["hi_key"])
+                root = int(det["root_key"])
+                safe = int(det["highest_safe_key"])
             except (KeyError, TypeError, ValueError):
                 unmatched += 1
                 continue
@@ -1584,18 +1772,16 @@ class BankPane(QWidget):
                 if prev is None or safe < prev[2]:
                     wanted[r["orig"]] = (r["lo"], r["root"], safe)
                 wanted_edits.setdefault(r["orig"], []).append(
-                    self._ceiling_edits.get(det.get("token")))
+                    self._ceiling_edits.get(det.get("token"))
+                )
         for name, move in wanted.items():
             targets = [e for e in (wanted_edits.get(name) or ()) if e is not None]
             if not targets:
-                # No item claimed it -- a finding from mpc2emu's writer on the
-                # import path carries no item. Fall back to every staged
-                # preset, which is what this did before items had their own
-                # maps, and is why the guards above still matter there.
-                targets = [e for *_i, e in self._items]
-            for edits in targets:
-                edits.setdefault("placement", {})[name] = move
-            applied += 1
+                unmatched += 1
+            else:
+                for edits in targets:
+                    edits.setdefault("placement", {})[name] = move
+                applied += 1
         if applied:
             self._refresh()
         return applied, unmatched, siblings
@@ -1609,7 +1795,7 @@ class BankPane(QWidget):
         assert an agreement that may not exist -- and the user would then
         press OK and write that value to all of them.
         """
-        maps = [dict((e.get(which) or {})) for *_i, e in items]
+        maps = [dict((e.get(which) or {})) for *_i, e in items]  # noqa: UP034
         if not maps:
             return {}
         shared = dict(maps[0])
@@ -1632,7 +1818,7 @@ class BankPane(QWidget):
         # the others agree.
         seed_p = self._shared_edit(items, "placement")
         seed_v = self._shared_edit(items, "velocity")
-        for r in rows:                       # show edits already made
+        for r in rows:  # show edits already made
             if r["orig"] in seed_p:
                 r["lo"], r["root"], r["hi"] = seed_p[r["orig"]]
             if r["orig"] in seed_v:
@@ -1644,11 +1830,16 @@ class BankPane(QWidget):
         # the only place the two meet.
         to_orig = {r["name"]: r["orig"] for r in rows}
 
-        scope_text = (f'"{items[0][2]}"' if len(items) == 1
-                      else f"{len(items)} staged presets")
-        dialog = SamplePlacementDialog(rows, octave_offset=_RENAME_OCTAVE,
-                                        parent=self, show_velocity=True,
-                                        scope_text=scope_text)
+        scope_text = (
+            f'"{items[0][2]}"' if len(items) == 1 else f"{len(items)} staged presets"
+        )
+        dialog = SamplePlacementDialog(
+            rows,
+            octave_offset=_RENAME_OCTAVE,
+            parent=self,
+            show_velocity=True,
+            scope_text=scope_text,
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         # `overrides()` returns EVERY row, not the edited ones, and the values
@@ -1721,12 +1912,13 @@ class BankPane(QWidget):
                 name = samp.name.strip()
                 where.setdefault(name, set()).add(label)
                 for ls, le in loops:
-                    hit = loopcheck.check_loop(pcm, ls, le, name,
-                                               big_endian=big_endian)
+                    hit = loopcheck.check_loop(pcm, ls, le, name, big_endian=big_endian)
                     if hit and hit.step_pct > worst.get(name, 0.0):
                         worst[name] = hit.step_pct
-        return [{"name": n, "step_pct": p, "presets": where.get(n, set())}
-                for n, p in sorted(worst.items(), key=lambda kv: -kv[1])]
+        return [
+            {"name": n, "step_pct": p, "presets": where.get(n, set())}
+            for n, p in sorted(worst.items(), key=lambda kv: -kv[1])
+        ]
 
     def _loops_of(self, bank, preset):
         """(sample, [(start, end)], pcm, big_endian) per sample of one preset.
@@ -1770,8 +1962,12 @@ class BankPane(QWidget):
             seen.add(idx)
             samp = bank.samples.get(idx)
             if samp is not None:
-                yield (samp, mod.sample_loops(samp), mod.sample_pcm(samp),
-                       mod.PCM_BIG_ENDIAN)
+                yield (
+                    samp,
+                    mod.sample_loops(samp),
+                    mod.sample_pcm(samp),
+                    mod.PCM_BIG_ENDIAN,
+                )
 
     def _check_loops(self) -> None:
         if not self._items:
@@ -1779,30 +1975,34 @@ class BankPane(QWidget):
             return
         if self._format not in _LOOP_REPAIRABLE:
             self.statusMessage.emit(
-                f"Loop checking isn't available for {self._format} banks")
+                f"Loop checking isn't available for {self._format} banks"
+            )
             return
         items = self._selected_presets()
         rows = self._clicking_rows(items)
         if not rows:
             # Said plainly rather than shown as an empty dialog: "no clicking
             # loops" is a real and common answer, not a failure to find any.
-            self.statusMessage.emit(
-                "No clicking loops found in the staged preset(s)")
+            self.statusMessage.emit("No clicking loops found in the staged preset(s)")
             return
         repairs = LoopRepairDialog.get_repairs(
-            rows, existing=self._loop_repairs, parent=self)
+            rows, existing=self._loop_repairs, parent=self
+        )
         if repairs is None:
-            return                     # cancelled: keep whatever was set before
+            return  # cancelled: keep whatever was set before
         # Merged the same way renames are: the dialog is a view onto part of
         # the bank, so only the samples it actually showed may be revised by it.
         shown = {r["name"] for r in rows}
-        self._loop_repairs = {k: v for k, v in self._loop_repairs.items()
-                               if k not in shown}
+        self._loop_repairs = {
+            k: v for k, v in self._loop_repairs.items() if k not in shown
+        }
         self._loop_repairs.update(repairs)
         n = len(self._loop_repairs)
         self.statusMessage.emit(
             f"{n} loop repair(s) will be applied when this bank is built"
-            if n else "No loop repairs set")
+            if n
+            else "No loop repairs set"
+        )
         # A repair changes the bytes, so the meter has to recompute rather
         # than keep showing the size of a bank nobody is going to build.
         self._recompute_timer.start(_RECOMPUTE_DEBOUNCE_MS)
@@ -1814,26 +2014,30 @@ class BankPane(QWidget):
         # button still listed every other preset's samples. Nothing selected
         # still means the whole bank, the same rule "Remove Selected" uses in
         # this pane.
-        del selected_only                       # kept for call-site clarity
+        del selected_only  # kept for call-site clarity
         items = self._selected_presets()
         rows = self._sample_rows_in_bank(items)
         if not rows:
             self.statusMessage.emit("No samples to rename yet")
             return
-        renames = SampleRenameDialog.get_renames(rows, fmt=self._format or "E4B",
-                                                  octave_offset=_RENAME_OCTAVE,
-                                                  existing=self._sample_renames,
-                                                  parent=self)
+        renames = SampleRenameDialog.get_renames(
+            rows,
+            fmt=self._format or "E4B",
+            octave_offset=_RENAME_OCTAVE,
+            existing=self._sample_renames,
+            parent=self,
+        )
         if renames is None:
-            return                     # cancelled: keep whatever was set before
+            return  # cancelled: keep whatever was set before
         # MERGED, not replaced. Renaming preset A's samples and then opening
         # preset B used to discard A's work, because the dialog only ever
         # returns what its own rows carried. Renames accumulate across the
         # bank; the dialog is a view onto part of it, so only the names it
         # actually showed may be revised by it.
         shown = {r["name"] for r in rows}
-        self._sample_renames = {k: v for k, v in self._sample_renames.items()
-                                 if k not in shown}
+        self._sample_renames = {
+            k: v for k, v in self._sample_renames.items() if k not in shown
+        }
         self._sample_renames.update(renames)
         self._sync_rename_button()
         # The meter re-runs assemble(), and a rename changes the bytes, so the
@@ -1861,10 +2065,8 @@ class BankPane(QWidget):
         # same sample. `assemble()` accepts either shape; the list is what
         # makes "narrow this preset, leave that one" expressible at all.
         if self._format in self._PLACEABLE:
-            placement = [dict(e.get("placement") or {})
-                         for *_ignored, e in self._items]
-            velocity = [dict(e.get("velocity") or {})
-                        for *_ignored, e in self._items]
+            placement = [dict(e.get("placement") or {}) for *_ignored, e in self._items]
+            velocity = [dict(e.get("velocity") or {}) for *_ignored, e in self._items]
             if any(placement):
                 kw["zone_placement"] = placement
             if any(velocity):
@@ -1884,14 +2086,17 @@ class BankPane(QWidget):
         for key, value in self._edit_kwargs().items():
             fn = functools.partial(fn, **{key: value})
         if self._format == "EIII":
-            fn = functools.partial(fn, bank_name=_sanitize_bank_name(self._name_edit.text()))
+            fn = functools.partial(
+                fn, bank_name=_sanitize_bank_name(self._name_edit.text())
+            )
         elif self._format == "AKAI":
             # An AKAI program carries a real 12-character name field, like an
             # EIII bank does -- but per PROGRAM, so the typed name is only
             # applied when there is exactly one and it cannot be ambiguous
             # (banks/akai.py's assemble() enforces that itself).
             fn = functools.partial(
-                fn, volume_name=_sanitize_bank_name(self._name_edit.text()))
+                fn, volume_name=_sanitize_bank_name(self._name_edit.text())
+            )
         return fn
 
     def _apply_size(self, gen: int, data: bytes) -> None:
@@ -1905,13 +2110,16 @@ class BankPane(QWidget):
         if self._format == "E4B":
             limit_bytes = self._config.e4b_bank_limit_mb * 1024 * 1024
             self._meter_label.setText(
-                f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}")
+                f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}"
+            )
             hard = n > _E4B_MAX_PRESETS
             over = len(data) > limit_bytes or hard
-            detail = (f"{n} presets exceed the E4XT's {_E4B_MAX_PRESETS}-preset limit."
-                      if n > _E4B_MAX_PRESETS else
-                      f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
-                      f"E4XT RAM limit (Settings…).")
+            detail = (
+                f"{n} presets exceed the E4XT's {_E4B_MAX_PRESETS}-preset limit."
+                if n > _E4B_MAX_PRESETS
+                else f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
+                f"E4XT RAM limit (Settings…)."
+            )
         elif self._format == "EIII":
             # No dedicated EIII RAM-limit setting (Settings only offers
             # E4XT/K2000) -- EIII banks load on the same E4XT hardware E4B
@@ -1920,14 +2128,17 @@ class BankPane(QWidget):
             # too rather than adding a third near-identical spinbox.
             limit_bytes = self._config.e4b_bank_limit_mb * 1024 * 1024
             self._meter_label.setText(
-                f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}")
+                f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}"
+            )
             hard = n > _EIII_MAX_PRESETS
             over = len(data) > limit_bytes or hard
-            detail = (f"{n} presets may exceed the EIIIX/ESI {_EIII_MAX_PRESETS}-preset "
-                      f"limit (some presets use more than one preset slot)."
-                      if n > _EIII_MAX_PRESETS else
-                      f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
-                      f"E4XT RAM limit (Settings…).")
+            detail = (
+                f"{n} presets may exceed the EIIIX/ESI {_EIII_MAX_PRESETS}-preset "
+                f"limit (some presets use more than one preset slot)."
+                if n > _EIII_MAX_PRESETS
+                else f"{_human(len(data))} exceeds your configured {_human(limit_bytes)} "
+                f"E4XT RAM limit (Settings…)."
+            )
         else:
             limit_bytes = self._config.krz_bank_limit_mb * 1024 * 1024
             # PRAM is a SECOND limit and the one that actually bites first: a
@@ -1939,10 +2150,11 @@ class BankPane(QWidget):
             try:
                 built = krz.parse_bytes(data, "meter")
                 pram_used = krz.bank_pram_bytes(
-                    len(built.samples), len(built.keymaps), len(built.programs))
+                    len(built.samples), len(built.keymaps), len(built.programs)
+                )
                 pram_budget = krz.pram_budget_bytes(self._config.krz_pram_kb)
                 rom_refs = krz.rom_keymap_refs(built)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 # The KRZ extras only: PRAM and ROM references. The byte
                 # meter above is already computed and correct; these three
                 # numbers are a second opinion on the same assembled bytes,
@@ -1955,25 +2167,30 @@ class BankPane(QWidget):
             over_pram = bool(pram_budget) and pram_used > pram_budget
             meter = f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}"
             if pram_budget:
-                meter += (f"  ·  PRAM {pram_used // 1024} K / "
-                          f"{pram_budget // 1024} K")
+                meter += (
+                    f"  ·  PRAM {pram_used // 1024} K / " f"{pram_budget // 1024} K"
+                )
             # References the bank does not contain are free in bytes and slow
             # to load -- about 0.37 s each, measured. Shown, never blocking:
             # they are legitimate, and whole categories of bank are built from
             # them. Only worth saying once the wait becomes noticeable.
             if rom_refs >= krz.ROM_REF_ADVISORY:
                 secs = int(rom_refs * 0.37)
-                meter += (f"  ·  {rom_refs} ROM refs ≈ {secs // 60}m{secs % 60:02d}s "
-                          f"to load")
+                meter += (
+                    f"  ·  {rom_refs} ROM refs ≈ {secs // 60}m{secs % 60:02d}s "
+                    f"to load"
+                )
             self._meter_label.setText(meter)
             hard = n > _KRZ_MAX_PRESETS
             # PRAM is NOT hard. It is a Settings spinbox describing one
             # machine's fitted memory, and the expansion exists -- same
             # class as the RAM figure beside it, not the same class as a
             # preset ceiling the format itself cannot encode.
-            over = (len(data) > limit_bytes or hard or over_pram)
+            over = len(data) > limit_bytes or hard or over_pram
             if n > _KRZ_MAX_PRESETS:
-                detail = f"{n} presets exceed the K2000's {_KRZ_MAX_PRESETS}-preset limit."
+                detail = (
+                    f"{n} presets exceed the K2000's {_KRZ_MAX_PRESETS}-preset limit."
+                )
             elif over_pram:
                 detail = (
                     f"This bank needs about {pram_used // 1024} KB of PRAM, more "
@@ -1981,14 +2198,18 @@ class BankPane(QWidget):
                     f"keeps programs, keymaps and sample headers in PRAM, "
                     f"separately from sample RAM — so this is not about the "
                     f"bank's size in bytes. A bank that overruns PRAM does not "
-                    f"report anything; it hangs the machine on \"Please wait …\". "
+                    f'report anything; it hangs the machine on "Please wait …". '
                     f"Raise the figure in Settings if your K2000 has the PRAM "
-                    f"expansion.")
+                    f"expansion."
+                )
             else:
-                detail = (f"{_human(len(data))} exceeds your configured "
-                          f"{_human(limit_bytes)} K2000 RAM limit (Settings…).")
+                detail = (
+                    f"{_human(len(data))} exceeds your configured "
+                    f"{_human(limit_bytes)} K2000 RAM limit (Settings…)."
+                )
         self._meter_label.setStyleSheet(
-            f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;")
+            f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;"
+        )
         self._set_over(over, hard)
         self._maybe_warn_over_limit(over, detail)
 
@@ -2026,7 +2247,8 @@ class BankPane(QWidget):
             f"{n} program(s), {len(files)} file(s) — "
             f"{_human(total)} / {_human(limit_bytes)} — "
             f"{objs} / {budget} objects "
-            f"({cost['programs']}P/{cost['keygroups']}K/{cost['samples']}S)")
+            f"({cost['programs']}P/{cost['keygroups']}K/{cost['samples']}S)"
+        )
         # The 510-entry directory is the only hard one here: it is the
         # volume's own structure. The byte figure and the object budget are
         # both Settings spinboxes about one 32 MB machine -- and the object
@@ -2039,24 +2261,28 @@ class BankPane(QWidget):
         # the line, with the reason, and Keep Anyway still available.
         ceilings = akai_image.resident_ceiling_problems(files)
         hard = len(files) > _AKAI_MAX_FILES
-        over = (total > limit_bytes or hard or objs > budget or bool(ceilings))
-        detail = (f"{len(files)} files exceed the {_AKAI_MAX_FILES}-entry AKAI "
-                  f"volume directory (samples and programs share it)."
-                  if len(files) > _AKAI_MAX_FILES else
-                  ceilings[0] if ceilings else
-                  f"{objs} resident objects (programs + keygroups + samples) "
-                  f"exceed the {budget} an S3000XL holds at once — even "
-                  f"though this is inside "
-                  f"the {_AKAI_MAX_FILES}-file directory limit. What the "
-                  f"machine does then is NOT verified: the sample-RAM ceiling "
-                  f"half-loads rather than refusing, and this may too. The figure in "
-                  f"Settings… is one 32 MB machine and is shared with whatever "
-                  f"is already loaded."
-                  if objs > budget else
-                  f"{_human(total)} exceeds your configured {_human(limit_bytes)} "
-                  f"sampler RAM limit (Settings…).")
+        over = total > limit_bytes or hard or objs > budget or bool(ceilings)
+        detail = (
+            f"{len(files)} files exceed the {_AKAI_MAX_FILES}-entry AKAI "
+            f"volume directory (samples and programs share it)."
+            if len(files) > _AKAI_MAX_FILES
+            else ceilings[0]
+            if ceilings
+            else f"{objs} resident objects (programs + keygroups + samples) "
+            f"exceed the {budget} an S3000XL holds at once — even "
+            f"though this is inside "
+            f"the {_AKAI_MAX_FILES}-file directory limit. What the "
+            f"machine does then is NOT verified: the sample-RAM ceiling "
+            f"half-loads rather than refusing, and this may too. The figure in "
+            f"Settings… is one 32 MB machine and is shared with whatever "
+            f"is already loaded."
+            if objs > budget
+            else f"{_human(total)} exceeds your configured {_human(limit_bytes)} "
+            f"sampler RAM limit (Settings…)."
+        )
         self._meter_label.setStyleSheet(
-            f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;")
+            f"color: {'#c0392b' if over else 'palette(placeholdertext)'}; font-size: 11px;"
+        )
         self._set_over(over, hard)
         self._maybe_warn_over_limit(over, detail)
 
@@ -2072,8 +2298,7 @@ class BankPane(QWidget):
         self._over_hard = bool(hard)
         if not over:
             self._limit_override = False
-        self._save_btn.setEnabled(not over
-                                  or (self._limit_override and not hard))
+        self._save_btn.setEnabled(not over or (self._limit_override and not hard))
 
     def _apply_size_error(self, gen: int, message: str) -> None:
         if gen != self._gen:
@@ -2121,26 +2346,27 @@ class BankPane(QWidget):
         # that needs more object ids than the format has -- neither is a size
         # problem, and titling them that sends the user off to raise a limit
         # in Settings that has nothing to do with it.
-        about_size = not any(k in detail for k in
-                             ("not all here", "id space", "PRAM"))
+        about_size = not any(k in detail for k in ("not all here", "id space", "PRAM"))
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Bank Too Large" if about_size
-                            else "Can't Build This Bank")
+        box.setWindowTitle("Bank Too Large" if about_size else "Can't Build This Bank")
         box.setText(f"This bank can't be built as-is.\n\n{detail}")
         keep_btn = box.addButton("Keep Anyway", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(keep_btn)
         undo_btn = None
         if self._pre_add_snapshot is not None:
-            undo_btn = box.addButton("Undo Last Add", QMessageBox.ButtonRole.DestructiveRole)
+            undo_btn = box.addButton(
+                "Undo Last Add", QMessageBox.ButtonRole.DestructiveRole
+            )
         # Offered only when there IS a last import to reopen, and only when
         # the complaint is about SIZE: reconverting cannot help a bank whose
         # audio is on another disc of a set, and offering it there would send
         # the user round a loop that cannot end.
         redo_btn = None
         if about_size and self._pre_add_snapshot is not None and self._can_redo_import:
-            redo_btn = box.addButton("Change Import Settings…",
-                                      QMessageBox.ButtonRole.ActionRole)
+            redo_btn = box.addButton(
+                "Change Import Settings…", QMessageBox.ButtonRole.ActionRole
+            )
         box.exec()
         if redo_btn is not None and box.clickedButton() is redo_btn:
             # Undo FIRST, then ask for the import again: the options dialog
@@ -2188,7 +2414,7 @@ class BankPane(QWidget):
         fn = self._assemble_fn()
         try:
             data = fn(selections)
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
             self.statusMessage.emit(f"Save failed: {ex}")
             return
 
@@ -2199,8 +2425,12 @@ class BankPane(QWidget):
         ext = _FORMAT_EXT[self._format]
         name = _sanitize_bank_name(self._name_edit.text())
         path, _filter = QFileDialog.getSaveFileName(
-            self, "Save Bank", f"{name}.{ext}", f"{self._format} bank (*.{ext})",
-            options=QFileDialog.Option.DontUseNativeDialog)
+            self,
+            "Save Bank",
+            f"{name}.{ext}",
+            f"{self._format} bank (*.{ext})",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if not path:
             return
         try:
@@ -2223,18 +2453,25 @@ class BankPane(QWidget):
         """
         name = _sanitize_bank_name(self._name_edit.text())
         directory = QFileDialog.getExistingDirectory(
-            self, "Save AKAI volume into folder", "",
-            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontUseNativeDialog)
+            self,
+            "Save AKAI volume into folder",
+            "",
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontUseNativeDialog,
+        )
         if not directory:
             return
         target = Path(directory) / name
-        if target.exists() and any(target.iterdir()):
-            if QMessageBox.question(
-                    self, "Save AKAI volume",
+        if target.exists() and any(target.iterdir()):  # noqa: SIM102
+            if (
+                QMessageBox.question(
+                    self,
+                    "Save AKAI volume",
                     f"{target} already exists and is not empty.\n\n"
                     f"Write {len(files)} file(s) into it anyway? Files with "
-                    f"the same names will be replaced.") != \
-                    QMessageBox.StandardButton.Yes:
+                    f"the same names will be replaced.",
+                )
+                != QMessageBox.StandardButton.Yes
+            ):
                 return
         try:
             written = akai.write_volume(files, str(target))
@@ -2244,7 +2481,7 @@ class BankPane(QWidget):
         self.statusMessage.emit(f"Saved {len(written)} file(s) into {target}")
 
 
-def _preset_key(bank: Any, preset_obj: Any, fmt: Optional[str]) -> tuple:
+def _preset_key(bank: Any, preset_obj: Any, fmt: Optional[str]) -> tuple:  # noqa: UP045
     """A duplicate-detection key that survives re-parsing the same bank
     file (bank.path is the label parse_bytes() was called with; presets
     carry their own stable index/id within that file)."""
@@ -2254,8 +2491,11 @@ def _preset_key(bank: Any, preset_obj: Any, fmt: Optional[str]) -> tuple:
         # volume, so its filename is the stable identity. Two volumes on one
         # disc may each hold a MELLOW.P3 and they are different programs;
         # bank.path already carries the volume ("<image>:A/NAME").
-        return ("AKAI", path, getattr(preset_obj, "filename", None)
-                or getattr(preset_obj, "name", None))
+        return (
+            "AKAI",
+            path,
+            getattr(preset_obj, "filename", None) or getattr(preset_obj, "name", None),
+        )
     if fmt == "KRZ":
         return ("KRZ", path, getattr(preset_obj, "id", None))
     if fmt == "EIII":

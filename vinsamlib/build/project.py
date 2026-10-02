@@ -58,15 +58,16 @@ SUFFIX = ".vslproj"
 @dataclass
 class LoadReport:
     """What came back, and what did not."""
-    banks: list = field(default_factory=list)      # New Bank items
-    pending: list = field(default_factory=list)    # Pending entries
+
+    banks: list = field(default_factory=list)  # New Bank items
+    pending: list = field(default_factory=list)  # Pending entries
     bank_name: str = ""
-    bank_format: Optional[str] = None
+    bank_format: Optional[str] = None  # noqa: UP045
     partition_breaks: set = field(default_factory=set)
     #: {"path": ..., "kind": ...} for the image column, or None.
-    image: Optional[dict] = None
+    image: Optional[dict] = None  # noqa: UP045
     #: {"expanded": [path, ...], "current": path} for the library tree.
-    explorer: Optional[dict] = None
+    explorer: Optional[dict] = None  # noqa: UP045
     sample_renames: dict = field(default_factory=dict)
     zone_placement: dict = field(default_factory=dict)
     voice_velocity: dict = field(default_factory=dict)
@@ -90,8 +91,10 @@ def _stamp_matches(path: Path, stamp: dict) -> bool:
         return False
     # mtime compared loosely: a copy between filesystems can shift it by a
     # rounding, and refusing a project over a microsecond would be absurd.
-    return (st.st_size == stamp.get("size")
-            and abs(st.st_mtime - float(stamp.get("mtime", 0))) < 2.0)
+    return (
+        st.st_size == stamp.get("size")
+        and abs(st.st_mtime - float(stamp.get("mtime", 0))) < 2.0
+    )
 
 
 #: What a bank's own file is called, per format. A staged bank whose `path`
@@ -132,15 +135,19 @@ def _path_is_its_own_bank(bank_path: str, fmt: str) -> bool:
         return ":" in stem or Path(stem).is_dir()
     wanted = _FORMAT_SUFFIXES.get(fmt)
     if wanted is None:
-        return False                    # an unknown format proves nothing
+        return False  # an unknown format proves nothing
     return Path(stem).suffix.lower() in wanted
 
 
 #: A staged bank whose path starts with one of these came out of a temp
 #: directory this session made, so its bytes must travel WITH the project.
 #: Everything else is a file in the user's library and is referenced.
-_EPHEMERAL_PREFIXES = ("vinsamlib_convert_", "vinsamlib_pending_",
-                       "vinsamlib_import_", "vinsamlib_stage_")
+_EPHEMERAL_PREFIXES = (
+    "vinsamlib_convert_",
+    "vinsamlib_pending_",
+    "vinsamlib_import_",
+    "vinsamlib_stage_",
+)
 
 
 def _is_ephemeral(bank_path: str) -> bool:
@@ -157,7 +164,7 @@ def _is_ephemeral(bank_path: str) -> bool:
     return any(part.startswith(_EPHEMERAL_PREFIXES) for part in parts)
 
 
-def _bank_bytes(bank: Any, fmt: str) -> Optional[bytes]:
+def _bank_bytes(bank: Any, fmt: str) -> Optional[bytes]:  # noqa: UP045
     """The whole bank as one blob, so it can be carried inside the project.
 
     AN AKAI VOLUME IS NOT A FILE. Its assemble() returns `[(filename, data),
@@ -168,7 +175,8 @@ def _bank_bytes(bank: Any, fmt: str) -> Optional[bytes]:
     and carried as that, so one blob is still one blob and unpacking knows
     what it has.
     """
-    from ..ui.bank_pane import _ASSEMBLE_FNS      # local: avoids a UI import cycle
+    from ..ui.bank_pane import _ASSEMBLE_FNS  # local: avoids a UI import cycle
+
     fn = _ASSEMBLE_FNS.get(fmt)
     if fn is None:
         return None
@@ -179,8 +187,11 @@ def _bank_bytes(bank: Any, fmt: str) -> Optional[bytes]:
         # blob of .talsmpl bytes filed as an E4B. The carry then failed on
         # load with "not an E4B" instead of failing to reference -- the same
         # fault, one step further along.
-        if (not _is_ephemeral(bank.path) and source.is_file()
-                and _path_is_its_own_bank(bank.path, fmt)):
+        if (
+            not _is_ephemeral(bank.path)
+            and source.is_file()
+            and _path_is_its_own_bank(bank.path, fmt)
+        ):
             return source.read_bytes()
     except OSError:
         pass
@@ -191,12 +202,13 @@ def _bank_bytes(bank: Any, fmt: str) -> Optional[bytes]:
         if not presets:
             return None
         built = fn([(bank, p) for p in presets])
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     if isinstance(built, (bytes, bytearray)):
         return bytes(built)
     if isinstance(built, list):
         import io
+
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for name, data in built:
@@ -216,14 +228,16 @@ def _all_presets(bank: Any, fmt: str) -> list:
 def _preset_ref(preset: Any, fmt: str) -> dict:
     """How to find this preset again inside its bank."""
     if fmt == "AKAI":
-        return {"filename": getattr(preset, "filename", None),
-                "name": getattr(preset, "name", None)}
+        return {
+            "filename": getattr(preset, "filename", None),
+            "name": getattr(preset, "name", None),
+        }
     if fmt == "KRZ":
         return {"id": getattr(preset, "id", None)}
     return {"index": getattr(preset, "index", None)}
 
 
-def _find_preset(bank: Any, fmt: str, ref: dict) -> Optional[Any]:
+def _find_preset(bank: Any, fmt: str, ref: dict) -> Optional[Any]:  # noqa: UP045
     if fmt == "AKAI":
         want_file = ref.get("filename")
         want_name = (ref.get("name") or "").strip()
@@ -245,16 +259,27 @@ def _find_preset(bank: Any, fmt: str, ref: dict) -> Optional[Any]:
 
 # ── saving ───────────────────────────────────────────────────────────────────
 
-def save(path: str, *, bank_items: list, bank_format: Optional[str],
-         bank_name: str, sample_renames: dict, zone_placement: dict,
-         voice_velocity: dict, pending: list, partition_breaks: set,
-         image: Optional[dict] = None, explorer: Optional[dict] = None) -> str:
+
+def save(
+    path: str,
+    *,
+    bank_items: list,
+    bank_format: Optional[str],  # noqa: UP045
+    bank_name: str,
+    sample_renames: dict,
+    zone_placement: dict,
+    voice_velocity: dict,
+    pending: list,
+    partition_breaks: set,
+    image: Optional[dict] = None,  # noqa: UP045
+    explorer: Optional[dict] = None,  # noqa: UP045
+) -> str:
     """Write the whole staged state to `path`. Returns a one-line summary."""
     out = Path(path)
     if out.suffix.lower() != SUFFIX:
         out = out.with_suffix(SUFFIX)
 
-    blobs: dict[str, bytes] = {}        # digest -> bytes, so one bank is stored once
+    blobs: dict[str, bytes] = {}  # digest -> bytes, so one bank is stored once
     referenced = carried = 0
 
     def _bank_entry(bank: Any, fmt: str) -> dict:
@@ -270,40 +295,62 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
             image = Path(image_str)
             if volume and image.is_file():
                 referenced += 1
-                return {"kind": "ref", "path": str(image.resolve()),
-                        "volume": volume, "stamp": _source_stamp(image),
-                        "format": fmt}
+                return {
+                    "kind": "ref",
+                    "path": str(image.resolve()),
+                    "volume": volume,
+                    "stamp": _source_stamp(image),
+                    "format": fmt,
+                }
         src = Path(bank_path)
-        if (bank_path and not _is_ephemeral(bank_path) and src.is_file()
-                and _path_is_its_own_bank(bank_path, fmt)):
+        if (
+            bank_path
+            and not _is_ephemeral(bank_path)
+            and src.is_file()
+            and _path_is_its_own_bank(bank_path, fmt)
+        ):
             referenced += 1
-            return {"kind": "ref", "path": str(src.resolve()),
-                    "stamp": _source_stamp(src), "format": fmt}
+            return {
+                "kind": "ref",
+                "path": str(src.resolve()),
+                "stamp": _source_stamp(src),
+                "format": fmt,
+            }
         data = _bank_bytes(bank, fmt)
         if data is None:
             return {"kind": "lost", "label": bank_path, "format": fmt}
         digest = hashlib.blake2b(data, digest_size=16).hexdigest()
         blobs.setdefault(digest, data)
         carried += 1
-        return {"kind": "blob", "digest": digest, "format": fmt,
-                "label": Path(bank_path).name or "converted"}
+        return {
+            "kind": "blob",
+            "digest": digest,
+            "format": fmt,
+            "label": Path(bank_path).name or "converted",
+        }
 
-    def _items_json(items: list, fmt: Optional[str]) -> list:
+    def _items_json(items: list, fmt: Optional[str]) -> list:  # noqa: UP045
         rows = []
         for bank, preset, name, *rest in items:
             f = fmt or _guess_format(bank)
-            row = {"bank": _bank_entry(bank, f),
-                   "preset": _preset_ref(preset, f),
-                   "name": name}
+            row = {
+                "bank": _bank_entry(bank, f),
+                "preset": _preset_ref(preset, f),
+                "name": name,
+            }
             # PER-ITEM EDITS, version 2. A placement is looked up by the
             # sample's name, so the bank-wide maps below cannot say "this
             # preset and not that one" -- two staged presets sharing a sample
             # shared the edit. Written per item so they can.
             edits = rest[0] if rest else {}
-            placement = {str(k): list(v) for k, v in
-                         ((edits or {}).get("placement") or {}).items()}
-            velocity = {str(k): list(v) for k, v in
-                        ((edits or {}).get("velocity") or {}).items()}
+            placement = {
+                str(k): list(v)
+                for k, v in ((edits or {}).get("placement") or {}).items()
+            }
+            velocity = {
+                str(k): list(v)
+                for k, v in ((edits or {}).get("velocity") or {}).items()
+            }
             if placement:
                 row["zone_placement"] = placement
             if velocity:
@@ -324,13 +371,22 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
             "voice_velocity": {str(k): v for k, v in (voice_velocity or {}).items()},
         },
         "pending": [
-            {"name": e.get("name", ""), "format": e.get("format"),
-             "items": _items_json(e.get("items", []), e.get("format")),
-             # Convert options are a frozen dataclass of plain values.
-             "convert_opts": _opts_json(e.get("convert_opts")),
-             "sample_renames": {str(k): v for k, v in (e.get("sample_renames") or {}).items()},
-             "zone_placement": {str(k): v for k, v in (e.get("zone_placement") or {}).items()},
-             "voice_velocity": {str(k): v for k, v in (e.get("voice_velocity") or {}).items()}}
+            {
+                "name": e.get("name", ""),
+                "format": e.get("format"),
+                "items": _items_json(e.get("items", []), e.get("format")),
+                # Convert options are a frozen dataclass of plain values.
+                "convert_opts": _opts_json(e.get("convert_opts")),
+                "sample_renames": {
+                    str(k): v for k, v in (e.get("sample_renames") or {}).items()
+                },
+                "zone_placement": {
+                    str(k): v for k, v in (e.get("zone_placement") or {}).items()
+                },
+                "voice_velocity": {
+                    str(k): v for k, v in (e.get("voice_velocity") or {}).items()
+                },
+            }
             for e in (pending or [])
         ],
         "partition_breaks": sorted(partition_breaks or ()),
@@ -359,14 +415,17 @@ def save(path: str, *, bank_items: list, bank_format: Optional[str],
     tmp.replace(out)
     mb = out.stat().st_size / 1024 / 1024
     note = f", {calllog.summary()}" if call_log else ""
-    return (f"Saved {out.name}: {referenced} referenced, {carried} carried, "
-            f"{mb:.1f} MB{note}")
+    return (
+        f"Saved {out.name}: {referenced} referenced, {carried} carried, "
+        f"{mb:.1f} MB{note}"
+    )
 
 
-def _opts_json(opts) -> Optional[dict]:
+def _opts_json(opts) -> Optional[dict]:  # noqa: UP045
     if opts is None:
         return None
     from dataclasses import asdict, is_dataclass
+
     return asdict(opts) if is_dataclass(opts) else None
 
 
@@ -381,6 +440,7 @@ def _guess_format(bank: Any) -> str:
 
 
 # ── loading ──────────────────────────────────────────────────────────────────
+
 
 def load(path: str) -> LoadReport:
     """Read a project back. Never raises for a stale reference -- it reports.
@@ -398,7 +458,8 @@ def load(path: str) -> LoadReport:
             # would make both unreadable. Reported so the user knows it is
             # there, and left in the archive to be read with any zip tool.
             rep.call_log_lines = sum(
-                1 for _ in z.read(calllog.ARCHIVE_NAME).splitlines() if _)
+                1 for _ in z.read(calllog.ARCHIVE_NAME).splitlines() if _
+            )
         manifest = json.loads(z.read("project.json"))
         if manifest.get("format") != FORMAT:
             raise ValueError(f"{Path(path).name} is not a VinSamLib project.")
@@ -406,7 +467,8 @@ def load(path: str) -> LoadReport:
             rep.problems.append(
                 f"This project was written by a newer VinSamLib "
                 f"(format {manifest.get('version')} against {VERSION}); "
-                f"anything it does not recognise has been skipped.")
+                f"anything it does not recognise has been skipped."
+            )
         cache: dict = {}
 
         def _bank_for(entry: dict):
@@ -429,11 +491,14 @@ def load(path: str) -> LoadReport:
                     rep.problems.append(
                         f"{where}: \"{row.get('name')}\" is no longer in "
                         f"{Path(getattr(bank, 'path', '?')).name} — it was "
-                        f"found by position and the bank has changed.")
+                        f"found by position and the bank has changed."
+                    )
                     continue
                 edits = {"placement": {}, "velocity": {}}
-                for key, into in (("zone_placement", "placement"),
-                                  ("voice_velocity", "velocity")):
+                for key, into in (
+                    ("zone_placement", "placement"),
+                    ("voice_velocity", "velocity"),
+                ):
                     for k, v in (row.get(key) or {}).items():
                         edits[into][str(k)] = tuple(v)
                 out.append((bank, preset, row.get("name") or "", edits))
@@ -443,21 +508,23 @@ def load(path: str) -> LoadReport:
         rep.bank_name = nb.get("name") or ""
         rep.bank_format = nb.get("format")
         rep.banks = _restore_items(nb.get("items") or [], "New Bank")
-        rep.sample_renames = _int_keys(nb.get("sample_renames"))
-        rep.zone_placement = _int_keys(nb.get("zone_placement"))
-        rep.voice_velocity = _int_keys(nb.get("voice_velocity"))
+        rep.sample_renames = _name_keys(nb.get("sample_renames"))
+        rep.zone_placement = _name_keys(nb.get("zone_placement"))
+        rep.voice_velocity = _name_keys(nb.get("voice_velocity"))
 
         for e in manifest.get("pending") or []:
             items = _restore_items(e.get("items") or [], f"Pending \"{e.get('name')}\"")
-            rep.pending.append({
-                "name": e.get("name") or "",
-                "format": e.get("format"),
-                "items": items,
-                "convert_opts": _opts_from_json(e.get("convert_opts")),
-                "sample_renames": _int_keys(e.get("sample_renames")),
-                "zone_placement": _int_keys(e.get("zone_placement")),
-                "voice_velocity": _int_keys(e.get("voice_velocity")),
-            })
+            rep.pending.append(
+                {
+                    "name": e.get("name") or "",
+                    "format": e.get("format"),
+                    "items": items,
+                    "convert_opts": _opts_from_json(e.get("convert_opts")),
+                    "sample_renames": _name_keys(e.get("sample_renames")),
+                    "zone_placement": _name_keys(e.get("zone_placement")),
+                    "voice_velocity": _name_keys(e.get("voice_velocity")),
+                }
+            )
         rep.partition_breaks = set(manifest.get("partition_breaks") or ())
         rep.image = manifest.get("image") or None
         rep.explorer = manifest.get("explorer") or None
@@ -470,37 +537,48 @@ def _restore_bank(z: zipfile.ZipFile, entry: dict, rep: LoadReport):
     if kind == "lost":
         rep.problems.append(
             f"{entry.get('label') or 'A bank'} could not be saved when this "
-            f"project was written, so it cannot be restored.")
+            f"project was written, so it cannot be restored."
+        )
         return None
     if kind == "blob":
         try:
             data = z.read(f"blobs/{entry['digest']}")
         except KeyError:
-            rep.problems.append(f"{entry.get('label')}: its audio is missing "
-                                f"from the project file.")
+            rep.problems.append(
+                f"{entry.get('label')}: its audio is missing " f"from the project file."
+            )
             return None
         if fmt == "AKAI":
             # Carried as a zip of the volume's files -- see _bank_bytes.
             import io
+
             try:
                 with zipfile.ZipFile(io.BytesIO(data)) as inner:
                     files = [(n, inner.read(n)) for n in inner.namelist()]
             except zipfile.BadZipFile:
-                rep.problems.append(f"{entry.get('label')}: its carried volume "
-                                    f"could not be unpacked.")
+                rep.problems.append(
+                    f"{entry.get('label')}: its carried volume "
+                    f"could not be unpacked."
+                )
                 return None
             from ..banks import akai
+
             try:
-                return akai.parse_volume(files, name=entry.get("label") or "volume",
-                                          path=entry.get("label") or "volume")
-            except Exception as ex:
+                return akai.parse_volume(
+                    files,
+                    name=entry.get("label") or "volume",
+                    path=entry.get("label") or "volume",
+                )
+            except Exception as ex:  # noqa: BLE001
                 rep.problems.append(f"{entry.get('label')}: {ex}")
                 return None
         return _parse_bytes(data, entry.get("label") or "converted", fmt, rep)
     src = Path(entry.get("path") or "")
     if not src.exists():
-        rep.problems.append(f"{src} is gone — the presets taken from it were "
-                            f"skipped. Put it back and load the project again.")
+        rep.problems.append(
+            f"{src} is gone — the presets taken from it were "
+            f"skipped. Put it back and load the project again."
+        )
         return None
     if not _path_is_its_own_bank(str(src), fmt or ""):
         # Written by a version that saved an IMPORT as a reference to its
@@ -513,28 +591,39 @@ def _restore_bank(z: zipfile.ZipFile, entry: dict, rep: LoadReport):
             f"this program, which recorded the import's SOURCE instead of "
             f"what it produced. Those presets cannot be restored from this "
             f"file — import {src.name} again. Projects saved from now on "
-            f"carry the converted audio.")
+            f"carry the converted audio."
+        )
         return None
     if not _stamp_matches(src, entry.get("stamp") or {}):
-        rep.problems.append(f"{src.name} has changed since the project was "
-                            f"saved — its presets were skipped rather than "
-                            f"restored from a file that may not match.")
+        rep.problems.append(
+            f"{src.name} has changed since the project was "
+            f"saved — its presets were skipped rather than "
+            f"restored from a file that may not match."
+        )
         return None
     volume = entry.get("volume")
     if volume:
         # Re-open the image and take that one volume back out of it.
         try:
             from ..vfs.detect import open_volume
+
             vol = open_volume(str(src))
-            folder = next((e for e in vol.list(None)
-                           if e.name == volume or
-                           f"{e.meta.get('partition', '')}/{e.name}" == volume), None)
+            folder = next(
+                (
+                    e
+                    for e in vol.list(None)
+                    if e.name == volume
+                    or f"{e.meta.get('partition', '')}/{e.name}" == volume
+                ),
+                None,
+            )
             if folder is None:
-                rep.problems.append(f"{src.name} no longer holds the volume "
-                                    f"{volume!r}.")
+                rep.problems.append(
+                    f"{src.name} no longer holds the volume " f"{volume!r}."
+                )
                 return None
             return vol.volume_bank(folder)
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
             rep.problems.append(f"{src.name}:{volume}: {ex}")
             return None
     try:
@@ -544,8 +633,9 @@ def _restore_bank(z: zipfile.ZipFile, entry: dict, rep: LoadReport):
         return None
 
 
-def _parse_bytes(data: bytes, label: str, fmt: Optional[str], rep: LoadReport):
+def _parse_bytes(data: bytes, label: str, fmt: Optional[str], rep: LoadReport):  # noqa: UP045
     from ..banks import e4b, eiii, krz
+
     try:
         if fmt == "KRZ":
             return krz.parse_bytes(data, label)
@@ -553,31 +643,28 @@ def _parse_bytes(data: bytes, label: str, fmt: Optional[str], rep: LoadReport):
             return eiii.parse_bytes(data, label)
         if fmt == "AKAI":
             from ..banks import akai
-            return akai.parse_volume([(Path(label).name, data)], name=Path(label).stem,
-                                      path=label)
+
+            return akai.parse_volume(
+                [(Path(label).name, data)], name=Path(label).stem, path=label
+            )
         return e4b.parse_bytes(data, label)
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001
         rep.problems.append(f"{Path(label).name} could not be read back: {ex}")
         return None
 
 
-def _opts_from_json(d: Optional[dict]):
+def _opts_from_json(d: Optional[dict]):  # noqa: UP045
     if not d:
         return None
     from .convert import ConversionOptions
+
     known = {f for f in ConversionOptions.__dataclass_fields__}
     return ConversionOptions(**{k: v for k, v in d.items() if k in known})
 
 
-def _int_keys(d: Optional[dict]) -> dict:
-    """JSON object keys are strings; these dicts are keyed by index."""
-    out = {}
-    for k, v in (d or {}).items():
-        try:
-            out[int(k)] = v
-        except (TypeError, ValueError):
-            out[k] = v
-    return out
+def _name_keys(d: Optional[dict]) -> dict:  # noqa: UP045
+    """These three maps are keyed by SAMPLE NAME, and stay that way."""
+    return {k: tuple(v) if isinstance(v, list) else v for k, v in (d or {}).items()}
 
 
 # ── crash safety ─────────────────────────────────────────────────────────────
@@ -593,6 +680,7 @@ def autosave_path() -> Path:
     appear in a library folder and get indexed as content.
     """
     from ..config import user_data_dir
+
     return user_data_dir() / AUTOSAVE_NAME
 
 

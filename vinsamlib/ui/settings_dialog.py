@@ -10,14 +10,27 @@ imported from the old location) -- so a changed path just tells the user
 to restart, rather than pretending to apply it live.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001, RUF100
 
 from pathlib import Path
 
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
-                             QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                             QMessageBox, QPushButton, QScrollArea, QSpinBox,
-                             QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .. import audition
 from ..build import calllog
@@ -62,7 +75,9 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._status_label)
 
         self._restart_label = QLabel("")
-        self._restart_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        self._restart_label.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         self._restart_label.setWordWrap(True)
         layout.addWidget(self._restart_label)
 
@@ -102,9 +117,11 @@ class SettingsDialog(QDialog):
         self._autosave_spin.setValue(config.autosave_seconds)
         limits_form.addRow("Autosave staged work every:", self._autosave_spin)
         self._debug_log_check = QCheckBox(
-            "Record every mpc2emu call in the project file")
-        self._debug_log_check.setChecked(bool(
-            getattr(config, "debug_mpc2emu_log", False)))
+            "Record every mpc2emu call in the project file"
+        )
+        self._debug_log_check.setChecked(
+            bool(getattr(config, "debug_mpc2emu_log", False))
+        )
         limits_form.addRow("Diagnostics:", self._debug_log_check)
         layout.addLayout(limits_form)
         pram_hint = QLabel(
@@ -116,7 +133,8 @@ class SettingsDialog(QDialog):
             "own size — a plain keymap about 430 bytes, a velocity-layered one "
             "three times that, a program 210–280 — so the estimate in New Bank "
             "is a guide, not a guarantee. A bank that overruns PRAM does not "
-            "report anything.")
+            "report anything."
+        )
         pram_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         pram_hint.setWordWrap(True)
         layout.addWidget(pram_hint)
@@ -128,7 +146,8 @@ class SettingsDialog(QDialog):
             "it moves with fitted memory is untested. It is shared with "
             "whatever is already loaded, so New Bank's figure is a floor: a "
             "volume that loads onto an empty machine may not load onto a "
-            "full one.")
+            "full one."
+        )
         akai_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         akai_hint.setWordWrap(True)
         layout.addWidget(akai_hint)
@@ -139,7 +158,8 @@ class SettingsDialog(QDialog):
             "deleted on a clean exit \u2014 so its presence IS the signal that "
             "the last run did not finish. Set 0 to switch it off; a project "
             "holding converted banks carries their audio and can run to "
-            "megabytes, which is why this is not a few seconds.")
+            "megabytes, which is why this is not a few seconds."
+        )
         autosave_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         autosave_hint.setWordWrap(True)
         layout.addWidget(autosave_hint)
@@ -151,7 +171,8 @@ class SettingsDialog(QDialog):
             "otherwise carries no account of what produced it, which is only "
             "a problem the day something in it needs explaining. It makes "
             "project files larger, and they will contain the paths your "
-            "sources came from \u2014 worth knowing before sending one on.")
+            "sources came from \u2014 worth knowing before sending one on."
+        )
         debug_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         debug_hint.setWordWrap(True)
         layout.addWidget(debug_hint)
@@ -159,8 +180,9 @@ class SettingsDialog(QDialog):
             "A soft warning in New Bank once a bank exceeds this size — the "
             "most common real RAM configuration, not the format's absolute "
             "technical maximum (128 MB for E4B; the K2000 has no hard byte "
-            "ceiling). \"Keep Anyway\" is still offered if you actually have "
-            "more RAM installed.")
+            'ceiling). "Keep Anyway" is still offered if you actually have '
+            "more RAM installed."
+        )
         limits_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         limits_hint.setWordWrap(True)
         layout.addWidget(limits_hint)
@@ -181,7 +203,8 @@ class SettingsDialog(QDialog):
             "only REPORTS, in the Detail pane; the loop is written exactly as "
             "the source authored it. To repair one, use Check Loops… in New "
             "Bank, which offers a zero-snap, a nudge and a cross-fade per "
-            "sample — and never applies one you did not choose.")
+            "sample — and never applies one you did not choose."
+        )
         loop_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         loop_hint.setWordWrap(True)
         layout.addWidget(loop_hint)
@@ -193,8 +216,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(QLabel("Audition:"))
         aud_form = QFormLayout()
         self._audition_notes_edit = QLineEdit(config.audition_notes)
-        self._audition_notes_edit.setPlaceholderText(
-            "A2,A3,A4,(A3,C4,E4),(C3,E3,G3)")
+        self._audition_notes_edit.setPlaceholderText("A2,A3,A4,(A3,C4,E4),(C3,E3,G3)")
         self._audition_notes_edit.textChanged.connect(self._validate_notes)
         aud_form.addRow("Notes:", self._audition_notes_edit)
         self._audition_velocity_spin = QSpinBox()
@@ -206,8 +228,7 @@ class SettingsDialog(QDialog):
         self._audition_hold_spin.setSingleStep(0.1)
         self._audition_hold_spin.setSuffix(" s")
         self._audition_hold_spin.setValue(float(config.audition_hold_seconds))
-        aud_form.addRow("Default hold (note-on to note-off):",
-                        self._audition_hold_spin)
+        aud_form.addRow("Default hold (note-on to note-off):", self._audition_hold_spin)
         self._audition_gap_spin = QDoubleSpinBox()
         self._audition_gap_spin.setRange(0.0, 5.0)
         self._audition_gap_spin.setSingleStep(0.1)
@@ -217,12 +238,14 @@ class SettingsDialog(QDialog):
         self._audition_volume_spin = QSpinBox()
         self._audition_volume_spin.setRange(0, 100)
         self._audition_volume_spin.setSuffix(" %")
-        self._audition_volume_spin.setValue(int(
-            getattr(config, "audition_volume", 100)))
+        self._audition_volume_spin.setValue(
+            int(getattr(config, "audition_volume", 100))
+        )
         self._audition_volume_spin.setToolTip(
             "Playback level only. It never changes the rendered audio, the "
             "peak the report quotes, or the file Save as WAV… writes — those "
-            "describe the preset.")
+            "describe the preset."
+        )
         aud_form.addRow("Playback volume:", self._audition_volume_spin)
         layout.addLayout(aud_form)
         self._audition_notes_status = QLabel("")
@@ -238,7 +261,8 @@ class SettingsDialog(QDialog):
             "what each format was measured to do; the machines' own "
             "converters, output stages and effects are not modelled at all, "
             "and some parameters are fitted rather than measured. Every "
-            "audition says which is which.")
+            "audition says which is which."
+        )
         audition_hint.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         audition_hint.setWordWrap(True)
         layout.addWidget(audition_hint)
@@ -247,7 +271,8 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._audition_status_label)
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
@@ -256,8 +281,11 @@ class SettingsDialog(QDialog):
 
     def _browse(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "mpc2emu Checkout", self._path_edit.text(),
-            options=QFileDialog.Option.DontUseNativeDialog)
+            self,
+            "mpc2emu Checkout",
+            self._path_edit.text(),
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if path:
             self._path_edit.setText(path)
 
@@ -284,7 +312,8 @@ class SettingsDialog(QDialog):
         else:
             self._status_label.setText(f"✗ {reason}")
         self._restart_label.setText(
-            "Restart VinSamLib to apply the new path." if path_changed else "")
+            "Restart VinSamLib to apply the new path." if path_changed else ""
+        )
         self._update_audition_status(probe)
         self._validate_notes(self._audition_notes_edit.text())
 
@@ -292,6 +321,7 @@ class SettingsDialog(QDialog):
         """Live validation through the renderer's own parser, so the field
         cannot accept what the renderer rejects."""
         from ..audition import parse_notes
+
         try:
             notes = parse_notes(text)
         except ValueError as ex:
@@ -299,9 +329,11 @@ class SettingsDialog(QDialog):
             self._audition_notes_status.setStyleSheet("color: #c0392b;")
             return
         from ..audition import describe_events
+
         self._audition_notes_status.setText(f"✓ {describe_events(notes)}")
         self._audition_notes_status.setStyleSheet(
-            "color: palette(placeholdertext); font-size: 11px;")
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
 
     def _update_audition_status(self, probe: Config) -> None:
         """A live ✓ / ✗ line for the mpc2emu side and the audio device, like
@@ -312,6 +344,7 @@ class SettingsDialog(QDialog):
             self._audition_status_label.setText(f"✗ Audition: {reason}")
             return
         from .audition_player import playback_route
+
         kind, dev_reason = playback_route()
         line = f"✓ {reason}"
         if kind == "qt":
@@ -322,31 +355,37 @@ class SettingsDialog(QDialog):
             # Replay behave a little differently on this one.
             line += f"\n✓ Audio output via external player: {dev_reason}"
         else:
-            line += (f"\n✗ No audio output ({dev_reason}) — Audition can "
-                     f"still render and Save as WAV")
+            line += (
+                f"\n✗ No audio output ({dev_reason}) — Audition can "
+                f"still render and Save as WAV"
+            )
         self._audition_status_label.setText(line)
 
     def accept(self) -> None:
         new_path = Path(self._path_edit.text())
         path_changed = new_path != self._config.mpc2emu_path
-        limits_changed = (self._e4b_limit_spin.value() != self._config.e4b_bank_limit_mb
-                           or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb
-                           or self._krz_pram_spin.value() != self._config.krz_pram_kb
-                           or self._akai_obj_spin.value() != self._config.akai_max_objects
-                           or self._autosave_spin.value() != self._config.autosave_seconds
-                           or self._debug_log_check.isChecked()
-                              != bool(getattr(self._config, "debug_mpc2emu_log", False))
-                           or self._loop_click_box.isChecked()
-                              != self._config.loop_click_check)
+        limits_changed = (
+            self._e4b_limit_spin.value() != self._config.e4b_bank_limit_mb
+            or self._krz_limit_spin.value() != self._config.krz_bank_limit_mb
+            or self._krz_pram_spin.value() != self._config.krz_pram_kb
+            or self._akai_obj_spin.value() != self._config.akai_max_objects
+            or self._autosave_spin.value() != self._config.autosave_seconds
+            or self._debug_log_check.isChecked()
+            != bool(getattr(self._config, "debug_mpc2emu_log", False))
+            or self._loop_click_box.isChecked() != self._config.loop_click_check
+        )
         audition_changed = (
             self._audition_notes_edit.text() != self._config.audition_notes
             or self._audition_velocity_spin.value() != self._config.audition_velocity
-            or abs(self._audition_hold_spin.value()
-                   - self._config.audition_hold_seconds) > 1e-9
-            or abs(self._audition_gap_spin.value()
-                   - self._config.audition_gap_seconds) > 1e-9
+            or abs(
+                self._audition_hold_spin.value() - self._config.audition_hold_seconds
+            )
+            > 1e-9
+            or abs(self._audition_gap_spin.value() - self._config.audition_gap_seconds)
+            > 1e-9
             or self._audition_volume_spin.value()
-               != int(getattr(self._config, "audition_volume", 100)))
+            != int(getattr(self._config, "audition_volume", 100))
+        )
         if path_changed:
             self._config.mpc2emu_path = new_path
             self._changed_path = new_path
@@ -372,9 +411,11 @@ class SettingsDialog(QDialog):
                 audition.parse_notes(self._audition_notes_edit.text())
             except ValueError as ex:
                 QMessageBox.warning(
-                    self, "Audition notes",
+                    self,
+                    "Audition notes",
                     f"{ex}\n\nNothing was saved. Fix the note list, or "
-                    f"press Cancel to leave the settings as they were.")
+                    f"press Cancel to leave the settings as they were.",
+                )
                 self._audition_notes_edit.setFocus()
                 self._audition_notes_edit.selectAll()
                 return

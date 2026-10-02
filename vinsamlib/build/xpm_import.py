@@ -31,7 +31,7 @@ the starting mpc2emu Bank gets parsed (foreign XPM vs. an already-native
 E4B), not in what happens to it afterward.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import gzip
 import json
@@ -92,7 +92,8 @@ DRUM_2X_PAD_MAP_NOTE = (
     "MPC 2.x drum kit: the file does not store which key each pad plays, so "
     "its pads land on consecutive keys from 36 (C1). If this kit used a "
     "General MIDI or hand-built layout on the MPC, the hits will be in a "
-    "different order here — all of them present, none at the wrong pitch.")
+    "different order here — all of them present, none at the wrong pitch."
+)
 _XML_PROGRAM_TYPE = re.compile(rb'<Program\s+type="([^"]*)"')
 _SNIFF_BYTES = 8192
 
@@ -109,11 +110,12 @@ _JSON_TYPE = re.compile(rb'"type"\s*:\s*(-?\d+)')
 #: exactly the ones the type tag carries. Checked against a 571-file backup:
 #: the tag and this suffix agreed in all 571 cases, which is what makes
 #: reading the name first defensible.
-_KIND_FROM_NAME = {k.lower(): k for k in
-                   ("Keygroup", "Drum", "MIDI", "Plugin", "Audio", "CV", "Clip")}
+_KIND_FROM_NAME = {
+    k.lower(): k for k in ("Keygroup", "Drum", "MIDI", "Plugin", "Audio", "CV", "Clip")
+}
 
 
-def _kind_from_filename(path: str) -> Optional[str]:
+def _kind_from_filename(path: str) -> Optional[str]:  # noqa: UP045
     """The kind the MPC's own filename convention declares, or None.
 
     `Foo.Keygroup.xpm` -> "Keygroup". A file renamed out of that convention
@@ -122,12 +124,12 @@ def _kind_from_filename(path: str) -> Optional[str]:
     readable. What it costs if a file is renamed to a DIFFERENT kind token is
     a wrong label on a row, not wrong data anywhere.
     """
-    stem = Path(path).stem              # "Foo.Keygroup" out of "Foo.Keygroup.xpm"
+    stem = Path(path).stem  # "Foo.Keygroup" out of "Foo.Keygroup.xpm"
     _, _, tail = stem.rpartition(".")
     return _KIND_FROM_NAME.get(tail.lower()) if tail else None
 
 
-def program_kind(path: str, trust_name: bool = False) -> Optional[str]:
+def program_kind(path: str, trust_name: bool = False) -> Optional[str]:  # noqa: UP045
     """What kind of program an MPC file holds ("Keygroup", "Drum", "MIDI",
     "Plugin", "Audio", "CV", "Clip"), or None when it cannot be told from a
     header peek -- which is never a parse, since a real parse loads every
@@ -158,7 +160,7 @@ def program_kind(path: str, trust_name: bool = False) -> Optional[str]:
     except OSError:
         return None
     if head.lstrip()[:1] != b"<":
-        return None     # MPC 3 (gzip+JSON) or not XML at all -- can't tell
+        return None  # MPC 3 (gzip+JSON) or not XML at all -- can't tell
     m = _XML_PROGRAM_TYPE.search(head)
     return m.group(1).decode("ascii", "replace") if m else None
 
@@ -200,18 +202,18 @@ def project_program_names(path: str) -> list[str]:
     try:
         with open(path, "rb") as f:
             if f.read(2) != b"\x1f\x8b":
-                return []                    # MPC 2.x: separate files
+                return []  # MPC 2.x: separate files
         # Bytes, not text: the search needs no character semantics, and
         # decoding a whole library's worth of these (1.8 GB) costs a second
         # by itself. Only a name that is actually kept gets decoded.
         with gzip.open(path, "rb") as g:
             if g.readline().rstrip(b"\n") != b"ACVS":
                 return []
-            for _ in range(4):               # the rest of the five-line header
+            for _ in range(4):  # the rest of the five-line header
                 g.readline()
             text = g.read()
-    except Exception:
-        return []                            # unreadable: still findable by name
+    except Exception:  # noqa: BLE001
+        return []  # unreadable: still findable by name
     decoder = json.JSONDecoder()
     names, pos = [], 0
     while True:
@@ -228,7 +230,7 @@ def project_program_names(path: str) -> list[str]:
         # values are still decoded as JSON, not lifted as raw text. Anything
         # not in the window falls through to decoding the whole object, so
         # the window is a shortcut and never the thing correctness rests on.
-        window = text[start:start + _MPC3_PROGRAM_WINDOW]
+        window = text[start : start + _MPC3_PROGRAM_WINDOW]
         name_match = _JSON_NAME.search(window)
         type_match = _JSON_TYPE.search(window)
         if name_match is not None and type_match is not None:
@@ -287,10 +289,14 @@ def _xml_sample_names(path: Path) -> list[str]:
         blob = path.read_bytes()
     except OSError:
         return []
-    return [name for name in
-            (m.group(1).decode("utf-8", "replace").strip()
-             for m in _XML_SAMPLE_NAME.finditer(blob))
-            if name]
+    return [
+        name
+        for name in (
+            m.group(1).decode("utf-8", "replace").strip()
+            for m in _XML_SAMPLE_NAME.finditer(blob)
+        )
+        if name
+    ]
 
 
 def _mpc3_sample_names(path: Path) -> list[str]:
@@ -304,7 +310,7 @@ def _mpc3_sample_names(path: Path) -> list[str]:
             for _ in range(4):
                 g.readline()
             text = g.read()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return []
     decoder = json.JSONDecoder()
     names, pos = [], 0
@@ -359,7 +365,7 @@ def full_sample_names(stored: list[str], path: str) -> dict[str, str]:
     taken: set[str] = set()
     found: dict[str, str] = {}
     ambiguous: set[str] = set()
-    for candidate in candidates:                       # first sight, in order
+    for candidate in candidates:  # first sight, in order
         # _safe_name() drops the extension before it shortens, and an MPC 2.x
         # <SampleName> often carries one ("…_C-1.wav"). Dropping it here too
         # keeps the two halves aligned -- otherwise the kept part comes out
@@ -385,7 +391,7 @@ class XpmSummary:
     preset_name: str
     sample_count: int
     total_sample_bytes: int
-    zones: list = field(default_factory=list)   # list[ZoneSummary]
+    zones: list = field(default_factory=list)  # list[ZoneSummary]
 
 
 @dataclass(frozen=True)
@@ -393,6 +399,7 @@ class ProjectSummary:
     """The container itself, not any one of its programs -- deliberately the
     same set of facts banks/summary.py's BankSummary carries for a real E4B
     or KRZ bank, since that is what the Detail pane shows for one."""
+
     name: str
     program_names: list[str] = field(default_factory=list)
     sample_count: int = 0
@@ -403,8 +410,12 @@ class ProjectSummary:
 _MISSING = object()
 
 
-def parse_mpc(path: str, wav_dir: Optional[str] = None,
-              chromatic_pads: bool = False, lfo_sync_bpm=None):
+def parse_mpc(
+    path: str,
+    wav_dir: Optional[str] = None,  # noqa: UP045
+    chromatic_pads: bool = False,
+    lfo_sync_bpm=None,
+):
     """Parse any MPC container mpc2emu accepts (program, track or project)
     into its Bank -- the one parse every read-only caller here shares.
 
@@ -428,7 +439,8 @@ def parse_mpc(path: str, wav_dir: Optional[str] = None,
             raise ValueError(
                 "this mpc2emu checkout cannot lay drum pads out chromatically "
                 "(no `chromatic_pads` in its XPM reader) -- update mpc2emu, or "
-                "turn the option off to keep the program's own pad map.")
+                "turn the option off to keep the program's own pad map."
+            )
         kw["chromatic_pads"] = True
 
     # THE PARAMETER FIRST, THE GLOBAL ONLY IF THERE IS NO PARAMETER.
@@ -450,7 +462,8 @@ def parse_mpc(path: str, wav_dir: Optional[str] = None,
             "this mpc2emu checkout cannot be told the project tempo for "
             "synced LFOs (neither a `sync_bpm` parameter nor a `SYNC_BPM` "
             "global in its XPM reader) -- update mpc2emu, or turn the tempo "
-            "option off to accept its own assumption of 120 BPM.")
+            "option off to accept its own assumption of 120 BPM."
+        )
     try:
         if lfo_sync_bpm is not None:
             xpm_parser.SYNC_BPM = float(lfo_sync_bpm)
@@ -497,24 +510,30 @@ def summarize_program(bank, preset_index: int = 0) -> XpmSummary:
         raise ValueError(
             f"{getattr(bank, 'name', 'This program')} holds no sampled "
             f"content: its pads or keygroups are all empty, so there is "
-            f"nothing to import.")
+            f"nothing to import."
+        )
     if preset_index >= len(bank.presets):
         raise ValueError(
             f"program {preset_index + 1} is not in this file any more — it "
-            f"holds {len(bank.presets)}. Collapse and re-expand it to re-read.")
+            f"holds {len(bank.presets)}. Collapse and re-expand it to re-read."
+        )
     preset = bank.presets[preset_index]
     zones: list[ZoneSummary] = []
     for voice in preset.voices:
         for z in voice.zones:
             sample = bank.find_sample(z.sample_name)
-            zones.append(ZoneSummary(
-                sample_name=z.sample_name,
-                lo_key=z.lo_key, hi_key=z.hi_key,
-                lo_vel=z.lo_vel, hi_vel=z.hi_vel,
-                root_key=z.root_key,
-                loop=_LOOP_NAMES.get(int(sample.loop_type), "?") if sample else "?",
-                sample_rate=sample.sample_rate if sample else None,
-            ))
+            zones.append(
+                ZoneSummary(
+                    sample_name=z.sample_name,
+                    lo_key=z.lo_key,
+                    hi_key=z.hi_key,
+                    lo_vel=z.lo_vel,
+                    hi_vel=z.hi_vel,
+                    root_key=z.root_key,
+                    loop=_LOOP_NAMES.get(int(sample.loop_type), "?") if sample else "?",
+                    sample_rate=sample.sample_rate if sample else None,
+                )
+            )
     samples = _preset_samples(bank, preset)
     return XpmSummary(
         preset_name=preset.name.strip(),
@@ -536,8 +555,11 @@ def summarize_project(bank) -> ProjectSummary:
     )
 
 
-def summarize_xpm(xpm_path: str, wav_dir: Optional[str] = None,
-                  preset_index: int = 0) -> XpmSummary:
+def summarize_xpm(
+    xpm_path: str,
+    wav_dir: Optional[str] = None,  # noqa: UP045
+    preset_index: int = 0,
+) -> XpmSummary:
     """Read-only preview for Explorer's Detail pane -- parses via mpc2emu's
     own xpm_parser (same as import_xpm(), just never writes anything) to
     report one preset's zones and referenced sample data size, without doing
@@ -545,8 +567,11 @@ def summarize_xpm(xpm_path: str, wav_dir: Optional[str] = None,
     return summarize_program(parse_mpc(xpm_path, wav_dir), preset_index)
 
 
-def load_samples_for_test(xpm_path: str, wav_dir: Optional[str] = None,
-                          preset_index: Optional[int] = None) -> list:
+def load_samples_for_test(
+    xpm_path: str,
+    wav_dir: Optional[str] = None,  # noqa: UP045
+    preset_index: Optional[int] = None,  # noqa: UP045
+) -> list:  # noqa: RUF100, UP045
     """Read-only: parses just far enough to list samples, for the Convert
     Options dialog's stereo Test button -- same parse summarize_xpm()
     already does for the Detail pane preview, never writes anything.
@@ -557,12 +582,17 @@ def load_samples_for_test(xpm_path: str, wav_dir: Optional[str] = None,
     return _preset_samples(bank, bank.presets[preset_index])
 
 
-def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = None,
-               risks_out: Optional[list] = None,
-               preset_index: Optional[int] = None,
-               name_base: str = "", name_octave: int = 2,
-               name_with_key: bool = True,
-               name_overrides: Optional[dict] = None) -> str:
+def import_xpm(
+    xpm_path: str,
+    opts: ConversionOptions,
+    wav_dir: Optional[str] = None,  # noqa: UP045
+    risks_out: Optional[list] = None,  # noqa: UP045
+    preset_index: Optional[int] = None,  # noqa: UP045
+    name_base: str = "",
+    name_octave: int = 2,
+    name_with_key: bool = True,
+    name_overrides: Optional[dict] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Parses an MPC program, track or project (via mpc2emu's own
     parse_xpm) and writes it out as a real E4B or KRZ bank file in a fresh
     temp dir, applying whatever resample/reduce options were chosen along
@@ -583,16 +613,20 @@ def import_xpm(xpm_path: str, opts: ConversionOptions, wav_dir: Optional[str] = 
     An MPC program is the likeliest source to trip it -- a keygroup program
     stacks up to four layers per pad by design, and every stereo one of them
     costs two E4B voices."""
-    bank = parse_mpc(xpm_path, wav_dir,
-                     chromatic_pads=opts.chromatic_pads,
-                     lfo_sync_bpm=opts.lfo_sync_bpm)
+    bank = parse_mpc(
+        xpm_path,
+        wav_dir,
+        chromatic_pads=opts.chromatic_pads,
+        lfo_sync_bpm=opts.lfo_sync_bpm,
+    )
     if not bank.presets:
         # Same empty-kit case summarize_program() explains: readable, listed,
         # and holding nothing. Refuse in words rather than writing a bank with
         # no preset in it, or indexing past the end below.
         raise ValueError(
             f"{Path(xpm_path).name} holds no sampled content: its pads or "
-            f"keygroups are all empty, so there is nothing to import.")
+            f"keygroups are all empty, so there is nothing to import."
+        )
     if preset_index is not None:
         # Narrow the freshly-parsed Bank in place -- safe because parse_mpc()
         # just built it for this call alone (the Explorer's cached Bank is

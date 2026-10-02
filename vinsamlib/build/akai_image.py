@@ -28,10 +28,10 @@ reason. When hardware confirms it, the gate is one check and the media is
 already tested.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence  # noqa: UP035
 
 from ..banks import akai as vs_akai
 from ..config import Config
@@ -68,7 +68,7 @@ class AkaiWriteUnavailable(RuntimeError):
     """Raised when AKAI media writing is not available; message is safe to show."""
 
 
-def ensure_available(config: Optional[Config] = None) -> None:
+def ensure_available(config: Optional[Config] = None) -> None:  # noqa: UP045
     """Raise unless this checkout can write AKAI media at all."""
     cfg = config or Config.load()
     ok, reason = cfg.check_akai_write_support()
@@ -94,7 +94,8 @@ def volume_from_folder(folder: str) -> tuple[str, list[tuple[str, bytes]]]:
         raise AkaiWriteUnavailable(
             f"{folder} is not a folder. An AKAI volume is a set of files, so "
             f"this kind of image is built from folders -- the ones New Bank's "
-            f"Save as… writes -- not from single bank files.")
+            f"Save as… writes -- not from single bank files."
+        )
     files: list[tuple[str, bytes]] = []
     skipped: list[str] = []
     for f in sorted(d.iterdir()):
@@ -109,8 +110,9 @@ def volume_from_folder(folder: str) -> tuple[str, list[tuple[str, bytes]]]:
             f"{d.name} holds no AKAI files"
             + (f" ({len(skipped)} other file(s) were skipped)" if skipped else "")
             + ". An AKAI file's type comes from its extension -- .P3 for a "
-              "program, .S3 for a sample -- and one without a recognised "
-              "extension cannot be placed on the media.")
+            "program, .S3 for a sample -- and one without a recognised "
+            "extension cannot be placed on the media."
+        )
     return vs_akai.display_name(d.name) or "VOLUME 001", files
 
 
@@ -152,9 +154,11 @@ def volume_ram_words(files: Sequence[tuple[str, bytes]]) -> int:
     somebody already made fit a sampler, and says nothing about what this
     builder can emit from an arbitrary folder.
     """
-    return sum(max(0, len(data) - _SAMPLE_HEADER_BYTES) // 2
-               for name, data in files
-               if name.upper().endswith((".S3", ".S1")))
+    return sum(
+        max(0, len(data) - _SAMPLE_HEADER_BYTES) // 2
+        for name, data in files
+        if name.upper().endswith((".S3", ".S1"))
+    )
 
 
 #: Resident objects an S3000XL can hold at once — STAT.max_blocks, measured
@@ -215,11 +219,13 @@ def resident_ceiling_problems(files: Sequence[tuple[str, bytes]]) -> list[str]:
             f"S3000XL can hold resident at once — the machine refuses the "
             f"load with \"TOO MANY PROGS./KEYGROUPS/SAMPLES\" however much "
             f"memory is free (measured on hardware 2026-09-20). Individual "
-            f"programs still load; the whole volume does not.")
+            f"programs still load; the whole volume does not."
+        )
     if b["programs"] > MAX_RESIDENT_PROGRAMS:
         out.append(
             f"{b['programs']} programs exceed the {MAX_RESIDENT_PROGRAMS} an "
-            f"S3000XL can hold resident at once, and the same applies.")
+            f"S3000XL can hold resident at once, and the same applies."
+        )
     return out
 
 
@@ -273,13 +279,20 @@ def volume_object_breakdown(files: Sequence[tuple[str, bytes]]) -> dict:
             # alone rather than guessed at: an unreadable program is not
             # evidence of zero keygroups.
             programs += 1
-            keygroups += data[0x2a] if len(data) > 0x2a else 0
-    return {"programs": programs, "keygroups": keygroups, "samples": samples,
-            "total": programs + keygroups + samples}
+            keygroups += data[0x2A] if len(data) > 0x2A else 0
+    return {
+        "programs": programs,
+        "keygroups": keygroups,
+        "samples": samples,
+        "total": programs + keygroups + samples,
+    }
 
 
-def describe_object_cost(name: str, files: Sequence[tuple[str, bytes]],
-                         budget: int = RESIDENT_OBJECTS_DEFAULT) -> str:
+def describe_object_cost(
+    name: str,
+    files: Sequence[tuple[str, bytes]],
+    budget: int = RESIDENT_OBJECTS_DEFAULT,
+) -> str:
     """One line per volume: objects needed against the resident pool."""
     b = volume_object_breakdown(files)
     n = b["total"]
@@ -290,13 +303,18 @@ def describe_object_cost(name: str, files: Sequence[tuple[str, bytes]],
     # silence. Asserting a failure mode we have not seen would be the same
     # unverified confidence this project keeps catching elsewhere. Put to
     # s3ked; until then the wording says what is known and what is not.
-    note = (f" — exceeds the {budget}-object pool; what the machine does then "
-            f"is unverified (the RAM ceiling half-loads rather than refusing)"
-            if n > budget else "")
+    note = (
+        f" — exceeds the {budget}-object pool; what the machine does then "
+        f"is unverified (the RAM ceiling half-loads rather than refusing)"
+        if n > budget
+        else ""
+    )
     for problem in resident_ceiling_problems(files):
         note += f" — {problem}"
-    return (f"  {name}: about {n:,} resident objects — "
-            f"{b['programs']}P / {b['keygroups']}K / {b['samples']}S{note}")
+    return (
+        f"  {name}: about {n:,} resident objects — "
+        f"{b['programs']}P / {b['keygroups']}K / {b['samples']}S{note}"
+    )
 
 
 def describe_ram_cost(name: str, files: Sequence[tuple[str, bytes]]) -> str:
@@ -304,13 +322,13 @@ def describe_ram_cost(name: str, files: Sequence[tuple[str, bytes]]) -> str:
     w = volume_ram_words(files)
     mb = w * 2 / 1048576
     over = [f"{m} MB" for m, cap in sorted(_MACHINE_WORDS.items()) if w > cap]
-    note = (f" — exceeds {', '.join(over)}, will HALF-LOAD there"
-            if over else "")
+    note = f" — exceeds {', '.join(over)}, will HALF-LOAD there" if over else ""
     return f"  {name}: about {w:,} words ({mb:.1f} MB) of sample RAM{note}"
 
 
-def plan_partitions(volumes: Sequence[tuple], kind: str = "akai_hd",
-                    part_mb: int = 60) -> list[list[tuple]]:
+def plan_partitions(
+    volumes: Sequence[tuple], kind: str = "akai_hd", part_mb: int = 60
+) -> list[list[tuple]]:
     """Group volumes into partitions exactly as the build will.
 
     Calls mpc2emu's OWN `_plan_partitions` rather than reimplementing the
@@ -326,17 +344,26 @@ def plan_partitions(volumes: Sequence[tuple], kind: str = "akai_hd",
     would rather than showing a layout that cannot be written.
     """
     sys_blocks = akai_image.PARTHEAD_BLKS + (
-        akai_image.CDINFO_BLKS if kind == "akai_cd3000" else 0)
+        akai_image.CDINFO_BLKS if kind == "akai_cd3000" else 0
+    )
     part_blocks = min(
         akai_image.PART_MAX_BLOCKS,
-        max(sys_blocks + akai_image.VOLDIR_HD_BLKS,
-            (part_mb * 1048576) // akai_image.HD_BLOCK))
-    return calllog.traced(akai_image._plan_partitions, list(volumes),
-                          part_blocks, sys_blocks=sys_blocks)
+        max(
+            sys_blocks + akai_image.VOLDIR_HD_BLKS,
+            (part_mb * 1048576) // akai_image.HD_BLOCK,
+        ),
+    )
+    return calllog.traced(
+        akai_image._plan_partitions, list(volumes), part_blocks, sys_blocks=sys_blocks
+    )
 
 
-def describe_partition_groups(volumes: Sequence[tuple], groups: Sequence[Sequence[int]],
-                              kind: str = "akai_hd", part_mb: int = 60) -> list[str]:
+def describe_partition_groups(
+    volumes: Sequence[tuple],
+    groups: Sequence[Sequence[int]],
+    kind: str = "akai_hd",
+    part_mb: int = 60,
+) -> list[str]:
     """Describe a grouping the USER chose, rather than one the writer planned.
 
     Same shape of output as describe_partition_plan so the dialog reads the
@@ -348,20 +375,27 @@ def describe_partition_groups(volumes: Sequence[tuple], groups: Sequence[Sequenc
     """
     akai_image_mod = akai_image
     sys_blocks = akai_image_mod.PARTHEAD_BLKS + (
-        akai_image_mod.CDINFO_BLKS if kind == "akai_cd3000" else 0)
+        akai_image_mod.CDINFO_BLKS if kind == "akai_cd3000" else 0
+    )
     part_blocks = min(
         akai_image_mod.PART_MAX_BLOCKS,
-        max(sys_blocks + akai_image_mod.VOLDIR_HD_BLKS,
-            (part_mb * 1048576) // akai_image_mod.HD_BLOCK))
+        max(
+            sys_blocks + akai_image_mod.VOLDIR_HD_BLKS,
+            (part_mb * 1048576) // akai_image_mod.HD_BLOCK,
+        ),
+    )
     cap_mb = part_blocks * akai_image_mod.HD_BLOCK / 1048576
 
     lines = []
     for i, group in enumerate(groups):
         used = sys_blocks + sum(
             akai_image_mod.VOLDIR_HD_BLKS
-            + sum(akai_image_mod._blocks(len(d), akai_image_mod.HD_BLOCK)
-                  for _n, d in volumes[gi][1])
-            for gi in group)
+            + sum(
+                akai_image_mod._blocks(len(d), akai_image_mod.HD_BLOCK)
+                for _n, d in volumes[gi][1]
+            )
+            for gi in group
+        )
         used_mb = used * akai_image_mod.HD_BLOCK / 1048576
         names = ", ".join(volumes[gi][0] for gi in group[:4])
         more = f" +{len(group) - 4} more" if len(group) > 4 else ""
@@ -369,16 +403,20 @@ def describe_partition_groups(volumes: Sequence[tuple], groups: Sequence[Sequenc
         letter = chr(ord("A") + i)
         lines.append(
             f"  Partition {letter}: {len(group)}/{akai_image_mod.ROOTDIR_ENTRIES} "
-            f"volume(s), {used_mb:.1f}/{cap_mb:.0f} MB — {names}{more}{over}")
+            f"volume(s), {used_mb:.1f}/{cap_mb:.0f} MB — {names}{more}{over}"
+        )
     if any("⚠ over" in ln for ln in lines):
-        lines.append("  ⚠ a partition break puts more than a partition holds "
-                     "— move or remove it, or the build will refuse")
+        lines.append(
+            "  ⚠ a partition break puts more than a partition holds "
+            "— move or remove it, or the build will refuse"
+        )
     lines.append("  (partition breaks set in Pending for Image)")
     return lines
 
 
-def describe_partition_plan(volumes: Sequence[tuple], kind: str = "akai_hd",
-                            part_mb: int = 60) -> list[str]:
+def describe_partition_plan(
+    volumes: Sequence[tuple], kind: str = "akai_hd", part_mb: int = 60
+) -> list[str]:
     """One line per partition: how full it is, and what lands in it.
 
     THE HIERARCHY IS disk -> PARTITION -> VOLUME -> program/sample, and the
@@ -397,45 +435,59 @@ def describe_partition_plan(volumes: Sequence[tuple], kind: str = "akai_hd",
     """
     parts = plan_partitions(volumes, kind=kind, part_mb=part_mb)
     sys_blocks = akai_image.PARTHEAD_BLKS + (
-        akai_image.CDINFO_BLKS if kind == "akai_cd3000" else 0)
+        akai_image.CDINFO_BLKS if kind == "akai_cd3000" else 0
+    )
     part_blocks = min(
         akai_image.PART_MAX_BLOCKS,
-        max(sys_blocks + akai_image.VOLDIR_HD_BLKS,
-            (part_mb * 1048576) // akai_image.HD_BLOCK))
+        max(
+            sys_blocks + akai_image.VOLDIR_HD_BLKS,
+            (part_mb * 1048576) // akai_image.HD_BLOCK,
+        ),
+    )
     cap_mb = part_blocks * akai_image.HD_BLOCK / 1048576
 
     lines = []
     for i, part in enumerate(parts):
         used = sys_blocks + sum(
             akai_image.VOLDIR_HD_BLKS
-            + sum(akai_image._blocks(len(d), akai_image.HD_BLOCK)
-                  for _n, d in files)
-            for _name, files in part)
+            + sum(akai_image._blocks(len(d), akai_image.HD_BLOCK) for _n, d in files)
+            for _name, files in part
+        )
         used_mb = used * akai_image.HD_BLOCK / 1048576
         letter = chr(ord("A") + i)
         names = ", ".join(n for n, _f in part[:4])
         more = f" +{len(part) - 4} more" if len(part) > 4 else ""
         lines.append(
             f"  Partition {letter}: {len(part)}/{akai_image.ROOTDIR_ENTRIES} "
-            f"volume(s), {used_mb:.1f}/{cap_mb:.0f} MB — {names}{more}")
+            f"volume(s), {used_mb:.1f}/{cap_mb:.0f} MB — {names}{more}"
+        )
     if len(parts) > akai_image.MAX_PARTITIONS:
-        lines.append(f"  ⚠ {len(parts)} partitions — a disk holds "
-                     f"{akai_image.MAX_PARTITIONS}")
+        lines.append(
+            f"  ⚠ {len(parts)} partitions — a disk holds "
+            f"{akai_image.MAX_PARTITIONS}"
+        )
     elif len(parts) > 1:
         # The built disk can carry MORE partitions than this: it is auto-sized
         # to the content plus a quarter, then carved into whole partitions, so
         # the last one or two may come out empty and ready for later appends.
         # Said here because a user who reads "A and B" and then finds a C on
         # the sampler would reasonably think the preview lied.
-        lines.append("  (the disk may carry further empty partitions, sized "
-                     "for later appends)")
+        lines.append(
+            "  (the disk may carry further empty partitions, sized "
+            "for later appends)"
+        )
     return lines
 
 
-def create_image(kind: str, output_path: str, folders: Sequence[str],
-                 volume_label: str = "", size_mb: Optional[int] = None,
-                 config: Optional[Config] = None,
-                 partitions: Optional[Sequence[Sequence[int]]] = None) -> str:
+def create_image(
+    kind: str,
+    output_path: str,
+    folders: Sequence[str],
+    volume_label: str = "",
+    size_mb: Optional[int] = None,  # noqa: UP045
+    config: Optional[Config] = None,  # noqa: UP045
+    partitions: Optional[Sequence[Sequence[int]]] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Build AKAI media from folders of loose AKAI files. Returns a log line."""
     ensure_available(config)
     if kind not in AKAI_IMAGE_KINDS:
@@ -455,7 +507,8 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
         # way to make an empty disc to append to.
         raise AkaiWriteUnavailable(
             f"an AKAI {'floppy' if kind == 'akai_floppy' else 'image'} "
-            f"needs at least one volume.")
+            f"needs at least one volume."
+        )
 
     volumes = [volume_from_folder(f) for f in folders]
 
@@ -470,29 +523,41 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
             raise AkaiWriteUnavailable(
                 f"volume {name!r} holds {len(files)} files; an AKAI volume "
                 f"directory takes {vs_akai.MAX_FILES_PER_VOLUME}. Samples and "
-                f"programs share those entries, so split the folder.")
+                f"programs share those entries, so split the folder."
+            )
 
     if not volumes and kind in AKAI_APPENDABLE:
         # Size it explicitly: with no content there is nothing to size FROM,
         # and mpc2emu's own fallback is a 8 MB disc -- smaller than most
         # single volumes anyone would then append.
         info = calllog.traced(
-            akai_image.build_akai_hd_image, [], output_path,
+            akai_image.build_akai_hd_image,
+            [],
+            output_path,
             size_mb=size_mb or BLANK_IMAGE_MB,
             cdrom=(kind == "akai_cd3000"),
-            **({"label": volume_label} if kind == "akai_cd3000" and volume_label
-               else {}))
+            **(
+                {"label": volume_label}
+                if kind == "akai_cd3000" and volume_label
+                else {}
+            ),
+        )
         return _describe(kind, info)
 
     if kind == "akai_floppy":
         if len(volumes) > 1:
             raise AkaiWriteUnavailable(
                 f"a floppy holds exactly one volume; {len(volumes)} were given. "
-                f"Build a hard disk or CD-ROM image instead.")
+                f"Build a hard disk or CD-ROM image instead."
+            )
         name, files = volumes[0]
         info = calllog.traced(
             akai_image.build_akai_floppy_image,
-            files, output_path, volume_name=volume_label or name, density="hd")
+            files,
+            output_path,
+            volume_name=volume_label or name,
+            density="hd",
+        )
     else:
         # `partitions` is index lists into `volumes` (mpc2emu fdc7e39), and
         # since their d391280 an explicit grouping SIZES THE DISK for its own
@@ -516,7 +581,7 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
             # since both now come from the same planner call.
             try:
                 planned = plan_partitions(volumes, kind=kind)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 planned = []
             groups, seen = [], 0
             for part in planned:
@@ -526,7 +591,9 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
         try:
             info = calllog.traced(
                 akai_image.build_akai_hd_image,
-                volumes, output_path, size_mb=size_mb,
+                volumes,
+                output_path,
+                size_mb=size_mb,
                 cdrom=(kind == "akai_cd3000"),
                 # Only the CD3000 has a disc-level label. A hard disk has no
                 # field for one: its volumes are named individually, from the
@@ -534,7 +601,8 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
                 # unused here and the dialog hides it for this kind rather
                 # than offering a control that does nothing.
                 cd_label=(volume_label or None) if kind == "akai_cd3000" else None,
-                **kwargs)
+                **kwargs,
+            )
         except Exception as ex:
             # An mpc2emu predating d391280 sizes the disk from the CONTENT and
             # then cannot fit the partitions the grouping asks for. Its message
@@ -552,9 +620,12 @@ def create_image(kind: str, output_path: str, folders: Sequence[str],
     return "\n".join(lines)
 
 
-def delete_volume(image_path: str, volume_name: str,
-                  partition: Optional[str] = None,
-                  config: Optional[Config] = None) -> str:
+def delete_volume(
+    image_path: str,
+    volume_name: str,
+    partition: Optional[str] = None,  # noqa: UP045
+    config: Optional[Config] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Delete one volume from an AKAI image, in place.
 
     `partition` is the letter shown beside the volume in the pane. It is
@@ -564,15 +635,19 @@ def delete_volume(image_path: str, volume_name: str,
     make them disambiguate something they were never ambiguous about.
     """
     ensure_available(config)
-    info = calllog.traced(akai_image.delete_akai_volume, image_path,
-                          volume_name, partition=partition)
+    info = calllog.traced(
+        akai_image.delete_akai_volume, image_path, volume_name, partition=partition
+    )
     letter = info.get("partition") or partition or "?"
     return f"Deleted {letter}/{info.get('deleted', volume_name)}"
 
 
-def append_volumes(image_path: str, folders: Sequence[str],
-                   on_duplicate: str = "add-new",
-                   config: Optional[Config] = None) -> tuple[int, str]:
+def append_volumes(
+    image_path: str,
+    folders: Sequence[str],
+    on_duplicate: str = "add-new",
+    config: Optional[Config] = None,  # noqa: UP045
+) -> tuple[int, str]:  # noqa: RUF100, UP045
     """Append volumes to an existing AKAI hard disk or CD-ROM, in place.
 
     `on_duplicate` is never left as mpc2emu's own 'prompt' default -- nothing
@@ -580,8 +655,9 @@ def append_volumes(image_path: str, folders: Sequence[str],
     other builder."""
     ensure_available(config)
     volumes = [volume_from_folder(f) for f in folders]
-    info = calllog.traced(akai_image.append_akai_volumes, image_path,
-                          volumes, on_duplicate=on_duplicate)
+    info = calllog.traced(
+        akai_image.append_akai_volumes, image_path, volumes, on_duplicate=on_duplicate
+    )
     return len(volumes), _describe("akai_hd", info)
 
 

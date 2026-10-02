@@ -19,32 +19,47 @@ Bank and Image — a pending queue mixing formats could never become one
 real image anyway.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
-import tempfile
-from pathlib import Path
+import tempfile  # noqa: F401
+from pathlib import Path  # noqa: F401
 from typing import Any, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QInputDialog,
-                             QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-                             QPushButton, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QFrame,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import workers
 from .. import tempdirs
 from ..banks import akai
-from .bank_pane import (_ASSEMBLE_FNS, _FORMAT_EXT, _LOOP_REPAIRABLE,
-                        _sanitize_bank_name)
+from .bank_pane import _ASSEMBLE_FNS, _FORMAT_EXT, _LOOP_REPAIRABLE, _sanitize_bank_name
 from .convert_options_dialog import ConvertOptionsDialog
-from ..build.convert import (apply_conversion, load_sources_samples_for_test,
-                              polyphony_risk_lines)
+from ..build.convert import (
+    apply_conversion,
+    load_sources_samples_for_test,
+    polyphony_risk_lines,
+)
 from .models import human_size
 
 _PENDING_TEMP_PREFIX = "vinsamlib_pending_"
 
 
-def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list[str]:
+def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list[str]:  # noqa: UP045
     """Runs off the GUI thread: assemble every pending bank's real bytes
     and write each to its own throwaway temp file, in order. Raising here
     (e.g. one bank's selection no longer resolves) aborts the whole build
@@ -71,18 +86,22 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
     for entry in pending:
         fmt = entry["format"]
         if fmt not in ("E4B", "KRZ", "EIII", "AKAI"):
-            raise ValueError(f"Pending for Image doesn't support building a {fmt} queue")
+            raise ValueError(
+                f"Pending for Image doesn't support building a {fmt} queue"
+            )
         fn = _ASSEMBLE_FNS[fmt]
-        selections = [(bank, preset)
-                      for bank, preset, _name, *_ in entry["items"]]
+        selections = [(bank, preset) for bank, preset, _name, *_ in entry["items"]]
         name = _sanitize_bank_name(entry["name"])
         if fmt == "AKAI":
             # An AKAI volume is a set of files, so what goes to the image
             # builder is a FOLDER rather than a bank file -- the same shape
             # New Bank's Save as… writes, and what build/akai_image.py takes.
-            files = fn(selections, volume_name=name,
-                       taken_samples=akai_taken_samples,
-                       taken_programs=akai_taken_programs)
+            files = fn(
+                selections,
+                volume_name=name,
+                taken_samples=akai_taken_samples,
+                taken_programs=akai_taken_programs,
+            )
             vol_dir = tempdirs.session_temp_dir(_PENDING_TEMP_PREFIX) / name
             akai.write_volume(files, str(vol_dir))
             paths.append(str(vol_dir))
@@ -109,10 +128,14 @@ def _assemble_all(pending: list[dict], risks_out: Optional[list] = None) -> list
         # `entry["zone_placement"]` is the OLD bank-wide map and is still
         # honoured, because a project written before this carries one and
         # nothing in it can be split after the fact.
-        per_item_p = [dict((it[3].get("placement") or {})) if len(it) > 3 else {}
-                      for it in entry["items"]]
-        per_item_v = [dict((it[3].get("velocity") or {})) if len(it) > 3 else {}
-                      for it in entry["items"]]
+        per_item_p = [
+            dict((it[3].get("placement") or {})) if len(it) > 3 else {}  # noqa: UP034
+            for it in entry["items"]
+        ]
+        per_item_v = [
+            dict((it[3].get("velocity") or {})) if len(it) > 3 else {}  # noqa: UP034
+            for it in entry["items"]
+        ]
         legacy_p = entry.get("zone_placement") or {}
         legacy_v = entry.get("voice_velocity") or {}
         if fmt == "E4B":
@@ -157,8 +180,10 @@ class PendingBanksPane(QWidget):
     # version could simply win. The branch added loop_repair to the first
     # (its emit already carried master's voice_velocity); master added the
     # partition groups to the second, which the branch never had.
-    moveToNewBankRequested = Signal(str, str, list, dict, dict, dict, dict)   # (+ loop_repair)
-    buildRequested = Signal(list, str, list)          # (paths, format, partition groups)
+    moveToNewBankRequested = Signal(
+        str, str, list, dict, dict, dict, dict
+    )  # (+ loop_repair)
+    buildRequested = Signal(list, str, list)  # (paths, format, partition groups)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -168,9 +193,9 @@ class PendingBanksPane(QWidget):
         #: partition A and is never in here. Indices, so every path that
         #: removes or reorders a row must fix them up -- see _shift_breaks.
         #: (bank identity, preset identity) -> its own audio bytes.
-        self._audio_memo: dict[tuple, Optional[int]] = {}
+        self._audio_memo: dict[tuple, Optional[int]] = {}  # noqa: UP045
         self._partition_breaks: set[int] = set()
-        self._format: Optional[str] = None
+        self._format: Optional[str] = None  # noqa: UP045
         self._live_workers: list[workers.Worker] = []
 
         layout = QVBoxLayout(self)
@@ -178,8 +203,10 @@ class PendingBanksPane(QWidget):
         layout.setSpacing(0)
 
         self._head = QLabel("Pending for Image")
-        self._head.setStyleSheet("font-weight: 600; padding: 6px 10px;"
-                                  "border-bottom: 1px solid palette(mid);")
+        self._head.setStyleSheet(
+            "font-weight: 600; padding: 6px 10px;"
+            "border-bottom: 1px solid palette(mid);"
+        )
         layout.addWidget(self._head)
 
         self._stack = QStackedWidget()
@@ -193,11 +220,15 @@ class PendingBanksPane(QWidget):
         outer = QVBoxLayout(page)
         outer.setContentsMargins(10, 10, 10, 10)
         box = QFrame()
-        box.setStyleSheet("QFrame { border: 1px dashed palette(mid); border-radius: 6px; }")
+        box.setStyleSheet(
+            "QFrame { border: 1px dashed palette(mid); border-radius: 6px; }"
+        )
         box_layout = QVBoxLayout(box)
         box_layout.addStretch()
-        hint = QLabel("Banks sent from New Bank appear here.\n"
-                       "Reorder, rename, or drop them before building an image.")
+        hint = QLabel(
+            "Banks sent from New Bank appear here.\n"
+            "Reorder, rename, or drop them before building an image."
+        )
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setStyleSheet("color: palette(placeholdertext);")
         box_layout.addWidget(hint)
@@ -211,7 +242,9 @@ class PendingBanksPane(QWidget):
         layout.setContentsMargins(10, 8, 10, 10)
 
         self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        self._summary_label.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         layout.addWidget(self._summary_label)
 
         self._list = QListWidget()
@@ -221,21 +254,32 @@ class PendingBanksPane(QWidget):
         self._list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._list.model().rowsMoved.connect(self._on_rows_moved)
         self._list.currentItemChanged.connect(self._on_current_changed)
-        self._list.itemDoubleClicked.connect(lambda _item: self._move_selected_to_new_bank())
-        self._list.setToolTip("Double-click a bank to send it back to New Bank for editing")
+        self._list.itemDoubleClicked.connect(
+            lambda _item: self._move_selected_to_new_bank()
+        )
+        self._list.setToolTip(
+            "Double-click a bank to send it back to New Bank for editing"
+        )
         list_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._list)
         list_delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         list_delete_shortcut.activated.connect(self._delete_selected)
 
         self._contents_list = QListWidget()
-        self._contents_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._contents_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self._contents_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._contents_list.model().rowsMoved.connect(self._on_contents_rows_moved)
         self._contents_list.setToolTip(
-            "Drag to reorder this bank's own preset order before it's built")
+            "Drag to reorder this bank's own preset order before it's built"
+        )
         self._contents_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._contents_list.customContextMenuRequested.connect(self._on_contents_context_menu)
-        contents_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._contents_list)
+        self._contents_list.customContextMenuRequested.connect(
+            self._on_contents_context_menu
+        )
+        contents_delete_shortcut = QShortcut(
+            QKeySequence.StandardKey.Delete, self._contents_list
+        )
         contents_delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         contents_delete_shortcut.activated.connect(self._remove_selected_contents)
 
@@ -284,7 +328,8 @@ class PendingBanksPane(QWidget):
         self._build_btn = QPushButton("Build Image →")
         self._build_btn.setToolTip(
             "Assemble every pending bank, in the order shown, and hand them "
-            "to the Image column")
+            "to the Image column"
+        )
         self._build_btn.clicked.connect(self._build_image)
         layout.addWidget(self._build_btn)
 
@@ -292,25 +337,37 @@ class PendingBanksPane(QWidget):
 
     # -- receiving from New Bank ---------------------------------------------
 
-    def add_pending(self, name: str, fmt: str, items: list[tuple[Any, Any, str]],
-                     sample_renames: Optional[dict] = None,
-                     zone_placement: Optional[dict] = None,
-                     voice_velocity: Optional[dict] = None,
-                     loop_repair: Optional[dict] = None) -> bool:
+    def add_pending(
+        self,
+        name: str,
+        fmt: str,
+        items: list[tuple[Any, Any, str]],
+        sample_renames: Optional[dict] = None,  # noqa: UP045
+        zone_placement: Optional[dict] = None,  # noqa: UP045
+        voice_velocity: Optional[dict] = None,  # noqa: UP045
+        loop_repair: Optional[dict] = None,  # noqa: UP045
+    ) -> bool:  # noqa: RUF100, UP045
         if not items:
             return False
         if self._format is not None and fmt != self._format:
             self.statusMessage.emit(
-                f"Pending queue is already {self._format} — can't add a {fmt} bank")
+                f"Pending queue is already {self._format} — can't add a {fmt} bank"
+            )
             return False
         if self._format is None:
             self._format = fmt
-        self._pending.append({"name": name or "NewBank", "format": fmt, "items": list(items),
-                               "convert_opts": None,
-                               "sample_renames": dict(sample_renames or {}),
-                               "zone_placement": dict(zone_placement or {}),
-                               "voice_velocity": dict(voice_velocity or {}),
-                               "loop_repair": dict(loop_repair or {})})
+        self._pending.append(
+            {
+                "name": name or "NewBank",
+                "format": fmt,
+                "items": list(items),
+                "convert_opts": None,
+                "sample_renames": dict(sample_renames or {}),
+                "zone_placement": dict(zone_placement or {}),
+                "voice_velocity": dict(voice_velocity or {}),
+                "loop_repair": dict(loop_repair or {}),
+            }
+        )
         self._refresh()
         self._list.setCurrentRow(len(self._pending) - 1)
         if (name or "").strip().upper() in self._duplicate_names():
@@ -318,7 +375,8 @@ class PendingBanksPane(QWidget):
             self.statusMessage.emit(
                 f'Added "{name}" — but another queued bank has that name too, '
                 f'so the image will hold two {noun}s called "{name}". Rename '
-                f'one to tell them apart on the sampler.')
+                f"one to tell them apart on the sampler."
+            )
         else:
             self.statusMessage.emit(f'Added "{name}" to the pending queue')
         return True
@@ -345,7 +403,8 @@ class PendingBanksPane(QWidget):
                 if row in self._partition_breaks:
                     item.setToolTip(
                         f"Starts partition {letter}. Right-click to remove "
-                        f"the break and let it follow the one before.")
+                        f"the break and let it follow the one before."
+                    )
             self._list.addItem(item)
         self._stack.setCurrentIndex(1 if self._pending else 0)
         n = len(self._pending)
@@ -354,8 +413,10 @@ class PendingBanksPane(QWidget):
         if dupes:
             # In the summary as well as on the rows: a status message scrolls
             # away, and the queue is built up over several minutes.
-            summary += (f" — ⚠ {len(dupes)} name"
-                        f"{'s' if len(dupes) != 1 else ''} used more than once")
+            summary += (
+                f" — ⚠ {len(dupes)} name"
+                f"{'s' if len(dupes) != 1 else ''} used more than once"
+            )
         self._summary_label.setText(summary)
         self._build_btn.setEnabled(bool(self._pending))
         # AKAI belongs in this list. _build_one returns early for an AKAI
@@ -369,10 +430,12 @@ class PendingBanksPane(QWidget):
         self._convert_btn.setToolTip(
             f"Per-bank conversion isn't offered for a {self._format} queue yet "
             "-- convert a preset individually via Explorer's \"Import via "
-            "mpc2emu...\" instead" if needs_e4b_only
+            'mpc2emu..." instead'
+            if needs_e4b_only
             else "Choose vintage resample / sample-count reduction to apply "
-                 "to the SELECTED pending bank's next Build Image (per bank, "
-                 "not the whole queue)")
+            "to the SELECTED pending bank's next Build Image (per bank, "
+            "not the whole queue)"
+        )
         self._update_contents_preview()
 
     def _shift_breaks_after_delete(self, row: int) -> None:
@@ -416,7 +479,7 @@ class PendingBanksPane(QWidget):
 
     def _toggle_partition_break(self, row: int) -> None:
         if row <= 0:
-            return                      # row 0 always starts partition A
+            return  # row 0 always starts partition A
         if row in self._partition_breaks:
             self._partition_breaks.discard(row)
         else:
@@ -441,22 +504,27 @@ class PendingBanksPane(QWidget):
             (dupes if key in seen else seen).add(key)
         return dupes
 
-    def _preset_audio(self, bank, preset) -> Optional[int]:
+    def _preset_audio(self, bank, preset) -> Optional[int]:  # noqa: UP045
         """One staged preset's own audio, memoised per queue entry."""
-        key = (id(bank), getattr(preset, "id", None),
-               getattr(preset, "index", None), getattr(preset, "filename", None),
-               getattr(preset, "name", None))
+        key = (
+            id(bank),
+            getattr(preset, "id", None),
+            getattr(preset, "index", None),
+            getattr(preset, "filename", None),
+            getattr(preset, "name", None),
+        )
         if key in self._audio_memo:
             return self._audio_memo[key]
         try:
             from ..banks import summary
+
             value = summary.summarize_preset(bank, preset).total_sample_bytes
-        except Exception:
+        except Exception:  # noqa: BLE001
             value = None
         self._audio_memo[key] = value
         return value
 
-    def _entry_audio(self, entry: dict) -> Optional[int]:
+    def _entry_audio(self, entry: dict) -> Optional[int]:  # noqa: UP045
         """What this queued bank costs to LOAD -- deduped across its presets.
 
         Not the sum of the rows in the Contents list below it: two presets
@@ -483,22 +551,25 @@ class PendingBanksPane(QWidget):
         shared: dict[tuple, int] = {}
         try:
             from ..banks import summary
+
             for bank, preset, _name, *_ in entry.get("items", []):
                 ps = summary.summarize_preset(bank, preset)
                 for nm, size in ps.sample_sizes.items():
                     shared[(nm, size)] = size
                 if ps.sample_keys:
                     slot = by_bank.setdefault(id(bank), [bank, ps.format, set()])
-                    slot[2].update(ps.sample_keys)   # KRZ: object ids, per bank
+                    slot[2].update(ps.sample_keys)  # KRZ: object ids, per bank
             total = sum(shared.values())
             for bank, fmt, keys in by_bank.values():
                 total += summary.audio_bytes_for_keys(bank, fmt, keys)
             return total
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
 
     def _make_item(self, entry: dict) -> QListWidgetItem:
-        label = f"{entry['name']}  [{entry['format']}]  — {len(entry['items'])} preset(s)"
+        label = (
+            f"{entry['name']}  [{entry['format']}]  — {len(entry['items'])} preset(s)"
+        )
         audio = self._entry_audio(entry)
         if audio is not None:
             label += f"  —  {human_size(audio) or 'no audio'}"
@@ -532,8 +603,9 @@ class PendingBanksPane(QWidget):
         and names are not unique enough to match on (two queued volumes may
         legitimately share one).
         """
-        old_of_new = [self._list.item(i).data(_ROW_INDEX_ROLE)
-                      for i in range(self._list.count())]
+        old_of_new = [
+            self._list.item(i).data(_ROW_INDEX_ROLE) for i in range(self._list.count())
+        ]
         self._pending = [
             self._list.item(i).data(Qt.ItemDataRole.UserRole)
             for i in range(self._list.count())
@@ -543,8 +615,10 @@ class PendingBanksPane(QWidget):
             # by definition -- so a volume dragged to the top loses its break
             # rather than turning the row above it into a partition of one.
             self._partition_breaks = {
-                new for new, old in enumerate(old_of_new)
-                if old in self._partition_breaks and new > 0}
+                new
+                for new, old in enumerate(old_of_new)
+                if old in self._partition_breaks and new > 0
+            }
         # Rebuild: the letters, the tooltips and the row stamps are all now
         # stale, and the stamps in particular must be right before the NEXT
         # drag inverts them.
@@ -570,7 +644,8 @@ class PendingBanksPane(QWidget):
             widget_item.setToolTip(
                 "Audio this preset needs on its own. The bank's figure above "
                 "is deduped, so these will not add up to it wherever two "
-                "presets share a sample.")
+                "presets share a sample."
+            )
             widget_item.setData(Qt.ItemDataRole.UserRole, preset_tuple)
             self._contents_list.addItem(widget_item)
 
@@ -604,7 +679,11 @@ class PendingBanksPane(QWidget):
         if not self._contents_list.selectedIndexes():
             return
         menu = QMenu(self)
-        label = "Remove Selected" if len(self._contents_list.selectedIndexes()) > 1 else "Remove"
+        label = (
+            "Remove Selected"
+            if len(self._contents_list.selectedIndexes()) > 1
+            else "Remove"
+        )
         remove_action = menu.addAction(label)
         chosen = menu.exec(self._contents_list.viewport().mapToGlobal(pos))
         if chosen == remove_action:
@@ -614,7 +693,9 @@ class PendingBanksPane(QWidget):
         row = self._list.currentRow()
         if row < 0 or row >= len(self._pending):
             return
-        rows = sorted((idx.row() for idx in self._contents_list.selectedIndexes()), reverse=True)
+        rows = sorted(
+            (idx.row() for idx in self._contents_list.selectedIndexes()), reverse=True
+        )
         if not rows:
             return
         for r in rows:
@@ -644,7 +725,8 @@ class PendingBanksPane(QWidget):
             row = index.row()
             here = row in self._partition_breaks
             break_action = menu.addAction(
-                "Remove Partition Break" if here else "Start New Partition Here")
+                "Remove Partition Break" if here else "Start New Partition Here"
+            )
             # Row 0 opens partition A by definition, so a break there would
             # mean nothing -- disabled rather than hidden, so the entry stays
             # in the same place in the menu wherever the user right-clicks.
@@ -652,7 +734,8 @@ class PendingBanksPane(QWidget):
             break_action.setToolTip(
                 "An AKAI disk is carved into partitions of 60 MB / 100 "
                 "volumes; this one starts here instead of when the previous "
-                "one fills up.")
+                "one fills up."
+            )
             menu.addSeparator()
         move_action = menu.addAction("Send to New Bank")
         chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
@@ -671,7 +754,9 @@ class PendingBanksPane(QWidget):
         if row < 0:
             return
         entry = self._pending[row]
-        new_name, ok = QInputDialog.getText(self, "Rename", "New name:", text=entry["name"])
+        new_name, ok = QInputDialog.getText(
+            self, "Rename", "New name:", text=entry["name"]
+        )
         if not ok or not new_name.strip():
             return
         entry["name"] = new_name.strip()
@@ -705,11 +790,15 @@ class PendingBanksPane(QWidget):
         # Renames go back too, or double-clicking a bank into New Bank and
         # sending it straight back would quietly strip them -- the round trip
         # is meant to be editable, not lossy.
-        self.moveToNewBankRequested.emit(entry["name"], entry["format"], entry["items"],
-                                          dict(entry.get("sample_renames") or {}),
-                                          dict(entry.get("zone_placement") or {}),
-                                          dict(entry.get("voice_velocity") or {}),
-                                          dict(entry.get("loop_repair") or {}))
+        self.moveToNewBankRequested.emit(
+            entry["name"],
+            entry["format"],
+            entry["items"],
+            dict(entry.get("sample_renames") or {}),
+            dict(entry.get("zone_placement") or {}),
+            dict(entry.get("voice_velocity") or {}),
+            dict(entry.get("loop_repair") or {}),
+        )
 
     def _clear(self) -> None:
         self._pending = []
@@ -725,21 +814,23 @@ class PendingBanksPane(QWidget):
             self.statusMessage.emit("Select a pending bank first")
             return
         entry = self._pending[row]
-        sources = [(bank, preset)
-                   for bank, preset, _name, *_ in entry["items"]]
+        sources = [(bank, preset) for bank, preset, _name, *_ in entry["items"]]
         fmt = entry["format"]
         opts = ConvertOptionsDialog.get_options(
-            self, initial=entry.get("convert_opts"),
-            bank_loader=lambda: load_sources_samples_for_test(sources, fmt))
+            self,
+            initial=entry.get("convert_opts"),
+            bank_loader=lambda: load_sources_samples_for_test(sources, fmt),
+        )
         if opts is None:
-            return   # Cancel -- leave whatever was already chosen for this bank untouched
+            return  # Cancel -- leave whatever was already chosen for this bank untouched
         entry["convert_opts"] = None if opts.is_noop() else opts
         self._refresh()
         self._list.setCurrentRow(row)
         self.statusMessage.emit(
             f'Will apply vintage resample/reduce to "{entry["name"]}" on the next Build Image'
             if entry["convert_opts"] is not None
-            else f'Conversion options cleared for "{entry["name"]}"')
+            else f'Conversion options cleared for "{entry["name"]}"'
+        )
 
     # -- build ------------------------------------------------------------------
 
@@ -760,17 +851,27 @@ class PendingBanksPane(QWidget):
         risks: list = []
         w = workers.Worker(_assemble_all, pending_snapshot, risks)
         w.signals.finished.connect(
-            lambda paths, f=fmt, r=risks, g=groups_snapshot:
-            self._on_build_assembled(paths, f, r, g))
+            lambda paths, f=fmt, r=risks, g=groups_snapshot: self._on_build_assembled(
+                paths, f, r, g
+            )
+        )
         w.signals.error.connect(self._on_build_error)
-        w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
-        w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         self._live_workers.append(w)
         workers.run(w)
 
-    def _on_build_assembled(self, paths: list[str], fmt: str,
-                             risks: Optional[list] = None,
-                             groups: Optional[list] = None) -> None:
+    def _on_build_assembled(
+        self,
+        paths: list[str],
+        fmt: str,
+        risks: Optional[list] = None,  # noqa: UP045
+        groups: Optional[list] = None,  # noqa: UP045
+    ) -> None:  # noqa: RUF100, UP045
         # Building no longer empties the queue automatically -- the temp
         # files handed to buildRequested are independent copies, so the
         # pending recipes stay available to rebuild, tweak, or send to a
@@ -778,7 +879,8 @@ class PendingBanksPane(QWidget):
         # it, same as New Bank's own explicit Clear button.
         self._build_btn.setEnabled(bool(self._pending))
         self.buildRequested.emit(
-            paths, fmt, self.partition_groups() if groups is None else groups)
+            paths, fmt, self.partition_groups() if groups is None else groups
+        )
         # Voice-budget findings from the per-bank conversions above, if any
         # bank had convert options set (see build/convert.py's
         # polyphony_risk()) -- reported after the handoff, since the banks
@@ -786,14 +888,16 @@ class PendingBanksPane(QWidget):
         if risks:
             lines = polyphony_risk_lines(risks)
             QMessageBox.warning(
-                self, "Build Image",
+                self,
+                "Build Image",
                 "\n\n".join(lines)
                 + "\n\nA stereo sample costs two voices, and the ceiling is "
-                  "per NOTE rather than global polyphony -- both measured on "
-                  "the machine itself (32 per note on an E4XT, 24 on a "
-                  "K2000R). Convert Options' \"Reduce Velocity Layers\", or "
-                  "any Stereo Samples method other than Keep Stereo, brings it "
-                  "down.")
+                "per NOTE rather than global polyphony -- both measured on "
+                "the machine itself (32 per note on an E4XT, 24 on a "
+                'K2000R). Convert Options\' "Reduce Velocity Layers", or '
+                "any Stereo Samples method other than Keep Stereo, brings it "
+                "down.",
+            )
 
     def _on_build_error(self, message: str) -> None:
         self._build_btn.setEnabled(bool(self._pending))

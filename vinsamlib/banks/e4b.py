@@ -42,7 +42,7 @@ Sample body:
     [18:]   struct emu3_sample + PCM (opaque to this module)
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import math
 import re
@@ -130,10 +130,10 @@ class E4BFormatError(ValueError):
 
 @dataclass
 class E4BPreset:
-    index: int              # 0-based, as currently embedded in the body
+    index: int  # 0-based, as currently embedded in the body
     name: str
     midi_program: int
-    body: bytes              # verbatim E4P1 chunk body
+    body: bytes  # verbatim E4P1 chunk body
     zone_refs: list[tuple[int, int]] = field(default_factory=list)
     # (absolute byte offset of the 22-byte zone entry within `body`, sample index it currently holds)
 
@@ -152,9 +152,9 @@ class E4BPreset:
 
 @dataclass
 class E4BSample:
-    index: int               # 1-based, as currently embedded in the body / TOC
+    index: int  # 1-based, as currently embedded in the body / TOC
     name: str
-    body: bytes               # verbatim E3S1 chunk body (94-byte header + PCM)
+    body: bytes  # verbatim E3S1 chunk body (94-byte header + PCM)
 
     @property
     def size(self) -> int:
@@ -182,13 +182,13 @@ PCM_BIG_ENDIAN = False
 _OPT_LOOP = 0x0001
 
 
-def sample_pcm(samp: "E4BSample") -> bytes:
+def sample_pcm(samp: "E4BSample") -> bytes:  # noqa: UP037
     """The sample's PCM, without the header. For a stereo sample this is the
     left channel followed by the right; loop points index the left."""
     return samp.body[PCM_START:]
 
 
-def sample_loops(samp: "E4BSample") -> list[tuple[int, int]]:
+def sample_loops(samp: "E4BSample") -> list[tuple[int, int]]:  # noqa: UP037
     """[(loop_start_frame, loop_end_frame)] for a looped E4B sample.
 
     Frames are indices into this sample's OWN PCM (unlike KRZ, where they are
@@ -235,8 +235,7 @@ def _repair_body_loops(body: bytes, kind: str) -> bytes:
     out = bytearray(body)
     for start, end in sample_loops_of_body(bytes(out)):
         pcm = bytes(out[PCM_START:])
-        got = loopcheck.apply_repair(kind, pcm, start, end,
-                                     big_endian=PCM_BIG_ENDIAN)
+        got = loopcheck.apply_repair(kind, pcm, start, end, big_endian=PCM_BIG_ENDIAN)
         if got is None:
             continue
         new_pcm, new_start, new_end = got
@@ -264,7 +263,7 @@ class _BodyOnly:
 class E4BFile:
     path: str
     presets: list[E4BPreset]
-    samples: dict[int, E4BSample]   # keyed by (original) 1-based index
+    samples: dict[int, E4BSample]  # keyed by (original) 1-based index
     e4ma_body: bytes
     emst_body: bytes
     warnings: list[str] = field(default_factory=list)
@@ -300,7 +299,7 @@ ZONE_FINE_TUNE = 12
 E4XT_MAX_PLAYBACK_RATE_HZ = 625000.0
 
 
-def sample_rate(samp: "E4BSample") -> int:
+def sample_rate(samp: "E4BSample") -> int:  # noqa: UP037
     """The sample's own rate in Hz, or 0 when the header is too short."""
     body = getattr(samp, "body", b"") or b""
     if len(body) < SAMPLE_RATE_OFF + 4:
@@ -312,7 +311,7 @@ def _signed(b: int) -> int:
     return b - 256 if b > 127 else b
 
 
-def zones_above_playback_ceiling(bank: "E4BFile", preset: "E4BPreset") -> list:
+def zones_above_playback_ceiling(bank: "E4BFile", preset: "E4BPreset") -> list:  # noqa: UP037
     """Zones this preset can play past the E4XT's rate ceiling.
 
     One record per zone, in mpc2emu's `E4B_ZONE_ABOVE_PLAYBACK_CEILING`
@@ -352,21 +351,33 @@ def zones_above_playback_ceiling(bank: "E4BFile", preset: "E4BPreset") -> list:
             lo = max(vlo, body[eo + ZONE_LO_KEY])
             hi = min(vhi, body[eo + ZONE_HI_KEY])
             root = body[eo + ZONE_ROOT_KEY]
-            fine = (struct.unpack_from(">h", body, eo + ZONE_FINE_TUNE)[0]
-                    * 100.0 / 64.0) if n > 1 else v_fine
+            fine = (
+                (struct.unpack_from(">h", body, eo + ZONE_FINE_TUNE)[0] * 100.0 / 64.0)
+                if n > 1
+                else v_fine
+            )
             shift = coarse + fine / 100.0
             headroom = 12.0 * math.log2(E4XT_MAX_PLAYBACK_RATE_HZ / float(rate))
-            safe = int(math.ceil(root - shift + headroom)) - 1
+            safe = int(math.ceil(root - shift + headroom)) - 1  # noqa: RUF046
             if hi > safe:
-                out.append({"sample_name": samp.name, "lo_key": lo,
-                            "hi_key": hi, "root_key": root,
-                            "highest_safe_key": safe, "sample_rate": rate,
-                            "keys_over": hi - safe, "zones_over": 1})
+                out.append(
+                    {
+                        "sample_name": samp.name,
+                        "lo_key": lo,
+                        "hi_key": hi,
+                        "root_key": root,
+                        "highest_safe_key": safe,
+                        "sample_rate": rate,
+                        "keys_over": hi - safe,
+                        "zones_over": 1,
+                    }
+                )
     return out
 
 
-def _apply_placement(body: bytearray, voice_start: int, zone_off: int,
-                      lo: int, root: int, hi: int) -> None:
+def _apply_placement(
+    body: bytearray, voice_start: int, zone_off: int, lo: int, root: int, hi: int
+) -> None:
     """Move one zone, widening its voice's window to match.
 
     The voice clamp is the whole subtlety. A reader resolves a zone as
@@ -379,9 +390,9 @@ def _apply_placement(body: bytearray, voice_start: int, zone_off: int,
     body[zone_off + ZONE_LO_KEY] = lo
     body[zone_off + ZONE_HI_KEY] = hi
     body[zone_off + ZONE_ROOT_KEY] = root
-    if lo < body[voice_start + VOICE_LO_KEY]:
+    if lo < body[voice_start + VOICE_LO_KEY]:  # noqa: PLR1730
         body[voice_start + VOICE_LO_KEY] = lo
-    if hi > body[voice_start + VOICE_HI_KEY]:
+    if hi > body[voice_start + VOICE_HI_KEY]:  # noqa: PLR1730
         body[voice_start + VOICE_HI_KEY] = hi
 
 
@@ -520,7 +531,7 @@ def _walk_chunks_physical(data: bytes, path: str, warnings: list[str]):
     end = min(12 + form_size, len(data))
     pos = 12
     while pos + 8 <= end:
-        tag = data[pos:pos + 4]
+        tag = data[pos : pos + 4]
         size = struct.unpack_from(">I", data, pos + 4)[0]
         if tag == _ZERO_TAG and size == 0:
             # Padding, not a chunk (see the docstring). Jump the whole zero
@@ -536,8 +547,10 @@ def _walk_chunks_physical(data: bytes, path: str, warnings: list[str]):
         body_start = pos + 8
         body_end = body_start + size
         if body_end > len(data):
-            warnings.append(f"chunk {tag!r} at {pos} claims size {size}, "
-                             f"which runs past the end of the file — stopping scan")
+            warnings.append(
+                f"chunk {tag!r} at {pos} claims size {size}, "
+                f"which runs past the end of the file — stopping scan"
+            )
             return
         yield tag, data[body_start:body_end]
         pos = body_end + (size & 1)
@@ -562,9 +575,9 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> E4BFile:
     midi_prog_by_idx: dict[int, int] = {}
     if data[12:16] == TOC_TAG:
         toc_chunk_size = struct.unpack_from(">I", data, 16)[0]
-        toc_body = data[20:20 + toc_chunk_size]
+        toc_body = data[20 : 20 + toc_chunk_size]
         for i in range(toc_chunk_size // 32):
-            entry = toc_body[i * 32:i * 32 + 32]
+            entry = toc_body[i * 32 : i * 32 + 32]
             if entry[0:4] == PRES_TAG:
                 idx = struct.unpack_from(">H", entry, 12)[0]
                 midi_prog_by_idx[idx] = entry[31]
@@ -577,20 +590,30 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> E4BFile:
 
     for tag, body in _walk_chunks_physical(data, path, warnings):
         if tag == E4MA_TAG:
-            if not e4ma_body:   # keep the FIRST one in a multi-part mega-bank
+            if not e4ma_body:  # keep the FIRST one in a multi-part mega-bank
                 e4ma_body = body
         elif tag == PRES_TAG:
             if len(body) < PRES_HDR:
-                warnings.append(f"skipping malformed E4P1 chunk (shorter than its fixed header)")
+                warnings.append(
+                    f"skipping malformed E4P1 chunk (shorter than its fixed header)"  # noqa: F541
+                )  # noqa: F541, RUF100
                 continue
             idx = struct.unpack_from(">H", body, 0)[0]
             name = _strip_name(body[2:18])
-            presets.append(E4BPreset(
-                index=idx, name=name, midi_program=midi_prog_by_idx.get(idx, 0),
-                body=body, zone_refs=_parse_zone_refs(body)))
+            presets.append(
+                E4BPreset(
+                    index=idx,
+                    name=name,
+                    midi_program=midi_prog_by_idx.get(idx, 0),
+                    body=body,
+                    zone_refs=_parse_zone_refs(body),
+                )
+            )
         elif tag == SAMP_TAG:
             if len(body) < 18:
-                warnings.append(f"skipping malformed E3S1 chunk (shorter than its fixed header)")
+                warnings.append(
+                    f"skipping malformed E3S1 chunk (shorter than its fixed header)"  # noqa: F541
+                )  # noqa: F541, RUF100
                 continue
             idx = struct.unpack_from(">H", body, 0)[0]
             name = _strip_name(body[2:18])
@@ -616,8 +639,10 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> E4BFile:
             unknown_tags[tag] = unknown_tags.get(tag, 0) + 1
 
     for tag, count in unknown_tags.items():
-        warnings.append(f"skipped unrecognised chunk tag {tag!r}"
-                        + (f" ({count} of them)" if count > 1 else ""))
+        warnings.append(
+            f"skipped unrecognised chunk tag {tag!r}"
+            + (f" ({count} of them)" if count > 1 else "")
+        )
 
     # EMSt carries no TOC entry and is always the last chunk (E4B_FORMAT.md
     # §1); find it directly by its own tag (which cannot legitimately appear
@@ -633,15 +658,22 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> E4BFile:
     else:
         emst_size = struct.unpack_from(">I", data, emst_pos + 4)[0]
         emst_end = min(emst_pos + 8 + emst_size, len(data))
-        emst_body = data[emst_pos + 8:emst_end]
+        emst_body = data[emst_pos + 8 : emst_end]
         if len(data) - emst_end > 1:
             warnings.append(
                 f"{len(data) - emst_end} trailing byte(s) after the EMSt chunk "
-                f"(likely CD/HD image padding)")
+                f"(likely CD/HD image padding)"
+            )
 
     presets.sort(key=lambda p: p.index)
-    return E4BFile(path=path, presets=presets, samples=samples,
-                    e4ma_body=e4ma_body, emst_body=emst_body, warnings=warnings)
+    return E4BFile(
+        path=path,
+        presets=presets,
+        samples=samples,
+        e4ma_body=e4ma_body,
+        emst_body=emst_body,
+        warnings=warnings,
+    )
 
 
 def parse(path: str) -> E4BFile:
@@ -652,8 +684,10 @@ def parse(path: str) -> E4BFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
-def _apply_velocity(body: bytearray, voice_start: int,
-                     lo_vel: int, hi_vel: int) -> None:
+
+def _apply_velocity(
+    body: bytearray, voice_start: int, lo_vel: int, hi_vel: int
+) -> None:
     """Set the VOICE's velocity window. Unlike a key move there is no zone
     half to this: the zone entry carries no usable velocity range, so the
     voice is the whole edit."""
@@ -665,8 +699,9 @@ def _apply_velocity(body: bytearray, voice_start: int,
     body[voice_start + VOICE_HI_VEL] = max(0, min(127, hi_vel))
 
 
-def _split_voices_by_velocity(body: bytearray, num_voices: int,
-                               wants: dict) -> bytearray:
+def _split_voices_by_velocity(
+    body: bytearray, num_voices: int, wants: dict
+) -> bytearray:
     """Rebuild a preset body so every distinct velocity window gets its own
     VOICE. `wants` maps a zone's offset in `body` to the (lo_vel, hi_vel) it
     should answer to; a zone not mentioned keeps whatever its current voice
@@ -691,13 +726,13 @@ def _split_voices_by_velocity(body: bytearray, num_voices: int,
     header = bytearray(body[:PRES_HDR])
     rebuilt: list = []
     for v_start, table_start, n in _walk_voices(body, num_voices):
-        vpar = bytearray(body[v_start:v_start + VOICE_FIXED])
+        vpar = bytearray(body[v_start : v_start + VOICE_FIXED])
         current = (vpar[VOICE_LO_VEL], vpar[VOICE_HI_VEL])
         groups: dict = {}
         order: list = []
         for k in range(n):
             off = table_start + k * ZONE_ENTRY
-            zone = bytes(body[off:off + ZONE_ENTRY])
+            zone = bytes(body[off : off + ZONE_ENTRY])
             win = wants.get(off, current)
             if win not in groups:
                 groups[win] = []
@@ -720,16 +755,18 @@ def _split_voices_by_velocity(body: bytearray, num_voices: int,
         out += vpar
         for zone in zones:
             out += zone
-    out += b"\x00\x00"        # the single trailer, after the LAST voice only
+    out += b"\x00\x00"  # the single trailer, after the LAST voice only
     struct.pack_into(">H", out, 20, len(rebuilt) & 0xFFFF)
     return out
 
 
-def assemble(selections: list[tuple[E4BFile, E4BPreset]],
-              sample_names: Optional[dict] = None,
-              zone_placement: Optional[dict] = None,
-              voice_velocity: Optional[dict] = None,
-              loop_repair: Optional[dict] = None) -> bytes:
+def assemble(
+    selections: list[tuple[E4BFile, E4BPreset]],
+    sample_names: Optional[dict] = None,  # noqa: UP045
+    zone_placement: Optional[dict] = None,  # noqa: UP045
+    voice_velocity: Optional[dict] = None,  # noqa: UP045
+    loop_repair: Optional[dict] = None,  # noqa: UP045
+) -> bytes:  # noqa: RUF100, UP045
     """Build a new E4B FORM from selected (source_bank, preset) pairs.
 
     Each preset's original chunk bytes are copied verbatim; only the 2-byte
@@ -754,6 +791,7 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
     them; taking the first source's is what mpc2emu's own multi-source
     tooling (bank_splitter) does for equivalent bank-wide chunks.
     """
+
     # PER SELECTION, OR BANK-WIDE. `zone_placement` and `voice_velocity` may
     # be a single dict -- one map for every preset, which is what a project
     # written before 2026-09-28 carries and what every other caller still
@@ -794,8 +832,7 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
         vel_wanted: dict = {}
         owner: dict[int, int] = {}
         if placement_here or velocity_here:
-            for v_start, table_start, n in _walk_voices(preset.body,
-                                                         preset.num_voices):
+            for v_start, table_start, n in _walk_voices(preset.body, preset.num_voices):
                 for k in range(n):
                     owner[table_start + k * ZONE_ENTRY] = v_start
         for zone_off, old_idx in preset.zone_refs:
@@ -833,8 +870,7 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
             if vel is not None and zone_off in owner:
                 # Applied as typed; see _apply_velocity for why an inverted
                 # window is preserved rather than tidied up.
-                vel_wanted[zone_off] = tuple(
-                    max(0, min(127, int(v))) for v in vel)
+                vel_wanted[zone_off] = tuple(max(0, min(127, int(v))) for v in vel)
             key = (samp.name, samp.body)
             new_idx = dedupe_key_to_new_idx.get(key)
             if new_idx is None:
@@ -882,15 +918,29 @@ def assemble(selections: list[tuple[E4BFile, E4BPreset]],
         # parse_bytes' warnings). Fall back to mpc2emu's own defaults rather
         # than writing an empty/short chunk a real E4XT wouldn't expect.
         from ..mpc2emu_bridge import e4b_writer
+
         e4ma_body = e4ma_body or e4b_writer._build_e4ma()
         emst_body = emst_body or e4b_writer._build_emst()
 
-    return _build_form(new_preset_bodies, new_preset_names, new_preset_progs,
-                        new_sample_bodies, new_sample_names, e4ma_body, emst_body)
+    return _build_form(
+        new_preset_bodies,
+        new_preset_names,
+        new_preset_progs,
+        new_sample_bodies,
+        new_sample_names,
+        e4ma_body,
+        emst_body,
+    )
 
 
-def _toc_entry(tag: bytes, data_size: int, file_offset: int, idx: int,
-               name: str, midi_prog: int = 0) -> bytes:
+def _toc_entry(
+    tag: bytes,
+    data_size: int,
+    file_offset: int,
+    idx: int,
+    name: str,
+    midi_prog: int = 0,
+) -> bytes:
     e = bytearray(32)
     e[0:4] = tag
     struct.pack_into(">I", e, 4, data_size)
@@ -901,11 +951,17 @@ def _toc_entry(tag: bytes, data_size: int, file_offset: int, idx: int,
     return bytes(e)
 
 
-def _build_form(preset_bodies: list[bytes], preset_names: list[str],
-                 preset_progs: list[int], sample_bodies: list[bytes],
-                 sample_names: list[str], e4ma_body: bytes, emst_body: bytes) -> bytes:
+def _build_form(
+    preset_bodies: list[bytes],
+    preset_names: list[str],
+    preset_progs: list[int],
+    sample_bodies: list[bytes],
+    sample_names: list[str],
+    e4ma_body: bytes,
+    emst_body: bytes,
+) -> bytes:
     n_toc = 1 + len(preset_bodies) + len(sample_bodies)
-    toc_chunk = _iff_chunk(TOC_TAG, bytes(n_toc * 32))   # placeholder, same final length
+    toc_chunk = _iff_chunk(TOC_TAG, bytes(n_toc * 32))  # placeholder, same final length
     e4ma_chunk = _iff_chunk(E4MA_TAG, e4ma_body)
     preset_chunks = [_iff_chunk(PRES_TAG, b) for b in preset_bodies]
     sample_chunks = [_iff_chunk(SAMP_TAG, b) for b in sample_bodies]
@@ -926,8 +982,12 @@ def _build_form(preset_bodies: list[bytes], preset_names: list[str],
 
     toc_entries = bytearray()
     toc_entries += _toc_entry(E4MA_TAG, len(e4ma_body), e4ma_off, 0, "Multimap")
-    for i, (body, name, prog) in enumerate(zip(preset_bodies, preset_names, preset_progs)):
-        toc_entries += _toc_entry(PRES_TAG, len(body), preset_offs[i], i, name, midi_prog=prog)
+    for i, (body, name, prog) in enumerate(
+        zip(preset_bodies, preset_names, preset_progs)
+    ):
+        toc_entries += _toc_entry(
+            PRES_TAG, len(body), preset_offs[i], i, name, midi_prog=prog
+        )
     for i, (body, name) in enumerate(zip(sample_bodies, sample_names)):
         toc_entries += _toc_entry(SAMP_TAG, len(body), sample_offs[i], i + 1, name)
     toc_chunk = _iff_chunk(TOC_TAG, bytes(toc_entries))
@@ -952,5 +1012,7 @@ def _build_form(preset_bodies: list[bytes], preset_names: list[str],
     out += emst_chunk
 
     if len(out) > MAX_BANK_BYTES:
-        raise ValueError(f"assembled bank too large: {len(out)} > {MAX_BANK_BYTES} bytes")
+        raise ValueError(
+            f"assembled bank too large: {len(out)} > {MAX_BANK_BYTES} bytes"
+        )
     return bytes(out)

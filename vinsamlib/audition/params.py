@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field  # noqa: F401
 from pathlib import Path
 from typing import Any, Optional
 
@@ -26,7 +26,7 @@ from ..config import Config
 _AUDITION_TEMP_PREFIX = "vinsamlib_audition_"
 
 #: Bounded to 4: a KRZ bank carries tens of MB of PCM.
-_BANK_CACHE: "OrderedDict[Any, BankHolder]" = OrderedDict()
+_BANK_CACHE: "OrderedDict[Any, BankHolder]" = OrderedDict()  # noqa: UP037
 _BANK_CACHE_MAX = 4
 
 # Guards the OrderedDict itself, not the parse. Two audition renders overlap
@@ -45,7 +45,7 @@ class AuditionError(RuntimeError):
 class _Parsed:
     bank: Any
     preset: Any
-    provenance: "SourceProvenance"
+    provenance: "SourceProvenance"  # noqa: UP037
     #: The VinSamLib source objects (or path) this was parsed from. Kept in
     #: the cached value so their id() cannot be reused by a later allocation
     #: while the entry is live -- an in-memory cache keyed on id() without
@@ -60,10 +60,10 @@ class _Parsed:
 
 @dataclass(frozen=True)
 class SourceProvenance:
-    format: str          # 'E4B' | 'KRZ' | 'EIII' | 'AKAI' | 'MPC' | 'SF2' | ...
-    origin: str          # a path or a human label, for the report
+    format: str  # 'E4B' | 'KRZ' | 'EIII' | 'AKAI' | 'MPC' | 'SF2' | ...
+    origin: str  # a path or a human label, for the report
     # voice index -> vpar[58]; the E4XT filter byte. Only E4B sources carry it.
-    e4b_filter_bytes: Optional[dict] = None
+    e4b_filter_bytes: Optional[dict] = None  # noqa: UP045
 
 
 # Alias kept so type hints read naturally in render.py.
@@ -105,7 +105,8 @@ def clear_cache() -> None:
 
 # ── the routes, one per source format ────────────────────────────────────────
 
-def _e4b_filter_bytes(preset_obj) -> Optional[dict]:
+
+def _e4b_filter_bytes(preset_obj) -> Optional[dict]:  # noqa: UP045
     """Read the E4XT filter byte (vpar[58]) per voice from the verbatim body.
 
     By the time the model reaches audition a phaser and a 4-pole lowpass are
@@ -114,6 +115,7 @@ def _e4b_filter_bytes(preset_obj) -> Optional[dict]:
     still exists, so it is read here and carried on the provenance.
     """
     from ..banks import e4b as vs_e4b
+
     body = getattr(preset_obj, "body", None)
     if body is None:
         return None
@@ -121,16 +123,24 @@ def _e4b_filter_bytes(preset_obj) -> Optional[dict]:
         num_voices = vs_e4b.struct.unpack_from(">H", body, 20)[0]
         out: dict[int, int] = {}
         for i, (v_start, _table, _n) in enumerate(
-                vs_e4b._walk_voices(body, num_voices)):
+            vs_e4b._walk_voices(body, num_voices)
+        ):
             if v_start + 58 < len(body):
                 out[i] = body[v_start + 58]
         return out or None
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
-def _assemble_and_parse(bank, preset_obj, kind, module, suffix, parser,
-                        edits: Optional[dict] = None) -> _Parsed:
+def _assemble_and_parse(
+    bank,
+    preset_obj,
+    kind,
+    module,
+    suffix,
+    parser,
+    edits: Optional[dict] = None,  # noqa: UP045
+) -> _Parsed:  # noqa: RUF100, UP045
     # `edits` are New Bank's staged renames, placement, velocity and loop
     # repairs, bound exactly as BankPane._assemble_fn binds them for the
     # meter, Save as… and Send to Image. Without them an audition of a staged
@@ -145,18 +155,23 @@ def _assemble_and_parse(bank, preset_obj, kind, module, suffix, parser,
             f"{getattr(preset_obj, 'name', 'This program')!r} references only "
             f"samples held in the sampler's ROM -- the bank file contains no "
             f"audio for them, so there is nothing to audition. (Browsing and "
-            f"inspecting the bank still works.)")
+            f"inspecting the bank still works.)"
+        )
     tmp_path.write_bytes(data)
     parsed = parser(tmp_path)
     preset = parsed.presets[0] if parsed.presets else None
     if preset is None:
         raise AuditionError(
             f"mpc2emu's parser read no preset from "
-            f"{getattr(preset_obj, 'name', '?')!r}.")
+            f"{getattr(preset_obj, 'name', '?')!r}."
+        )
     prov = SourceProvenance(format=kind, origin=str(getattr(bank, "path", "")))
     if kind == "E4B":
-        prov = SourceProvenance(format=kind, origin=str(getattr(bank, "path", "")),
-                                e4b_filter_bytes=_e4b_filter_bytes(preset_obj))
+        prov = SourceProvenance(
+            format=kind,
+            origin=str(getattr(bank, "path", "")),
+            e4b_filter_bytes=_e4b_filter_bytes(preset_obj),
+        )
     return _Parsed(parsed, preset, prov, source=(bank, preset_obj))
 
 
@@ -164,10 +179,11 @@ def _sample_count(data: bytes, suffix: str) -> int:
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
+
     reader = {".krz": vs_krz, ".e3x": vs_eiii}.get(suffix.lower(), vs_e4b)
     try:
         return len(reader.parse_bytes(data, "audition").samples)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return -1
 
 
@@ -176,7 +192,7 @@ def _sanitize(name: str) -> str:
     return (keep.strip() or "preset")[:48]
 
 
-def _akai_route(bank, program, edits: Optional[dict] = None) -> _Parsed:
+def _akai_route(bank, program, edits: Optional[dict] = None) -> _Parsed:  # noqa: UP045
     # TODO (spec stage 2, deliberately not done yet): the rule that the
     # program and its samples must land in SEPARATE directories lives here
     # AND in convert._convert_akai_program(). A real library disc converts to
@@ -187,6 +203,7 @@ def _akai_route(bank, program, edits: Optional[dict] = None) -> _Parsed:
     # folding a conversion-path change into a new feature would make a
     # failure in those two ambiguous about which change caused it.
     from ..banks import akai as vs_akai
+
     ok, reason = Config.load().check_akai_read_support()
     if not ok:
         raise AuditionError(reason)
@@ -198,33 +215,38 @@ def _akai_route(bank, program, edits: Optional[dict] = None) -> _Parsed:
     # is normally empty here. Passed through anyway rather than dropped, so
     # that a format gaining support upstream does not need this line found.
     files = vs_akai.assemble([(bank, program)], **(edits or {}))
-    program_files = [(fn, d) for fn, d in files
-                     if fn.upper().endswith((".P3", ".P1"))]
+    program_files = [(fn, d) for fn, d in files if fn.upper().endswith((".P3", ".P1"))]
     sample_files = [(fn, d) for fn, d in files if (fn, d) not in program_files]
     if not program_files:
         raise AuditionError(
-            f"{getattr(program, 'name', '?')!r} produced no AKAI program file.")
+            f"{getattr(program, 'name', '?')!r} produced no AKAI program file."
+        )
     vs_akai.write_volume(sample_files, str(samples_dir))
     program_path = tmp_dir / program_files[0][0]
     program_path.write_bytes(program_files[0][1])
     parsed = mpc2emu_bridge.akai_parser.parse_akai_program(
-        str(program_path), str(samples_dir))
+        str(program_path), str(samples_dir)
+    )
     preset = parsed.presets[0] if parsed.presets else None
     if preset is None:
         raise AuditionError(
-            f"mpc2emu read no program from "
-            f"{getattr(program, 'name', '?')!r}.")
-    return _Parsed(parsed, preset,
-                   SourceProvenance(format="AKAI",
-                                    origin=str(getattr(bank, "path", ""))),
-                   source=(bank, program))
+            f"mpc2emu read no program from " f"{getattr(program, 'name', '?')!r}."
+        )
+    return _Parsed(
+        parsed,
+        preset,
+        SourceProvenance(format="AKAI", origin=str(getattr(bank, "path", ""))),
+        source=(bank, program),
+    )
 
 
 def _foreign_route(path, ordinal) -> _Parsed:
     from ..build import foreign_import
+
     fmt = foreign_import.format_for(path) or "foreign"
     bank = foreign_import.parse_foreign(
-        path, max_presets=foreign_import._listed_count(path))
+        path, max_presets=foreign_import._listed_count(path)
+    )
     if not bank.presets:
         raise AuditionError(f"{Path(path).name} holds no preset to audition.")
     index = 0
@@ -238,26 +260,33 @@ def _foreign_route(path, ordinal) -> _Parsed:
         # every EPS instrument. The first index of the run is the variant the
         # row names.
         index = foreign_import.index_for_row(bank, listed, ordinal, path)
-    return _Parsed(bank, bank.presets[index],
-                   SourceProvenance(format=fmt, origin=str(path)),
-                   source=(path, ordinal))
+    return _Parsed(
+        bank,
+        bank.presets[index],
+        SourceProvenance(format=fmt, origin=str(path)),
+        source=(path, ordinal),
+    )
 
 
 def _mpc_route(path, preset_index) -> _Parsed:
     from ..build import xpm_import
+
     bank = xpm_import.parse_mpc(str(path))
     if not bank.presets:
         raise AuditionError(f"{Path(path).name} holds no program to audition.")
     index = int(preset_index or 0)
     if not (0 <= index < len(bank.presets)):
-        raise AuditionError(
-            f"{Path(path).name} has no program {index + 1}.")
-    return _Parsed(bank, bank.presets[index],
-                   SourceProvenance(format="MPC", origin=str(path)),
-                   source=(path, index))
+        raise AuditionError(f"{Path(path).name} has no program {index + 1}.")
+    return _Parsed(
+        bank,
+        bank.presets[index],
+        SourceProvenance(format="MPC", origin=str(path)),
+        source=(path, index),
+    )
 
 
 # ── the public entry points ──────────────────────────────────────────────────
+
 
 def parameters_for_node(payload, kind: str) -> _Parsed:
     """Explorer TreeNode payload -> parsed mpc2emu Bank + Preset + provenance."""
@@ -267,22 +296,38 @@ def parameters_for_node(payload, kind: str) -> _Parsed:
         from ..banks import e4b as vs_e4b
         from ..banks import eiii as vs_eiii
         from ..banks import krz as vs_krz
+
         key = _cache_key(kind, None, (id(bank), id(preset_obj)))
         cached = _cache_get(key)
         if cached is not None:
             return cached
         if isinstance(bank, vs_e4b.E4BFile):
             parsed = _assemble_and_parse(
-                bank, preset_obj, "E4B", vs_e4b, ".e4b",
-                mpc2emu_bridge.e4b_parser.parse_e4b)
+                bank,
+                preset_obj,
+                "E4B",
+                vs_e4b,
+                ".e4b",
+                mpc2emu_bridge.e4b_parser.parse_e4b,
+            )
         elif isinstance(bank, vs_krz.KrzFile):
             parsed = _assemble_and_parse(
-                bank, preset_obj, "KRZ", vs_krz, ".krz",
-                mpc2emu_bridge.krz_parser.parse_krz)
+                bank,
+                preset_obj,
+                "KRZ",
+                vs_krz,
+                ".krz",
+                mpc2emu_bridge.krz_parser.parse_krz,
+            )
         elif isinstance(bank, vs_eiii.EIIIFile):
             parsed = _assemble_and_parse(
-                bank, preset_obj, "EIII", vs_eiii, ".e3x",
-                mpc2emu_bridge.eiii_parser.parse_eiii)
+                bank,
+                preset_obj,
+                "EIII",
+                vs_eiii,
+                ".e3x",
+                mpc2emu_bridge.eiii_parser.parse_eiii,
+            )
         elif isinstance(bank, vs_akai.AkaiBank):
             # No `edits` here, and that is the point: this is the EXPLORER
             # path, which auditions a program as it sits on the disc. Staged
@@ -293,8 +338,7 @@ def parameters_for_node(payload, kind: str) -> _Parsed:
             # while the other three formats worked.
             parsed = _akai_route(bank, preset_obj)
         else:
-            raise AuditionError(
-                f"not a recognised bank for audition: {type(bank)!r}")
+            raise AuditionError(f"not a recognised bank for audition: {type(bank)!r}")
         _cache_put(key, parsed)
         return parsed
     if kind == "xpm":
@@ -334,7 +378,7 @@ def parameters_for_node(payload, kind: str) -> _Parsed:
     raise AuditionError(f"cannot audition a {kind!r} node")
 
 
-def _edits_fingerprint(edits: Optional[dict]) -> str:
+def _edits_fingerprint(edits: Optional[dict]) -> str:  # noqa: UP045
     """A stable, cheap identity for a set of staged edits.
 
     repr() of sorted items rather than a hash of the objects: the dicts hold
@@ -346,8 +390,12 @@ def _edits_fingerprint(edits: Optional[dict]) -> str:
     return repr(sorted((k, repr(v)) for k, v in edits.items()))
 
 
-def parameters_for_staged(bank, preset_obj, name: str = "",
-                          edits: Optional[dict] = None) -> _Parsed:
+def parameters_for_staged(
+    bank,
+    preset_obj,
+    name: str = "",
+    edits: Optional[dict] = None,  # noqa: UP045
+) -> _Parsed:  # noqa: RUF100, UP045
     """New Bank's staged ``(bank, preset_obj, name)`` tuple -> parsed model.
 
     Auditioning a staged preset is the one path that catches a bad build before
@@ -358,30 +406,49 @@ def parameters_for_staged(bank, preset_obj, name: str = "",
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
+
     # THE EDITS ARE PART OF THE KEY. Keyed on id() alone, a re-audition after
     # correcting a placement returned the first parse -- the pinned objects
     # keep their ids for the lifetime of the row, so nothing ever invalidated.
-    key = _cache_key("staged", None,
-                     (id(bank), id(preset_obj), _edits_fingerprint(edits)))
+    key = _cache_key(
+        "staged", None, (id(bank), id(preset_obj), _edits_fingerprint(edits))
+    )
     cached = _cache_get(key)
     if cached is not None:
         return cached
     if isinstance(bank, vs_e4b.E4BFile):
         parsed = _assemble_and_parse(
-            bank, preset_obj, "E4B", vs_e4b, ".e4b",
-            mpc2emu_bridge.e4b_parser.parse_e4b, edits)
+            bank,
+            preset_obj,
+            "E4B",
+            vs_e4b,
+            ".e4b",
+            mpc2emu_bridge.e4b_parser.parse_e4b,
+            edits,
+        )
     elif isinstance(bank, vs_krz.KrzFile):
         parsed = _assemble_and_parse(
-            bank, preset_obj, "KRZ", vs_krz, ".krz",
-            mpc2emu_bridge.krz_parser.parse_krz, edits)
+            bank,
+            preset_obj,
+            "KRZ",
+            vs_krz,
+            ".krz",
+            mpc2emu_bridge.krz_parser.parse_krz,
+            edits,
+        )
     elif isinstance(bank, vs_eiii.EIIIFile):
         parsed = _assemble_and_parse(
-            bank, preset_obj, "EIII", vs_eiii, ".e3x",
-            mpc2emu_bridge.eiii_parser.parse_eiii, edits)
+            bank,
+            preset_obj,
+            "EIII",
+            vs_eiii,
+            ".e3x",
+            mpc2emu_bridge.eiii_parser.parse_eiii,
+            edits,
+        )
     elif isinstance(bank, vs_akai.AkaiBank):
         parsed = _akai_route(bank, preset_obj, edits)
     else:
-        raise AuditionError(
-            f"not a recognised bank for audition: {type(bank)!r}")
+        raise AuditionError(f"not a recognised bank for audition: {type(bank)!r}")
     _cache_put(key, parsed)
     return parsed

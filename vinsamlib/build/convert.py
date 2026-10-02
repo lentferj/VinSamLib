@@ -26,29 +26,43 @@ an unavoidable cost of using mpc2emu's DSP at all, but worth disclosing
 to the user (see ui/convert_options_dialog.py).
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import array
 import contextlib
 import dataclasses
 import io
 import math
-import re
-import tempfile
+import re  # noqa: F401
+import tempfile  # noqa: F401
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional  # noqa: UP035
 
 from . import calllog
 from . import firmware_sim
 
 from .. import tempdirs
 from ..filenames import safe_filename
-from ..mpc2emu_bridge import (akai_parser, akai_writer, bank_splitter, diagnostics,
-                                e4b_parser, e4b_writer, eiii_parser, eiii_writer,
-                                krz_parser, krz_writer, models_common, resampler,
-                                shrink_planner, start_trim, tail_trim, zone_reducer)
+from ..mpc2emu_bridge import (
+    akai_parser,
+    akai_writer,
+    bank_splitter,
+    diagnostics,
+    e4b_parser,
+    e4b_writer,
+    eiii_parser,
+    eiii_writer,
+    krz_parser,
+    krz_writer,
+    models_common,
+    resampler,
+    shrink_planner,
+    start_trim,
+    tail_trim,
+    zone_reducer,
+)
 
 _CONVERT_TEMP_PREFIX = "vinsamlib_convert_"
 
@@ -72,7 +86,7 @@ class ConvertOpError(RuntimeError):
 
 @dataclass(frozen=True)
 class ConversionOptions:
-    target_format: str = "E4B"                    # "E4B" | "KRZ" | "EIII" | "AKAI" -- the OUTPUT format
+    target_format: str = "E4B"  # "E4B" | "KRZ" | "EIII" | "AKAI" -- the OUTPUT format
     # Write what the TARGET sampler's own disk importer would have written,
     # byte for byte, instead of converting with this project's laws.
     #
@@ -101,14 +115,20 @@ class ConversionOptions:
     #: away every resample, rate ceiling and memory target the user had set --
     #: from a dialog that offered them live. Jan, 2026-09-28: honour them.
     firmware_reader_only: bool = False
-    resample_profile: Optional[str] = None        # "emulator2" | "emax1" | None (off)
+    resample_profile: Optional[str] = (  # noqa: UP045
+        None  # "emulator2" | "emax1" | None (off)  # noqa: RUF100, UP045
+    )
     no_bandpass: bool = False
     resample_keep_gain: bool = False
-    max_sample_rate: Optional[int] = None          # Hz; None/0 means don't apply this step
+    max_sample_rate: Optional[int] = (  # noqa: UP045
+        None  # Hz; None/0 means don't apply this step  # noqa: RUF100, UP045
+    )
     reduce_key_zones_pct: float = 0.0
     reduce_velocity_layers_pct: float = 0.0
-    mono: Optional[str] = None                     # None (keep stereo) | "mix" | "left" | "right"
-    pan_law: str = "hardware"                      # "hardware" | "constant-power"; E4B only
+    mono: Optional[str] = (  # noqa: UP045
+        None  # None (keep stereo) | "mix" | "left" | "right"  # noqa: RUF100, UP045
+    )
+    pan_law: str = "hardware"  # "hardware" | "constant-power"; E4B only
     # Trim thresholds are stored the way mpc2emu's CLI accepts them -- a
     # POSITIVE depth below peak (72 = "silence only", 45 = into the attack/
     # release) -- and negated at the call site, exactly as convert.py's own
@@ -131,10 +151,10 @@ class ConversionOptions:
     # tail_trim.py's `cut = sample.loop_end + 1`). An unlooped sample is
     # trimmed exactly as before. So the default costs the tail of looped
     # samples only, and buys back the loops.
-    trim_start_db: Optional[float] = None
+    trim_start_db: Optional[float] = None  # noqa: UP045
     trim_start_fade_ms: float = 5.0
     trim_start_keep_loops: bool = True
-    trim_tail_db: Optional[float] = None
+    trim_tail_db: Optional[float] = None  # noqa: UP045
     trim_tail_fade_ms: float = 5.0
     trim_tail_keep_loops: bool = True
     # Fit each preset to a memory budget by thinning it -- mpc2emu's
@@ -145,8 +165,8 @@ class ConversionOptions:
     # they can give up -- a two-zone one-shot has nothing, a 12-zone pad has
     # plenty -- so the target is per PRESET and the planner works out how to
     # reach it for each.
-    shrink_to_bytes: Optional[int] = None
-    shrink_by_pct: Optional[float] = None
+    shrink_to_bytes: Optional[int] = None  # noqa: UP045
+    shrink_by_pct: Optional[float] = None  # noqa: UP045
     # KRZ only, and both are mpc2emu's own flags (--krz-faithful,
     # --krz-drum-program) rather than anything this project invents.
     #
@@ -193,7 +213,7 @@ class ConversionOptions:
     #: against an assumed one. mpc2emu assumes 120 (the MPC's own new-project
     #: default); None leaves that alone rather than restating it, so a future
     #: change to their default arrives here instead of being overridden.
-    lfo_sync_bpm: Optional[float] = None
+    lfo_sync_bpm: Optional[float] = None  # noqa: UP045
 
     def is_noop(self, source_format: str = "E4B") -> bool:
         """`source_format` matters now that KRZ can be a source too: a
@@ -211,22 +231,24 @@ class ConversionOptions:
         # rewrite to honour it would lose fidelity in the name of preserving
         # it. krz_drum_program IS in the list: asking for a drum program is
         # asking for a file the source is not.
-        return (self.target_format == source_format
-                and self.resample_profile is None
-                and not self.max_sample_rate
-                and self.reduce_key_zones_pct <= 0
-                and self.reduce_velocity_layers_pct <= 0
-                and self.mono is None
-                and self.pan_law == "hardware"
-                and self.shrink_to_bytes is None
-                and self.shrink_by_pct is None
-                and not self.krz_drum_program
-                and not self.akai_ib304f
-                and not self.chromatic_pads
-                and not self.split_velocity_layers
-                and self.lfo_sync_bpm is None
-                and self.trim_start_db is None
-                and self.trim_tail_db is None)
+        return (
+            self.target_format == source_format
+            and self.resample_profile is None
+            and not self.max_sample_rate
+            and self.reduce_key_zones_pct <= 0
+            and self.reduce_velocity_layers_pct <= 0
+            and self.mono is None
+            and self.pan_law == "hardware"
+            and self.shrink_to_bytes is None
+            and self.shrink_by_pct is None
+            and not self.krz_drum_program
+            and not self.akai_ib304f
+            and not self.chromatic_pads
+            and not self.split_velocity_layers
+            and self.lfo_sync_bpm is None
+            and self.trim_start_db is None
+            and self.trim_tail_db is None
+        )
 
 
 def _run_captured(fn: Callable, *args, **kwargs) -> Any:
@@ -254,16 +276,27 @@ def _run_captured(fn: Callable, *args, **kwargs) -> Any:
         with contextlib.redirect_stdout(buf):
             result = fn(*args, **kwargs)
     except Exception as ex:
-        calllog.record_call(fn, args, kwargs, ok=False,
-                            seconds=time.monotonic() - started,
-                            output=buf.getvalue(), error=str(ex))
+        calllog.record_call(
+            fn,
+            args,
+            kwargs,
+            ok=False,
+            seconds=time.monotonic() - started,
+            output=buf.getvalue(),
+            error=str(ex),
+        )
         raise ConvertOpError(f"{buf.getvalue()}\n\n{ex}".strip()) from ex
     # The SUCCESS path is the one worth having. Everything mpc2emu printed
     # while working is discarded from here on -- that is what lost a pad its
     # loops with nothing on screen to say so.
-    calllog.record_call(fn, args, kwargs, ok=True,
-                        seconds=time.monotonic() - started,
-                        output=buf.getvalue())
+    calllog.record_call(
+        fn,
+        args,
+        kwargs,
+        ok=True,
+        seconds=time.monotonic() - started,
+        output=buf.getvalue(),
+    )
     return result
 
 
@@ -319,7 +352,7 @@ def _apply_pan_law(bank: Any) -> int:
         for voice in preset.voices:
             for zone in voice.zones:
                 excess = models_common.e4xt_pan_excess_db(zone.pan)
-                if excess > 0.01:      # same negligible-excess floor as convert.py
+                if excess > 0.01:  # same negligible-excess floor as convert.py
                     zone.volume -= excess
                     n += 1
     return n
@@ -350,7 +383,11 @@ def stereo_mono_risk(samples: list, method: str = "mix") -> dict:
             decorrelated.append((s.name, r))
     decorrelated.sort(key=lambda nr: nr[1])
     worst_r = decorrelated[0][1] if decorrelated else None
-    return {"stereo_count": len(stereo), "decorrelated": decorrelated, "worst_r": worst_r}
+    return {
+        "stereo_count": len(stereo),
+        "decorrelated": decorrelated,
+        "worst_r": worst_r,
+    }
 
 
 def _note_name(midi: int) -> str:
@@ -390,8 +427,7 @@ def polyphony_risk(bank: Any, target_format: str) -> list[dict]:
     # measured numbers, and the one thing worse than reaching into a private
     # name is silently disagreeing with the measurement it came from. Absent
     # (an older mpc2emu checkout) simply means no check.
-    limit = getattr(bank_splitter, "_VOICES_PER_NOTE", {}).get(
-        target_format.lower())
+    limit = getattr(bank_splitter, "_VOICES_PER_NOTE", {}).get(target_format.lower())
     if not limit:
         return []
 
@@ -401,16 +437,19 @@ def polyphony_risk(bank: Any, target_format: str) -> list[dict]:
         voices, key, vel = bank_splitter.peak_note_voices(preset, needed)
         if voices <= limit:
             continue
-        out.append({
-            "preset": preset.name,
-            "voices": voices,
-            "limit": limit,
-            "key": _note_name(key),
-            "velocity": vel,
-            "stereo": sum(1 for s in needed
-                          if bank_splitter.sample_voice_cost(s) > 1),
-            "samples": len(needed),
-        })
+        out.append(
+            {
+                "preset": preset.name,
+                "voices": voices,
+                "limit": limit,
+                "key": _note_name(key),
+                "velocity": vel,
+                "stereo": sum(
+                    1 for s in needed if bank_splitter.sample_voice_cost(s) > 1
+                ),
+                "samples": len(needed),
+            }
+        )
     return out
 
 
@@ -447,12 +486,19 @@ def polyphony_risk_lines(risks: list[dict]) -> list[str]:
             else:
                 seen[key].append("")
             continue
-        why = (f" ({r['stereo']} of {r['samples']} samples are stereo, and a "
-               f"stereo sample costs two voices)") if r["stereo"] else ""
+        why = (
+            (
+                f" ({r['stereo']} of {r['samples']} samples are stereo, and a "
+                f"stereo sample costs two voices)"
+            )
+            if r["stereo"]
+            else ""
+        )
         lines.append(
             f"\"{r['preset']}\" stacks {r['voices']} voices on {r['key']} at "
             f"velocity {r['velocity']}, over the {r['limit']}-voice-per-note "
-            f"limit{why} -- the extra layers will be stolen on playback.")
+            f"limit{why} -- the extra layers will be stolen on playback."
+        )
     # Grouped messages first: they are the converter's own findings, and a
     # per-preset polyphony line is more specific than any of them.
     grouped = []
@@ -508,7 +554,11 @@ def suggest_mono_side(samples: list) -> dict:
     if not diffs:
         return {"side": "left", "avg_db": 0.0, "n": 0}
     avg = sum(diffs) / len(diffs)
-    return {"side": "left" if avg >= 0 else "right", "avg_db": abs(avg), "n": len(diffs)}
+    return {
+        "side": "left" if avg >= 0 else "right",
+        "avg_db": abs(avg),
+        "n": len(diffs),
+    }
 
 
 def load_samples_for_test(bank_path: str) -> list:
@@ -532,7 +582,12 @@ def load_sources_samples_for_test(sources: list, fmt: str) -> list:
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
-    _ASSEMBLE = {"E4B": vs_e4b.assemble, "KRZ": vs_krz.assemble, "EIII": vs_eiii.assemble}
+
+    _ASSEMBLE = {
+        "E4B": vs_e4b.assemble,
+        "KRZ": vs_krz.assemble,
+        "EIII": vs_eiii.assemble,
+    }
     _EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
     fn = _ASSEMBLE[fmt]
     data = fn(sources, bank_name="TestPreview") if fmt == "EIII" else fn(sources)
@@ -598,7 +653,7 @@ def _collect_diagnostics():
     """
     try:
         manager = diagnostics.collect()
-    except Exception:
+    except Exception:  # noqa: BLE001
         yield []
         return
     with manager as records:
@@ -606,7 +661,7 @@ def _collect_diagnostics():
 
 
 @contextlib.contextmanager
-def collect_diagnostics_into(risks_out: Optional[list]):
+def collect_diagnostics_into(risks_out: Optional[list]):  # noqa: UP045
     """Collect mpc2emu's diagnostics for the block into an existing risks list.
 
     Public because the PARSE steps live in the import modules, outside
@@ -635,19 +690,22 @@ def _content_lost(record, out: list) -> bool:
     try:
         return bool(record.content_lost)
     except AttributeError:
-        if not any(r.get("code") == "VINSAMLIB_DIAGNOSTICS_INCOMPLETE"
-                   for r in out):
-            out.append({
-                "message": "this mpc2emu checkout's diagnostics carry no "
-                           "`content_lost` field",
-                "body": "Findings are still shown, but the count of those "
-                        "that LOSE CONTENT cannot be trusted -- it will read "
-                        "zero however much was dropped. Update mpc2emu; the "
-                        "field has been required on their side since "
-                        "2026-09-05.",
-                "subject": "", "code": "VINSAMLIB_DIAGNOSTICS_INCOMPLETE",
-                "content_lost": False, "detail": {},
-            })
+        if not any(r.get("code") == "VINSAMLIB_DIAGNOSTICS_INCOMPLETE" for r in out):
+            out.append(
+                {
+                    "message": "this mpc2emu checkout's diagnostics carry no "
+                    "`content_lost` field",
+                    "body": "Findings are still shown, but the count of those "
+                    "that LOSE CONTENT cannot be trusted -- it will read "
+                    "zero however much was dropped. Update mpc2emu; the "
+                    "field has been required on their side since "
+                    "2026-09-05.",
+                    "subject": "",
+                    "code": "VINSAMLIB_DIAGNOSTICS_INCOMPLETE",
+                    "content_lost": False,
+                    "detail": {},
+                }
+            )
         return False
 
 
@@ -674,9 +732,11 @@ def _diagnostic_risks(records) -> list[dict]:
         # its own flag and gets its own sentence -- "this will not sound"
         # is a different thing to tell someone than "this lost a layer".
         if detail.get("silent_on_normal_channel"):
-            parts.append("A K2000 plays a drum program only on a drum "
-                         "channel, so this preset will be SILENT on a normal "
-                         "one.")
+            parts.append(
+                "A K2000 plays a drum program only on a drum "
+                "channel, so this preset will be SILENT on a normal "
+                "one."
+            )
         remedy = str(getattr(d, "remedy", "") or "").strip()
         if remedy:
             parts.append(remedy)
@@ -704,25 +764,27 @@ def _diagnostic_risks(records) -> list[dict]:
             # twice before the sentence even started.
             for lead in (f"'{subject}': ", f'"{subject}": '):
                 if body.startswith(lead):
-                    body = body[len(lead):]
+                    body = body[len(lead) :]
                     break
-        out.append({
-            "message": f'"{subject}": {text}' if subject else text,
-            "body": body,
-            "subject": subject,
-            "code": getattr(d, "code", ""),
-            # A required field on their side since 2026-09-05. The comment
-            # here used to say it was read "as an attribute and not with a
-            # .get() that would quietly read False" -- while the code was
-            # `getattr(d, "content_lost", False)`, which is exactly that
-            # quiet False. An external review caught the contradiction
-            # (2026-09-20, ER-2). Absence now produces a visible record of
-            # its own rather than a silent no-loss reading, because this
-            # field feeds the one number whose value is that it counts what
-            # the user cannot get back.
-            "content_lost": _content_lost(d, out),
-            "detail": detail,
-        })
+        out.append(
+            {
+                "message": f'"{subject}": {text}' if subject else text,
+                "body": body,
+                "subject": subject,
+                "code": getattr(d, "code", ""),
+                # A required field on their side since 2026-09-05. The comment
+                # here used to say it was read "as an attribute and not with a
+                # .get() that would quietly read False" -- while the code was
+                # `getattr(d, "content_lost", False)`, which is exactly that
+                # quiet False. An external review caught the contradiction
+                # (2026-09-20, ER-2). Absence now produces a visible record of
+                # its own rather than a silent no-loss reading, because this
+                # field feeds the one number whose value is that it counts what
+                # the user cannot get back.
+                "content_lost": _content_lost(d, out),
+                "detail": detail,
+            }
+        )
     return out
 
 
@@ -765,7 +827,8 @@ def _akai_parse_kwargs(opts: ConversionOptions) -> dict:
             "firmware: parse_akai_program takes no `firmware_sim`. "
             "Converting as the firmware would is unavailable here; convert "
             "as good as possible instead, or point Settings at a checkout "
-            "that carries it.")
+            "that carries it."
+        )
     return {"firmware_sim": True}
 
 
@@ -778,14 +841,16 @@ def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
     a keyword it has never heard of. An older checkout keeps its own
     behaviour, which was faithful output.
     """
-    ASKED = {"faithful_layers": opts.krz_faithful_layers,
-             "drum_program": opts.krz_drum_program,
-             # The K2000 simulation is writer-side BY NATURE: the device
-             # imports by cloning template Program 199 and writing five
-             # fields, so this makes the writer ignore voice parameters
-             # entirely. It is only correct alongside a neutrally-parsed
-             # source -- both halves are set from the same option below.
-             "firmware_sim": opts.match_device_import}
+    ASKED = {
+        "faithful_layers": opts.krz_faithful_layers,
+        "drum_program": opts.krz_drum_program,
+        # The K2000 simulation is writer-side BY NATURE: the device
+        # imports by cloning template Program 199 and writing five
+        # fields, so this makes the writer ignore voice parameters
+        # entirely. It is only correct alongside a neutrally-parsed
+        # source -- both halves are set from the same option below.
+        "firmware_sim": opts.match_device_import,
+    }
     try:
         names = krz_writer.write_krz.__code__.co_varnames
     except AttributeError:
@@ -807,7 +872,8 @@ def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
             f"this mpc2emu checkout's KRZ writer does not take "
             f"{' or '.join('`' + m + '`' for m in missing)} -- update "
             f"mpc2emu, or choose 'Fit to three layers' (its own behaviour) "
-            f"in K2000 Layer Handling.")
+            f"in K2000 Layer Handling."
+        )
     kw = {}
     for k, wanted in ASKED.items():
         if k in names:
@@ -815,8 +881,12 @@ def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
     return kw
 
 
-def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
-                     risks_out: Optional[list] = None) -> str:
+def _apply_and_write(
+    bank: Any,
+    opts: ConversionOptions,
+    out_stem: str,
+    risks_out: Optional[list] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Run the pipeline, and collect what mpc2emu says about it on the way.
 
     The split exists only so the collection wraps the WHOLE pipeline in one
@@ -831,8 +901,9 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
     # defaults were applied -- which is the thing nobody can reconstruct
     # afterwards from the output.
     opts = _strip_processing_for_device_match(opts, risks_out)
-    calllog.note("conversion", source=getattr(bank, "path", ""),
-                 out_stem=out_stem, options=opts)
+    calllog.note(
+        "conversion", source=getattr(bank, "path", ""), out_stem=out_stem, options=opts
+    )
     with collect_diagnostics_into(risks_out):
         return _apply_and_write_pipeline(bank, opts, out_stem, risks_out)
 
@@ -841,8 +912,12 @@ def _apply_and_write(bank: Any, opts: ConversionOptions, out_stem: str,
 #: the writer's own business (target_format, pan_law and the AKAI/KRZ layer
 #: settings, which shape the output file rather than reprocess the audio).
 _PROCESSING_FIELDS = (
-    "resample_profile", "no_bandpass", "resample_keep_gain",
-    "max_sample_rate", "reduce_key_zones_pct", "reduce_velocity_layers_pct",
+    "resample_profile",
+    "no_bandpass",
+    "resample_keep_gain",
+    "max_sample_rate",
+    "reduce_key_zones_pct",
+    "reduce_velocity_layers_pct",
     "mono",
     # `trim_start`/`trim_tail` stood here and ARE NOT FIELDS. The loop's
     # `hasattr` guard -- added to tolerate an older options object -- skipped
@@ -851,10 +926,16 @@ _PROCESSING_FIELDS = (
     # and one nobody here could hear. The guard is gone below; a name that is
     # not a field is now an error, because the only way it gets into this
     # tuple is a typo.
-    "trim_start_db", "trim_start_fade_ms", "trim_start_keep_loops",
-    "trim_tail_db", "trim_tail_fade_ms", "trim_tail_keep_loops",
+    "trim_start_db",
+    "trim_start_fade_ms",
+    "trim_start_keep_loops",
+    "trim_tail_db",
+    "trim_tail_fade_ms",
+    "trim_tail_keep_loops",
     # Also executed by the pipeline and also missing before.
-    "split_velocity_layers", "shrink_to_bytes", "shrink_by_pct",
+    "split_velocity_layers",
+    "shrink_to_bytes",
+    "shrink_by_pct",
 )
 
 #: Deliberately NOT stripped, with the reason, so the next person does not
@@ -869,8 +950,9 @@ _PROCESSING_FIELDS = (
 
 
 def _strip_processing_for_device_match(
-        opts: ConversionOptions,
-        risks_out: Optional[list] = None) -> ConversionOptions:
+    opts: ConversionOptions,
+    risks_out: Optional[list] = None,  # noqa: UP045
+) -> ConversionOptions:  # noqa: RUF100, UP045
     """Under ``match_device_import``, drop this project's own processing.
 
     The dialog greys these out, but a greyed widget is not a guarantee: the
@@ -901,7 +983,8 @@ def _strip_processing_for_device_match(
         raise ConvertOpError(
             f"Converting as the firmware would is not available for "
             f"{opts.target_format}: no sampler's import routine writes that "
-            f"format. Convert as good as possible instead.")
+            f"format. Convert as good as possible instead."
+        )
     blank = ConversionOptions()
     changed = {}
     for field in _PROCESSING_FIELDS:
@@ -918,20 +1001,28 @@ def _strip_processing_for_device_match(
         # pending_pane -- and a bare string here was an AttributeError on the
         # AKAI import path, which is exactly the path that sets this option.
         names = ", ".join(sorted(changed))
-        risks_out.append({
-            "code": "DEVICE_MATCH_PROCESSING_SKIPPED",
-            "message": (
-                f"Converting as the firmware would: this project's own "
-                f"processing was skipped ({names})."),
-            "body": (
-                "Applying it would produce something the device would not, "
-                "while the conversion claimed to reproduce the device."),
-        })
+        risks_out.append(
+            {
+                "code": "DEVICE_MATCH_PROCESSING_SKIPPED",
+                "message": (
+                    f"Converting as the firmware would: this project's own "
+                    f"processing was skipped ({names})."
+                ),
+                "body": (
+                    "Applying it would produce something the device would not, "
+                    "while the conversion claimed to reproduce the device."
+                ),
+            }
+        )
     return dataclasses.replace(opts, **changed)
 
 
-def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
-                              risks_out: Optional[list] = None) -> str:
+def _apply_and_write_pipeline(
+    bank: Any,
+    opts: ConversionOptions,
+    out_stem: str,
+    risks_out: Optional[list] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Shared tail end of apply_conversion() and build/xpm_import.py's
     import_xpm(): both start from a different parse step (an already-
     native E4B vs. a foreign XPM) but from an already-parsed mpc2emu Bank
@@ -953,16 +1044,22 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
     so the three callers that don't care (and the workers that thread their
     return value straight into the UI) keep the signature they have."""
     if opts.trim_start_db is not None:
-        _run_captured(start_trim.trim_start_bank, bank,
-                      thresh_db=-abs(opts.trim_start_db),
-                      fade_ms=opts.trim_start_fade_ms,
-                      drop_full_loop=not opts.trim_start_keep_loops)
+        _run_captured(
+            start_trim.trim_start_bank,
+            bank,
+            thresh_db=-abs(opts.trim_start_db),
+            fade_ms=opts.trim_start_fade_ms,
+            drop_full_loop=not opts.trim_start_keep_loops,
+        )
 
     if opts.trim_tail_db is not None:
-        _run_captured(tail_trim.trim_tail_bank, bank,
-                      thresh_db=-abs(opts.trim_tail_db),
-                      fade_ms=opts.trim_tail_fade_ms,
-                      drop_full_loop=not opts.trim_tail_keep_loops)
+        _run_captured(
+            tail_trim.trim_tail_bank,
+            bank,
+            thresh_db=-abs(opts.trim_tail_db),
+            fade_ms=opts.trim_tail_fade_ms,
+            drop_full_loop=not opts.trim_tail_keep_loops,
+        )
 
     # E4B only, matching mpc2emu's own gate (its convert.py applies --pan-law
     # for 'e4b' alone). No longer for want of a measurement on the K2000: as
@@ -985,13 +1082,21 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
         _run_captured(zone_reducer.explode_velocity_layers, bank)
 
     if opts.reduce_key_zones_pct > 0 or opts.reduce_velocity_layers_pct > 0:
-        _run_captured(zone_reducer.reduce_bank, bank,
-                      opts.reduce_key_zones_pct, opts.reduce_velocity_layers_pct)
+        _run_captured(
+            zone_reducer.reduce_bank,
+            bank,
+            opts.reduce_key_zones_pct,
+            opts.reduce_velocity_layers_pct,
+        )
 
     if opts.resample_profile:
-        _run_captured(resampler.resample_bank, bank, opts.resample_profile,
-                      bandpass=not opts.no_bandpass,
-                      restore_level=not opts.resample_keep_gain)
+        _run_captured(
+            resampler.resample_bank,
+            bank,
+            opts.resample_profile,
+            bandpass=not opts.no_bandpass,
+            restore_level=not opts.resample_keep_gain,
+        )
 
     if opts.max_sample_rate:
         _run_captured(_apply_max_sample_rate, bank, opts.max_sample_rate)
@@ -1002,9 +1107,12 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
     # rather than thinning zones to reach a target the other options were
     # about to reach anyway.
     if opts.shrink_to_bytes is not None or opts.shrink_by_pct is not None:
-        _run_captured(shrink_planner.shrink_bank, bank,
-                      target_bytes=opts.shrink_to_bytes,
-                      by_pct=opts.shrink_by_pct)
+        _run_captured(
+            shrink_planner.shrink_bank,
+            bank,
+            target_bytes=opts.shrink_to_bytes,
+            by_pct=opts.shrink_by_pct,
+        )
 
     # After every step, never before: --mono halves each stereo zone's voice
     # cost and the zone reducer removes layers outright, so the only voice
@@ -1027,6 +1135,7 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
         # mpc2emu's AKAI writer must not surface as a bare AttributeError
         # out of the lazy bridge.
         from ..config import Config
+
         ok, reason = Config.load().check_akai_write_support()
         if not ok:
             raise ConvertOpError(f"Can't convert to AKAI -- {reason}")
@@ -1073,7 +1182,8 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
                 f"{failed} sample(s) could not be resampled to a rate the "
                 f"S3000XL can play (it plays 22050 and 44100 only). Writing "
                 f"them would produce a volume that sounds sharp and short on "
-                f"the machine, so nothing was written.")
+                f"the machine, so nothing was written."
+            )
         # A SUCCESSFUL SNAP IS STILL A CHANGE TO THE USER'S AUDIO, and until
         # now it was the only irreversible one this pipeline made in silence.
         # mpc2emu's snapper `print`s each resample and `_diag`s only the
@@ -1089,39 +1199,45 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
         # know about.
         n_snapped = int((snapped or {}).get("snapped") or 0)
         if n_snapped and risks_out is not None:
-            risks_out.append({
-                "code": "AKAI_RATE_SNAPPED",
-                "subject": out_stem,
-                "message": (
-                    f"{n_snapped} sample(s) were resampled to 22050 or 44100 Hz. "
-                    f"An S3000XL plays those two rates only -- it reads an index "
-                    f"byte and ignores the stored rate, so anything else would "
-                    f"have played transposed rather than failing. The audio in "
-                    f"this volume is not bit-identical to the source."),
-                # BODY CARRIES THE WHOLE SENTENCE, because `body` is what
-                # polyphony_risk_lines() actually renders -- `message` is read
-                # only as a truthiness flag and as a dedupe key. Every risk
-                # built by _diagnostic_risks keeps body == message minus the
-                # subject prefix; a bare summary here meant the sentence this
-                # was written to deliver was never shown to anyone.
-                "body": (
-                    f"{n_snapped} sample(s) were resampled to 22050 or 44100 Hz. "
-                    f"An S3000XL plays those two rates only -- it reads an index "
-                    f"byte and ignores the stored rate, so anything else would "
-                    f"have played transposed rather than failing. The audio in "
-                    f"this volume is not bit-identical to the source."),
-                # TRUE, despite the conversion being unavoidable. Resampling
-                # discards the band above the new Nyquist irreversibly, and
-                # mpc2emu's AKAI_FILTER_SHAPE_LOST -- equally forced, and the
-                # precedent this was written to follow -- carries True. It also
-                # feeds main_window._warn_polyphony's "N losing content" count,
-                # which is the one figure a user scans, and a whole library
-                # snapped to 44100 reporting zero there is the under-report
-                # this flag exists to prevent.
-                "content_lost": True,
-                "detail": {"snapped": n_snapped,
-                           "unchanged": int((snapped or {}).get("unchanged") or 0)},
-            })
+            risks_out.append(
+                {
+                    "code": "AKAI_RATE_SNAPPED",
+                    "subject": out_stem,
+                    "message": (
+                        f"{n_snapped} sample(s) were resampled to 22050 or 44100 Hz. "
+                        f"An S3000XL plays those two rates only -- it reads an index "
+                        f"byte and ignores the stored rate, so anything else would "
+                        f"have played transposed rather than failing. The audio in "
+                        f"this volume is not bit-identical to the source."
+                    ),
+                    # BODY CARRIES THE WHOLE SENTENCE, because `body` is what
+                    # polyphony_risk_lines() actually renders -- `message` is read
+                    # only as a truthiness flag and as a dedupe key. Every risk
+                    # built by _diagnostic_risks keeps body == message minus the
+                    # subject prefix; a bare summary here meant the sentence this
+                    # was written to deliver was never shown to anyone.
+                    "body": (
+                        f"{n_snapped} sample(s) were resampled to 22050 or 44100 Hz. "
+                        f"An S3000XL plays those two rates only -- it reads an index "
+                        f"byte and ignores the stored rate, so anything else would "
+                        f"have played transposed rather than failing. The audio in "
+                        f"this volume is not bit-identical to the source."
+                    ),
+                    # TRUE, despite the conversion being unavoidable. Resampling
+                    # discards the band above the new Nyquist irreversibly, and
+                    # mpc2emu's AKAI_FILTER_SHAPE_LOST -- equally forced, and the
+                    # precedent this was written to follow -- carries True. It also
+                    # feeds main_window._warn_polyphony's "N losing content" count,
+                    # which is the one figure a user scans, and a whole library
+                    # snapped to 44100 reporting zero there is the under-report
+                    # this flag exists to prevent.
+                    "content_lost": True,
+                    "detail": {
+                        "snapped": n_snapped,
+                        "unchanged": int((snapped or {}).get("unchanged") or 0),
+                    },
+                }
+            )
         # NOT write_akai_bank: it hardcodes `build_akai_volume(bank, name)`
         # with no keyword passthrough, so the board flag cannot reach the
         # writer through it. Asked of the function rather than assumed, the
@@ -1131,7 +1247,7 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
         if opts.akai_ib304f:
             try:
                 names = akai_writer.build_akai_volume.__code__.co_varnames
-            except Exception:
+            except Exception:  # noqa: BLE001
                 names = ()
             if "ib304f" in names:
                 _akai_kw["ib304f"] = True
@@ -1140,16 +1256,19 @@ def _apply_and_write_pipeline(bank: Any, opts: ConversionOptions, out_stem: str,
                     "this mpc2emu checkout's AKAI writer has no IB-304F "
                     "support, so the second-filter option cannot be honoured. "
                     "Update mpc2emu, or turn the option off to write a volume "
-                    "for a machine without the board.")
+                    "for a machine without the board."
+                )
         out_path.mkdir(parents=True, exist_ok=True)
-        _files = _run_captured(akai_writer.build_akai_volume, bank, out_stem,
-                               **_akai_kw)
+        _files = _run_captured(
+            akai_writer.build_akai_volume, bank, out_stem, **_akai_kw
+        )
         for _fn, _data in _files:
             (out_path / _fn).write_bytes(_data)
     elif opts.target_format == "KRZ":
         out_path = tmp_dir / f"{out_stem}.krz"
-        _run_captured(krz_writer.write_krz, bank, str(out_path),
-                      **_krz_writer_kwargs(opts))
+        _run_captured(
+            krz_writer.write_krz, bank, str(out_path), **_krz_writer_kwargs(opts)
+        )
     elif opts.target_format == "EIII":
         out_path = tmp_dir / f"{out_stem}.e3x"
         _run_captured(eiii_writer.write_eiii, bank, str(out_path))
@@ -1200,6 +1319,7 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
+
     expected = len(bank.samples)
     if not expected:
         return
@@ -1212,13 +1332,15 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
             # that catches a writer losing audio -- on the one target no
             # machine has ever heard.
             from ..banks import akai as vs_akai
+
             got = len(vs_akai.parse_dir(str(out_path)).samples)
             if got >= expected:
                 return
             raise ConvertOpError(
                 f"The AKAI volume came back with {got} of {expected} "
                 f"sample(s) -- the writer lost audio, so it has not been "
-                f"kept.")
+                f"kept."
+            )
         data = out_path.read_bytes()
         if opts.target_format == "KRZ":
             got = len(vs_krz.parse_bytes(data, out_path.name).samples)
@@ -1226,7 +1348,7 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
             got = len(vs_eiii.parse_bytes(data, out_path.name).samples)
         else:
             got = len(vs_e4b.parse_bytes(data, out_path.name).samples)
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Unreadable for some other reason is a separate problem, and the
         # caller will meet it soon enough; do not mask it as sample loss.
         return
@@ -1239,10 +1361,13 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
         f"material: the conversion itself completed and the samples were all "
         f"present in memory. If a vintage resample profile is switched on, "
         f"try it off -- a resampled stereo sample can end half a frame long, "
-        f"which the E4B writer mis-sizes.")
+        f"which the E4B writer mis-sizes."
+    )
 
 
-def _zone_loss_risk(bank: Any, out_path: Path, opts: ConversionOptions) -> Optional[dict]:
+def _zone_loss_risk(
+    bank: Any, out_path: Path, opts: ConversionOptions
+) -> Optional[dict]:  # noqa: UP045
     """Warn when the written bank references FEWER zones than the Bank held.
 
     The other half of the check above, and the half its own docstring said it
@@ -1276,6 +1401,7 @@ def _zone_loss_risk(bank: Any, out_path: Path, opts: ConversionOptions) -> Optio
     """
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
+
     # E4B and EIII. It was EIII-only for a day because E4B reported "140 of
     # 141" on ordinary conversions and nobody had explained it.
     #
@@ -1305,8 +1431,13 @@ def _zone_loss_risk(bank: Any, out_path: Path, opts: ConversionOptions) -> Optio
     # It read as "the false positive is fixed" and was caught only because
     # manual_names_e2e asserts the EIII loss must still be reported.
     have = {s.name for s in bank.samples}
-    wanted = sum(1 for p in bank.presets for v in p.voices for z in v.zones
-                 if getattr(z, "sample_name", None) in have)
+    wanted = sum(
+        1
+        for p in bank.presets
+        for v in p.voices
+        for z in v.zones
+        if getattr(z, "sample_name", None) in have
+    )
     if not wanted:
         return None
     if opts.target_format == "AKAI":
@@ -1318,13 +1449,21 @@ def _zone_loss_risk(bank: Any, out_path: Path, opts: ConversionOptions) -> Optio
         data = out_path.read_bytes()
         if opts.target_format == "E4B":
             parsed = vs_e4b.parse_bytes(data, out_path.name)
-            got = sum(1 for p in parsed.presets for _off, idx in p.zone_refs
-                      if idx and idx in parsed.samples)
+            got = sum(
+                1
+                for p in parsed.presets
+                for _off, idx in p.zone_refs
+                if idx and idx in parsed.samples
+            )
         else:
             parsed = vs_eiii.parse_bytes(data, out_path.name)
-            got = sum(1 for p in parsed.presets for _off, raw in p.zone_refs
-                      if (raw & 0x3FFF) and (raw & 0x3FFF) in parsed.samples)
-    except Exception:
+            got = sum(
+                1
+                for p in parsed.presets
+                for _off, raw in p.zone_refs
+                if (raw & 0x3FFF) and (raw & 0x3FFF) in parsed.samples
+            )
+    except Exception:  # noqa: BLE001
         return None
     if got >= wanted:
         return None
@@ -1341,7 +1480,8 @@ def _zone_loss_risk(bank: Any, out_path: Path, opts: ConversionOptions) -> Optio
             f"keyboard. Naming the samples after the keys they play, or "
             f"setting their ranges in Adjust Sample Placement, avoids the "
             f"collision. E4B and KRZ keep overlapping zones and are "
-            f"unaffected."),
+            f"unaffected."
+        ),
     }
 
 
@@ -1356,6 +1496,7 @@ def _sniff_format(bank_path: str) -> str:
         return "KRZ"
     if len(head) == 16 and head[15] == 0:
         from ..banks import eiii as vs_eiii
+
         if vs_eiii.detect_format(head) is not None:
             return "EIII"
     raise ConvertOpError(f"not a recognized E4B, KRZ or EIII bank: {bank_path}")
@@ -1369,8 +1510,11 @@ def _parse_by_format(bank_path: str, fmt: str) -> Any:
     return _run_captured(e4b_parser.parse_e4b, bank_path)
 
 
-def apply_conversion(bank_path: str, opts: ConversionOptions,
-                     risks_out: Optional[list] = None) -> str:
+def apply_conversion(
+    bank_path: str,
+    opts: ConversionOptions,
+    risks_out: Optional[list] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Runs mpc2emu's own parse -> Bank -> resample/reduce -> write round
     trip on an already-assembled E4B, KRZ or EIII file, producing a NEW
     temp file (the original is never touched). Returns the new file's
@@ -1397,7 +1541,8 @@ def apply_conversion(bank_path: str, opts: ConversionOptions,
         raise ConvertOpError(
             f"{Path(bank_path).name} holds no sample audio -- its programs "
             f"reference only samples in the sampler's ROM, so there is "
-            f"nothing to convert.")
+            f"nothing to convert."
+        )
     return _apply_and_write(bank, opts, Path(bank_path).stem, risks_out)
 
 
@@ -1413,15 +1558,20 @@ def _assembled_sample_count(data: bytes, suffix: str) -> int:
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
+
     reader = {".krz": vs_krz, ".e3x": vs_eiii}.get(suffix.lower(), vs_e4b)
     try:
         return len(reader.parse_bytes(data, "assembled").samples)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return -1
 
 
-def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
-                   risks_out: Optional[list] = None) -> str:
+def convert_preset(
+    bank: Any,
+    preset_obj: Any,
+    opts: ConversionOptions,
+    risks_out: Optional[list] = None,  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """Applies mpc2emu resample/reduce/format-conversion to a SINGLE
     already-native preset/program, rather than a whole assembled bank --
     the same "convert via mpc2emu" pipeline offered for XPM import and
@@ -1448,6 +1598,7 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
+
     tmp_dir = tempdirs.session_temp_dir(_CONVERT_TEMP_PREFIX)
     stem = _sanitize_stem(getattr(preset_obj, "name", "") or "")
     if isinstance(bank, vs_akai.AkaiBank):
@@ -1482,7 +1633,8 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
             f"{getattr(preset_obj, 'name', 'This program')!r} references only "
             f"samples held in the sampler's ROM -- the bank file contains no "
             f"audio for them, so there is nothing to convert. (Browsing and "
-            f"inspecting the bank still works.)")
+            f"inspecting the bank still works.)"
+        )
 
     tmp_path.write_bytes(data)
     out = apply_conversion(str(tmp_path), opts, risks_out)
@@ -1494,8 +1646,13 @@ def convert_preset(bank: Any, preset_obj: Any, opts: ConversionOptions,
     return out
 
 
-def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
-                           tmp_dir: Path, risks_out: Optional[list]) -> str:
+def _convert_akai_program(
+    bank: Any,
+    program: Any,
+    opts: ConversionOptions,
+    tmp_dir: Path,
+    risks_out: Optional[list],  # noqa: UP045
+) -> str:  # noqa: RUF100, UP045
     """One AKAI program -> a bank in whichever target format was chosen.
 
     AKAI takes its own route to the same pipeline, because it is the one
@@ -1522,9 +1679,11 @@ def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
             "AKAI to AKAI is not offered: the whole pipeline runs through "
             "mpc2emu's Bank model, which carries a fraction of what an AKAI "
             "program file holds, so the round trip would lose parameters for "
-            "no gain. Use New Bank to collect AKAI programs verbatim instead.")
+            "no gain. Use New Bank to collect AKAI programs verbatim instead."
+        )
 
     from ..banks import akai as vs_akai
+
     name = getattr(program, "name", "") or "?"
     wanted = program.sample_names
     missing = bank.missing_samples(program)
@@ -1540,7 +1699,8 @@ def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
             f"{name!r} names {len(missing)} sample(s) that are not on its own "
             f"volume ({', '.join(missing[:4])}{'…' if len(missing) > 4 else ''}), "
             f"so there is no audio to convert."
-            + (f" {_akai_sibling_hint(bank, missing)}" or ""))
+            + (f" {_akai_sibling_hint(bank, missing)}" or "")  # noqa: SIM222
+        )  # noqa: RUF100, SIM222
 
     # Samples and the program go in SEPARATE directories, and only the
     # sample directory is handed over. mpc2emu's own lookup falls back to
@@ -1554,8 +1714,7 @@ def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
     samples_dir = tmp_dir / "samples"
     samples_dir.mkdir(parents=True, exist_ok=True)
     files = vs_akai.assemble([(bank, program)])
-    program_files = [(fn, d) for fn, d in files
-                     if fn.upper().endswith((".P3", ".P1"))]
+    program_files = [(fn, d) for fn, d in files if fn.upper().endswith((".P3", ".P1"))]
     sample_files = [(fn, d) for fn, d in files if (fn, d) not in program_files]
     if not program_files:
         raise ConvertOpError(f"{name!r} produced no program file.")
@@ -1563,9 +1722,12 @@ def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
     program_path = tmp_dir / program_files[0][0]
     program_path.write_bytes(program_files[0][1])
 
-    parsed = _run_captured(akai_parser.parse_akai_program,
-                            str(program_path), str(samples_dir),
-                            **_akai_parse_kwargs(opts))
+    parsed = _run_captured(
+        akai_parser.parse_akai_program,
+        str(program_path),
+        str(samples_dir),
+        **_akai_parse_kwargs(opts),
+    )
     return _apply_and_write(parsed, opts, _sanitize_stem(name), risks_out)
 
 
@@ -1603,6 +1765,7 @@ def _convert_akai_program(bank: Any, program: Any, opts: ConversionOptions,
 
 def _akai_config():
     from ..config import Config
+
     return Config.load()
 
 
@@ -1622,27 +1785,38 @@ def _akai_sibling_hint(bank: Any, missing: list) -> str:
     path = str(getattr(bank, "path", ""))
     image = path.rsplit(":", 1)[0] if ":" in path else ""
     if not image or not Path(image).is_file():
-        return ("AKAI libraries often keep a program and its samples on "
-                "different volumes.")
+        return (
+            "AKAI libraries often keep a program and its samples on "
+            "different volumes."
+        )
     try:
         from ..vfs.akai import AkaiVolume
+
         vol = AkaiVolume(image)
         want = {n.strip().upper() for n in missing}
         holders: dict[str, int] = {}
         for folder in vol.list():
-            names = {e.meta.get("akai_name", "").strip().upper()
-                     for e in vol.list(folder)
-                     if e.meta.get("role") == "sample"}
+            names = {
+                e.meta.get("akai_name", "").strip().upper()
+                for e in vol.list(folder)
+                if e.meta.get("role") == "sample"
+            }
             hit = len(want & names)
             if hit:
                 holders[folder.name] = hit
-    except Exception:
-        return ("AKAI libraries often keep a program and its samples on "
-                "different volumes.")
+    except Exception:  # noqa: BLE001
+        return (
+            "AKAI libraries often keep a program and its samples on "
+            "different volumes."
+        )
     if not holders:
-        return ("They are not on this disc at all — AKAI libraries are often "
-                "split across several, so look for the rest of the set.")
+        return (
+            "They are not on this disc at all — AKAI libraries are often "
+            "split across several, so look for the rest of the set."
+        )
     best = sorted(holders.items(), key=lambda kv: -kv[1])[:3]
     where = ", ".join(f"{v} ({n} of them)" for v, n in best)
-    return (f"They are on this same disc, under {where} — add that volume's "
-            f"program instead, or convert from there.")
+    return (
+        f"They are on this same disc, under {where} — add that volume's "
+        f"program instead, or convert from there."
+    )

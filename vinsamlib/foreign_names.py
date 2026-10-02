@@ -34,17 +34,17 @@ import struct
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, Optional  # noqa: UP035
 
 # ── shared RIFF walking (SF2 and GIG are both RIFF) ────────────────────────
 #
 # Streaming, never whole-file: every walk seeks over chunk payloads instead of
 # reading them, which is what keeps a 985 MB .gig as cheap as a 5 KB one.
 
-_MAX_CHUNK_DEPTH_BYTES = 1 << 20   # a header chunk we are willing to read whole
+_MAX_CHUNK_DEPTH_BYTES = 1 << 20  # a header chunk we are willing to read whole
 
 
-def _riff_form(f, expect: bytes) -> Optional[int]:
+def _riff_form(f, expect: bytes) -> Optional[int]:  # noqa: UP045
     """End offset of a RIFF file whose form type is *expect*, else None."""
     head = f.read(12)
     if len(head) < 12 or head[:4] != b"RIFF" or head[8:12] != expect:
@@ -74,12 +74,12 @@ def _chunks(f, end: int) -> Iterator[tuple[bytes, int, int]]:
         data_off = f.tell()
         if size > end - data_off:
             size = max(0, end - data_off)
-        nxt = data_off + size + (size & 1)   # RIFF pads odd payloads
+        nxt = data_off + size + (size & 1)  # RIFF pads odd payloads
         yield cid, data_off, size
         f.seek(nxt)
 
 
-def _find_list(f, end: int, list_type: bytes) -> Optional[tuple[int, int]]:
+def _find_list(f, end: int, list_type: bytes) -> Optional[tuple[int, int]]:  # noqa: UP045
     """(payload offset, end offset) of the first ``LIST`` of *list_type*."""
     for cid, off, size in _chunks(f, end):
         if cid != b"LIST":
@@ -89,7 +89,7 @@ def _find_list(f, end: int, list_type: bytes) -> Optional[tuple[int, int]]:
     return None
 
 
-def _find_chunk(f, end: int, want: bytes) -> Optional[tuple[int, int]]:
+def _find_chunk(f, end: int, want: bytes) -> Optional[tuple[int, int]]:  # noqa: UP045
     """(payload offset, size) of the first chunk with id *want*."""
     for cid, off, size in _chunks(f, end):
         if cid == want:
@@ -125,6 +125,7 @@ class ListedPreset:
     ``resolve_ordinal()`` matches against mpc2emu's parsed preset names; use
     ``display`` for anything a user reads.
     """
+
     name: str
     program: int = 0
     bank: int = 0
@@ -136,7 +137,7 @@ class ListedPreset:
     #: ran in the background to produce figures that matched
     #: nothing. NEVER the image's size: that bug put 341.2 MB on
     #: all 613 rows of one disc.
-    size: Optional[int] = None
+    size: Optional[int] = None  # noqa: UP045
 
     @property
     def display(self) -> str:
@@ -145,10 +146,10 @@ class ListedPreset:
 
 # ── SoundFont 2 ────────────────────────────────────────────────────────────
 
-_PHDR_SIZE = 38   # sf2_parser.PHDR_SIZE
+_PHDR_SIZE = 38  # sf2_parser.PHDR_SIZE
 
 
-def sf2_preset_names(path) -> Optional[list[ListedPreset]]:
+def sf2_preset_names(path) -> Optional[list[ListedPreset]]:  # noqa: UP045
     """Every preset in a SoundFont, from its ``pdta``/``phdr`` chunk alone.
 
     ``phdr`` is a flat array of 38-byte records (20-byte name, preset and
@@ -177,15 +178,15 @@ def sf2_preset_names(path) -> Optional[list[ListedPreset]]:
                 return None
             off, size = found
             count = size // _PHDR_SIZE
-            if count < 2:      # only the sentinel, or not even that
+            if count < 2:  # only the sentinel, or not even that
                 return []
             f.seek(off)
             raw = f.read(count * _PHDR_SIZE)
     except OSError:
         return None
     out = []
-    for i in range(count - 1):          # drop the EOP sentinel
-        rec = raw[i * _PHDR_SIZE:(i + 1) * _PHDR_SIZE]
+    for i in range(count - 1):  # drop the EOP sentinel
+        rec = raw[i * _PHDR_SIZE : (i + 1) * _PHDR_SIZE]
         if len(rec) < 24:
             break
         preset, bank = struct.unpack_from("<HH", rec, 20)
@@ -195,7 +196,8 @@ def sf2_preset_names(path) -> Optional[list[ListedPreset]]:
 
 # ── GigaSampler ────────────────────────────────────────────────────────────
 
-def gig_instrument_names(path) -> Optional[list[ListedPreset]]:
+
+def gig_instrument_names(path) -> Optional[list[ListedPreset]]:  # noqa: UP045
     """Every instrument in a ``.gig``, from the DLS instrument list alone.
 
     GIG is DLS with extensions, so the instruments live in
@@ -228,7 +230,7 @@ def gig_instrument_names(path) -> Optional[list[ListedPreset]]:
                 if insh is not None and insh[1] >= 12:
                     f.seek(insh[0])
                     _regions, bank, program = struct.unpack("<III", f.read(12))
-                    program &= 0x7F     # gig_parser masks the same bit
+                    program &= 0x7F  # gig_parser masks the same bit
                 f.seek(here)
                 info = _find_list(f, ins_end, b"INFO")
                 if info is not None:
@@ -238,8 +240,7 @@ def gig_instrument_names(path) -> Optional[list[ListedPreset]]:
                     if inam is not None and inam[1] <= _MAX_CHUNK_DEPTH_BYTES:
                         f.seek(inam[0])
                         name = _cstr(f.read(inam[1]), strip=False)
-                out.append(ListedPreset(
-                    name or f"Inst{len(out):03d}", program, bank))
+                out.append(ListedPreset(name or f"Inst{len(out):03d}", program, bank))
     except OSError:
         return None
     return out
@@ -247,12 +248,12 @@ def gig_instrument_names(path) -> Optional[list[ListedPreset]]:
 
 # ── Logic EXS24 ────────────────────────────────────────────────────────────
 
-_EXS_MAGIC = 0x01000000          # exs24_parser.HEADER_MAGIC_LE
-_EXS_MAGIC_V11 = 0x00000101      # exs24_parser.HEADER_MAGIC_LE_V11
-_EXS_TYPE_FLAG = 0x40000000      # exs24_parser._V11_TYPE_FLAG
+_EXS_MAGIC = 0x01000000  # exs24_parser.HEADER_MAGIC_LE
+_EXS_MAGIC_V11 = 0x00000101  # exs24_parser.HEADER_MAGIC_LE_V11
+_EXS_TYPE_FLAG = 0x40000000  # exs24_parser._V11_TYPE_FLAG
 
 
-def exs_instrument_name(path) -> Optional[str]:
+def exs_instrument_name(path) -> Optional[str]:  # noqa: UP045
     """The instrument name of an ``.exs``, from its 84-byte header.
 
     Detection mirrors ``parse_exs24`` exactly, including the order of the two
@@ -308,13 +309,15 @@ def sfz_is_listable(path) -> bool:
 
 # ── TAL-Sampler ────────────────────────────────────────────────────────────
 
+
 class TalState(Enum):
     """What an import would be able to do with a ``.talsmpl``."""
+
     OK = "ok"
-    PARTIAL = "partial"        # some samples encrypted, some usable
-    ENCRYPTED = "encrypted"    # every sample encrypted -- nothing to import
+    PARTIAL = "partial"  # some samples encrypted, some usable
+    ENCRYPTED = "encrypted"  # every sample encrypted -- nothing to import
     NO_SAMPLES = "no_samples"  # references no sample at all
-    ROM_ONLY = "rom_only"      # only TAL's built-in waveforms, which are not files
+    ROM_ONLY = "rom_only"  # only TAL's built-in waveforms, which are not files
 
 
 @dataclass(frozen=True)
@@ -360,7 +363,7 @@ def _tal_urls(raw: bytes) -> tuple[list[str], list[str]]:
     for found in _TAL_URL.findall(raw):
         url = found.decode("latin-1").strip()
         if not url:
-            continue                      # an unused layer slot, not a sample
+            continue  # an unused layer slot, not a sample
         (refs if url.lower().endswith(_TAL_AUDIO_EXTS) else rom).append(url)
     return refs, rom
 
@@ -376,7 +379,7 @@ def talsmpl_sample_urls(path) -> list[str]:
     try:
         p = Path(path)
         if p.stat().st_size >= _EMBEDDED_AUDIO_MIN:
-            return []                     # v6.0 carries its audio inside
+            return []  # v6.0 carries its audio inside
         raw = p.read_bytes()
     except OSError:
         return []
@@ -384,7 +387,7 @@ def talsmpl_sample_urls(path) -> list[str]:
     return [u for u in refs if not u.lower().endswith(_TAL_ENCRYPTED_EXT)]
 
 
-def talsmpl_state(path) -> Optional[TalVerdict]:
+def talsmpl_state(path) -> Optional[TalVerdict]:  # noqa: UP045
     """Whether a ``.talsmpl``'s samples can actually be read, and its name.
 
     ``.talwav`` is TAL's own encrypted audio container. Nothing outside

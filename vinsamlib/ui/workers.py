@@ -6,12 +6,12 @@ back via a signal — the standard `QRunnable` + `QObject`-signals-bridge
 pattern, needed because `QRunnable` itself cannot emit signals.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import re
 import shiboken6
 import traceback
-from typing import Any, Callable
+from typing import Any, Callable  # noqa: UP035
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
@@ -30,7 +30,7 @@ def last_error_line(message: str) -> str:
 
 
 class WorkerSignals(QObject):
-    finished = Signal(object)   # the callable's return value
+    finished = Signal(object)  # the callable's return value
     error = Signal(str)
 
 
@@ -72,7 +72,7 @@ class Worker(QRunnable):
     def run(self) -> None:
         try:
             payload, signal_name = self._fn(*self._args, **self._kwargs), "finished"
-        except Exception:
+        except Exception:  # noqa: BLE001
             payload, signal_name = traceback.format_exc(), "error"
 
         # Deliver only if there is still someone to deliver to.
@@ -95,7 +95,7 @@ class Worker(QRunnable):
         try:
             getattr(self.signals, signal_name).emit(payload)
         except RuntimeError:
-            pass          # torn down mid-emit; the result has no receiver
+            pass  # torn down mid-emit; the result has no receiver
 
 
 def run(worker: Worker) -> None:

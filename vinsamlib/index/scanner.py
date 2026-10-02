@@ -110,7 +110,7 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
 
 def _scan_directory(
     path: Path, db: IndexDB, progress: ProgressCB, seen_paths: set
-) -> None:  # noqa: C901
+) -> None:  # noqa: C901, RUF100
     try:
         vol = LocalDirVolume(str(path))
         entries = vol.list()
@@ -187,7 +187,7 @@ def _scan_akai_dir(
     cid = db.begin_container(key, "directory", "AKAI", 0, mtime)
     try:
         bank = vs_akai.parse_dir(str(path))
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001
         db.finish_container(cid, error=str(ex))
         return
     item_id = db.add_item(
@@ -395,7 +395,7 @@ def _scan_image_container(
     path: str,
     volume_cls,
     size: int,
-    db: IndexDB,  # noqa: PLR0917
+    db: IndexDB,  # noqa: PLR0917, RUF100
     progress: ProgressCB,
     seen_paths: set,
 ) -> None:
@@ -416,7 +416,7 @@ def _scan_image_container(
             return
         with vol:
             _scan_vfs_listing(vol, None, db, cid, None)
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001
         db.finish_container(cid, error=str(ex))
         return
     total = _container_audio_total(db, cid)
@@ -445,9 +445,9 @@ def _scan_vfs_listing(
     vol,
     folder_entry,
     db: IndexDB,
-    container_id: int,  # noqa: C901
-    parent_item_id: Optional[int],
-) -> None:  # noqa: UP045
+    container_id: int,  # noqa: C901, RUF100
+    parent_item_id: Optional[int],  # noqa: UP045
+) -> None:  # noqa: RUF100, UP045
     for ordinal, e in enumerate(vol.list(folder_entry)):
         if e.kind == EntryKind.FOLDER and e.meta.get("akai_volume"):
             # An AKAI volume IS the bank and its programs are the presets --
@@ -464,7 +464,7 @@ def _scan_vfs_listing(
             )
             try:
                 programs = vol.volume_programs(e)
-            except Exception:  # noqa: S112
+            except Exception:  # noqa: BLE001, S112
                 continue
             # Sample sizes come from the DIRECTORY, never from reading the
             # samples. volume_programs() exists precisely to avoid that --
@@ -478,7 +478,7 @@ def _scan_vfs_listing(
                         sample_bytes[Path(se.name).stem.strip().upper()] = max(
                             0, int(se.size or 0) - _AKAI_SAMPLE_HEADER_BYTES
                         )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 sample_bytes = {}
             for i, prog in enumerate(programs):
                 wanted = {
@@ -548,7 +548,7 @@ def _scan_vfs_listing(
             )
             try:
                 data = vol.read(e)
-            except Exception:  # noqa: S112
+            except Exception:  # noqa: BLE001, S112
                 continue
             fmt, bank = _parse_bank_bytes(data, e.name)
             if bank is not None:
@@ -560,17 +560,17 @@ def _parse_bank_bytes(data: bytes, label: str):
     if data[:4] == b"FORM" and data[8:12] == b"E4B0":
         try:
             return "E4B", e4b.parse_bytes(data, label)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "E4B", None
     if data[:4] == b"PRAM":
         try:
             return "KRZ", krz.parse_bytes(data, label)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "KRZ", None
     if eiii.detect_format(data) is not None:
         try:
             return "EIII", eiii.parse_bytes(data, label)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "EIII", None
     return "", None
 
@@ -589,7 +589,7 @@ def _preset_audio_bytes(bank, obj) -> Optional[int]:  # noqa: UP045
     """
     try:
         return summary.summarize_preset(bank, obj).total_sample_bytes
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -620,7 +620,7 @@ def _bank_audio_bytes(bank) -> Optional[int]:  # noqa: UP045
             else:
                 total += int(getattr(smp, "size", 0) or 0)
         return total
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 

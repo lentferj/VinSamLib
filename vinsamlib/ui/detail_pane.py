@@ -6,7 +6,7 @@ applied only if the selection hasn't moved on by the time the result comes
 back (the generation-counter pattern below).
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from PySide6.QtWidgets import QTextBrowser, QVBoxLayout, QWidget
 
@@ -28,13 +28,18 @@ def unplayable_rate_line(ps) -> str:
     if not bad:
         return ""
     cents = sorted(bad.values())
-    span = (f"{cents[0]:+.0f}" if abs(cents[0] - cents[-1]) < 1
-            else f"{cents[0]:+.0f} to {cents[-1]:+.0f}")
-    return (f'<br><br><span style="color:#c0392b"><b>{len(bad)} sample(s) '
-            f"declare a rate this sampler cannot play.</b> The loader uses "
-            f"the index byte instead, so they sound {span} cents off and "
-            f"correspondingly short. Re-convert the source to fix it; the "
-            f"volume on disc cannot be repaired in place.</span>")
+    span = (
+        f"{cents[0]:+.0f}"
+        if abs(cents[0] - cents[-1]) < 1
+        else f"{cents[0]:+.0f} to {cents[-1]:+.0f}"
+    )
+    return (
+        f'<br><br><span style="color:#c0392b"><b>{len(bad)} sample(s) '
+        f"declare a rate this sampler cannot play.</b> The loader uses "
+        f"the index byte instead, so they sound {span} cents off and "
+        f"correspondingly short. Re-convert the source to fix it; the "
+        f"volume on disc cannot be repaired in place.</span>"
+    )
 
 
 class DetailPane(QWidget):
@@ -79,16 +84,20 @@ class DetailPane(QWidget):
             # here rather than swallowed: a half-copied disc lists its whole
             # contents and can only deliver the start of them, so without
             # this it looks like a smaller library rather than a broken one.
-            self._render_kv(kind, [("Size", human_size(node.size)),
-                                    ("Path", str(node.payload))],
-                             note=node.note or None)
+            self._render_kv(
+                kind,
+                [("Size", human_size(node.size)), ("Path", str(node.payload))],
+                note=node.note or None,
+            )
         elif node.kind == "folder":
             self._render_kv("In-image folder", [("Name", node.label)])
         elif node.kind == "bank":
             if node.handle is None:
-                self._render_kv(f"Bank{f' ({node.format_label})' if node.format_label else ''}",
-                                 [("Size", human_size(node.size))],
-                                 note="Expand this bank in the tree to see its contents.")
+                self._render_kv(
+                    f"Bank{f' ({node.format_label})' if node.format_label else ''}",
+                    [("Size", human_size(node.size))],
+                    note="Expand this bank in the tree to see its contents.",
+                )
             else:
                 self._browser.setHtml("<i>Loading…</i>")
                 self._run(summary.summarize_bank, (node.handle,), gen, self._apply_bank)
@@ -100,20 +109,33 @@ class DetailPane(QWidget):
             # than summarising one. Config is loaded here rather than held,
             # so toggling it in Settings takes effect on the next selection.
             from ..config import Config
-            self._run(summary.summarize_preset,
-                      (bank, preset_obj, Config.load().loop_click_check),
-                      gen, self._apply_preset)
+
+            self._run(
+                summary.summarize_preset,
+                (bank, preset_obj, Config.load().loop_click_check),
+                gen,
+                self._apply_preset,
+            )
         elif node.kind == "xpm":
             self._browser.setHtml("<i>Loading…</i>")
-            self._run(xpm_import.summarize_xpm, (str(node.payload),), gen, self._apply_xpm)
+            self._run(
+                xpm_import.summarize_xpm, (str(node.payload),), gen, self._apply_xpm
+            )
         elif node.kind == "mpc_project":
             if node.handle is None:
-                self._render_kv(f"MPC project ({node.format_label})",
-                                 [("Size", human_size(node.size))],
-                                 note="Expand this project in the tree to see its programs.")
+                self._render_kv(
+                    f"MPC project ({node.format_label})",
+                    [("Size", human_size(node.size))],
+                    note="Expand this project in the tree to see its programs.",
+                )
             else:
                 self._browser.setHtml("<i>Loading…</i>")
-                self._run(xpm_import.summarize_project, (node.handle,), gen, self._apply_project)
+                self._run(
+                    xpm_import.summarize_project,
+                    (node.handle,),
+                    gen,
+                    self._apply_project,
+                )
         elif node.kind == "mpc_program":
             self._browser.setHtml("<i>Loading…</i>")
             path, preset_index = node.payload
@@ -124,18 +146,28 @@ class DetailPane(QWidget):
             # search hit could grow one) falls back to its own parse.
             project = node.parent.handle if node.parent is not None else None
             if project is not None:
-                self._run(xpm_import.summarize_program, (project, preset_index),
-                          gen, self._apply_xpm)
+                self._run(
+                    xpm_import.summarize_program,
+                    (project, preset_index),
+                    gen,
+                    self._apply_xpm,
+                )
             else:
-                self._run(xpm_import.summarize_xpm, (str(path), None, preset_index),
-                          gen, self._apply_xpm)
+                self._run(
+                    xpm_import.summarize_xpm,
+                    (str(path), None, preset_index),
+                    gen,
+                    self._apply_xpm,
+                )
         elif node.kind in ("foreign_bank", "foreign_preset"):
             self._show_foreign(node, gen)
         elif node.kind == "unsupported":
-            self._render_kv(node.format_label or "Unsupported format",
-                             [("Name", node.label), ("Size", human_size(node.size))],
-                             note=node.note or "Real content, but VinSamLib has no "
-                                                "reader for this format yet.")
+            self._render_kv(
+                node.format_label or "Unsupported format",
+                [("Name", node.label), ("Size", human_size(node.size))],
+                note=node.note
+                or "Real content, but VinSamLib has no " "reader for this format yet.",
+            )
         else:
             self._browser.setHtml("")
 
@@ -149,14 +181,20 @@ class DetailPane(QWidget):
 
     def _show_foreign(self, node: TreeNode, gen: int) -> None:
         from ..build import foreign_import
-        title = f"{node.format_label} file" if node.kind == "foreign_bank" \
+
+        title = (
+            f"{node.format_label} file"
+            if node.kind == "foreign_bank"
             else f"Instrument ({node.format_label})"
+        )
         if node.empty_reason:
             # Readable, and holding nothing this app can use. Say which,
             # rather than showing an empty zone table that looks like a bug.
-            self._render_kv(title, [("Name", node.label),
-                                    ("Size", human_size(node.size))],
-                            note=node.empty_reason)
+            self._render_kv(
+                title,
+                [("Name", node.label), ("Size", human_size(node.size))],
+                note=node.empty_reason,
+            )
             return
         path = node.payload if node.kind == "foreign_bank" else node.payload[0]
         ordinal = None if node.kind == "foreign_bank" else node.payload[1]
@@ -169,34 +207,50 @@ class DetailPane(QWidget):
             rows = [("Name", node.label), ("Format", node.format_label or "")]
             if node.kind == "foreign_bank" and node.children:
                 rows.append(("Instruments", str(len(node.children))))
-            self._render_kv(title, rows, note=(
-                node.note or "") + ("<br>" if node.note else "") +
-                foreign_import.whole_disc_reason(path))
+            self._render_kv(
+                title,
+                rows,
+                note=(node.note or "")
+                + ("<br>" if node.note else "")
+                + foreign_import.whole_disc_reason(path),
+            )
             return
         if own_size > self._PARSE_FOR_DETAIL_MAX:
             rows = [("Name", node.label), ("Size", human_size(own_size))]
             if node.kind == "foreign_bank" and node.children:
                 rows.append(("Instruments", str(len(node.children))))
-            self._render_kv(title, rows, note=(
-                node.note or "") + ("<br>" if node.note else "") +
-                "Large file — import it to read its zones.")
+            self._render_kv(
+                title,
+                rows,
+                note=(node.note or "")
+                + ("<br>" if node.note else "")
+                + "Large file — import it to read its zones.",
+            )
             return
         self._browser.setHtml("<i>Loading…</i>")
-        self._run(foreign_import.summarize_foreign, (str(path), ordinal),
-                  gen, self._apply_foreign)
+        self._run(
+            foreign_import.summarize_foreign,
+            (str(path), ordinal),
+            gen,
+            self._apply_foreign,
+        )
 
     def _apply_foreign(self, gen: int, xs: xpm_import.XpmSummary) -> None:
         if gen != self._gen:
             return
-        html = (f"<b>{_escape(xs.preset_name) or '(untitled)'}</b><br>"
-                f"Samples: {xs.sample_count}<br>"
-                f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
-                f"{zone_stats_lines(xs.zones)}")
+        html = (
+            f"<b>{_escape(xs.preset_name) or '(untitled)'}</b><br>"
+            f"Samples: {xs.sample_count}<br>"
+            f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
+            f"{zone_stats_lines(xs.zones)}"
+        )
         self._browser.setHtml(html)
 
     # -- rendering ------------------------------------------------------------
 
-    def _render_kv(self, title: str, rows: list[tuple[str, str]], note: str = "") -> None:
+    def _render_kv(
+        self, title: str, rows: list[tuple[str, str]], note: str = ""
+    ) -> None:
         html = f"<b>{title}</b><br>" + "".join(f"{k}: {v}<br>" for k, v in rows)
         if note:
             html += f"<br><i>{note}</i>"
@@ -207,11 +261,13 @@ class DetailPane(QWidget):
             return
         names = bs.preset_names[:30]
         more = len(bs.preset_names) - len(names)
-        html = (f"<b>Bank ({bs.format})</b><br>"
-                f"Presets: {bs.preset_count}<br>"
-                f"Samples: {bs.sample_count}<br>"
-                f"Size: {human_size(bs.total_size)}<br><br>" +
-                "<br>".join(_escape(n) or "(untitled)" for n in names))
+        html = (
+            f"<b>Bank ({bs.format})</b><br>"
+            f"Presets: {bs.preset_count}<br>"
+            f"Samples: {bs.sample_count}<br>"
+            f"Size: {human_size(bs.total_size)}<br><br>"
+            + "<br>".join(_escape(n) or "(untitled)" for n in names)
+        )
         if more > 0:
             html += f"<br><i>… {more} more</i>"
         self._browser.setHtml(html)
@@ -224,29 +280,35 @@ class DetailPane(QWidget):
         # holds velocity zones inside it, while an E4B voice holds zones that
         # each carry their own key range.
         voice_label = {"KRZ": "Keymaps", "AKAI": "Keygroups"}.get(ps.format, "Voices")
-        html = (f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br>"
-                f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
-                f"{zone_stats_lines(ps.zones)}"
-                f"{unplayable_rate_line(ps)}")
+        html = (
+            f"<b>Preset ({ps.format})</b><br>{voice_label}: {ps.voice_count}<br>"
+            f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
+            f"{zone_stats_lines(ps.zones)}"
+            f"{unplayable_rate_line(ps)}"
+        )
         # BOTH advisories. The unplayable-rate line is a property of the
         # samples as written; the notes are whatever an opt-in check found.
         # Neither branch knew the other existed, and a merge keeping one
         # would have silently dropped a warning rather than broken a build.
         if ps.notes:
             import html as _html
+
             html += "<br><br>" + "<br>".join(
                 f"<span style='color:#c07000'>⚠ {_html.escape(n)}</span>"
-                for n in ps.notes)
+                for n in ps.notes
+            )
         self._browser.setHtml(html)
 
     def _apply_xpm(self, gen: int, xs: xpm_import.XpmSummary) -> None:
         if gen != self._gen:
             return
-        html = (f"<b>MPC Program</b><br>"
-                f"Preset: {_escape(xs.preset_name) or '(untitled)'}<br>"
-                f"Samples: {xs.sample_count}<br>"
-                f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
-                f"{zone_stats_lines(xs.zones)}")
+        html = (
+            f"<b>MPC Program</b><br>"
+            f"Preset: {_escape(xs.preset_name) or '(untitled)'}<br>"
+            f"Samples: {xs.sample_count}<br>"
+            f"Total sample size: {human_size(xs.total_sample_bytes)}<br><br>"
+            f"{zone_stats_lines(xs.zones)}"
+        )
         if self._node_note:
             html += f"<br><br><i>{_escape(self._node_note)}</i>"
         self._browser.setHtml(html)
@@ -259,11 +321,13 @@ class DetailPane(QWidget):
             return
         names = ps.program_names[:30]
         more = len(ps.program_names) - len(names)
-        html = (f"<b>MPC Project</b><br>"
-                f"Programs: {len(ps.program_names)}<br>"
-                f"Samples: {ps.sample_count}<br>"
-                f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>" +
-                "<br>".join(_escape(n) or "(untitled)" for n in names))
+        html = (
+            f"<b>MPC Project</b><br>"
+            f"Programs: {len(ps.program_names)}<br>"
+            f"Samples: {ps.sample_count}<br>"
+            f"Total sample size: {human_size(ps.total_sample_bytes)}<br><br>"
+            + "<br>".join(_escape(n) or "(untitled)" for n in names)
+        )
         if more > 0:
             html += f"<br><i>… {more} more</i>"
         self._browser.setHtml(html)
@@ -280,8 +344,12 @@ class DetailPane(QWidget):
         w = workers.Worker(fn, *args)
         w.signals.finished.connect(lambda result, g=gen: on_done(g, result))
         w.signals.error.connect(lambda msg, g=gen: self._apply_error(g, msg))
-        w.signals.finished.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
-        w.signals.error.connect(lambda *_: self._live_workers.remove(w) if w in self._live_workers else None)
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         self._live_workers.append(w)
         workers.run(w)
 
@@ -315,14 +383,21 @@ def zone_stats_lines(zones: list) -> str:
         vel_samples = _plural(stats.vel_samples_min, "sample")
     else:
         vel_samples = f"{stats.vel_samples_min}–{stats.vel_samples_max} samples"
-    lines = [f"{_plural(stats.key_zone_count, 'key zone')} with "
-             f"{_plural(stats.total_samples, 'sample')}",
-             f"{_plural(stats.vel_layer_count, 'velocity layer')} with "
-             f"{vel_samples} each"]
-    format_bits = ", ".join(filter(None, [
-        _range_or_single(stats.bit_depths, "-bit"),
-        _range_or_single(stats.sample_rates, " Hz"),
-    ]))
+    lines = [
+        f"{_plural(stats.key_zone_count, 'key zone')} with "  # noqa: ISC004
+        f"{_plural(stats.total_samples, 'sample')}",
+        f"{_plural(stats.vel_layer_count, 'velocity layer')} with "  # noqa: ISC004
+        f"{vel_samples} each",
+    ]
+    format_bits = ", ".join(
+        filter(
+            None,
+            [
+                _range_or_single(stats.bit_depths, "-bit"),
+                _range_or_single(stats.sample_rates, " Hz"),
+            ],
+        )
+    )
     if format_bits:
         lines.append(format_bits)
     return "<br>".join(lines)

@@ -6,7 +6,7 @@ filesystem (not actually ISO 9660 at all; see EMU3_ISO_FORMAT.md §4.3 on why
 "ISO" is a misnomer there), so extension alone is not trustworthy.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import struct
 from pathlib import Path
@@ -21,7 +21,7 @@ from .iso9660 import Iso9660Volume
 _SECTOR = 512
 
 
-def sniff(path: str) -> Optional[type[Volume]]:
+def sniff(path: str) -> Optional[type[Volume]]:  # noqa: UP045
     """Return the Volume subclass that can open `path`, or None if it is not
     a recognised image (in which case it's just a regular file)."""
     p = Path(path)
@@ -47,7 +47,7 @@ def sniff(path: str) -> Optional[type[Volume]]:
     if akai_matches(head, path):
         return AkaiVolume
 
-    if head[510:512] == b"\x55\xAA":
+    if head[510:512] == b"\x55\xaa":
         # Either an MBR (partition table) or a FAT12/16 boot sector sharing
         # the same signature at the same offset. Distinguish by the
         # filesystem-type string mpc2emu writes at BPB offset 54 / 82, and
@@ -62,7 +62,7 @@ def sniff(path: str) -> Optional[type[Volume]]:
             return Fat32Volume
         # MBR with a partition table: inspect partition type bytes.
         for i in range(4):
-            entry = head[0x1BE + i * 16: 0x1BE + i * 16 + 16]
+            entry = head[0x1BE + i * 16 : 0x1BE + i * 16 + 16]
             if len(entry) < 5:
                 continue
             ptype = entry[4]
@@ -107,7 +107,7 @@ def sniff(path: str) -> Optional[type[Volume]]:
     return None
 
 
-def _sniff_fat_without_signature(head: bytes, path: Path) -> Optional[type[Volume]]:
+def _sniff_fat_without_signature(head: bytes, path: Path) -> Optional[type[Volume]]:  # noqa: UP045
     """FAT12/16 detection for a BPB with no 55/AA boot signature and no
     FS-type label -- classifies FAT12 vs FAT16 the authoritative way (by
     computed cluster count, the same convention every real FAT
@@ -116,7 +116,7 @@ def _sniff_fat_without_signature(head: bytes, path: Path) -> Optional[type[Volum
     in a separate 32-bit field the 16-bit fatsz16 read here would show as
     0 for, which this deliberately treats as "not enough to go on" rather
     than trying to also parse FAT32's differently-shaped BPB blind."""
-    if head[0] not in (0xE9, 0xEB):   # a real x86 jump opcode at offset 0
+    if head[0] not in (0xE9, 0xEB):  # a real x86 jump opcode at offset 0
         return None
     bps = struct.unpack_from("<H", head, 11)[0]
     spc = head[13]
@@ -165,7 +165,7 @@ def _sniff_fat_without_signature(head: bytes, path: Path) -> Optional[type[Volum
     return None
 
 
-def open_volume(path: str) -> Optional[Volume]:
+def open_volume(path: str) -> Optional[Volume]:  # noqa: UP045
     """Sniff and open `path` as an image, or return None if it isn't one."""
     cls = sniff(path)
     if cls is None:
@@ -175,6 +175,7 @@ def open_volume(path: str) -> Optional[Volume]:
 
 def _walk_print(vol: Volume, folder=None, indent: str = "") -> None:
     from .base import EntryKind
+
     for entry in vol.list(folder):
         size_str = f"  ({entry.size:,} B)" if entry.size else ""
         fmt = entry.meta.get("format")
@@ -186,7 +187,7 @@ def _walk_print(vol: Volume, folder=None, indent: str = "") -> None:
 
 def _main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print(f"usage: python -m vinsamlib.vfs.detect <path>")
+        print(f"usage: python -m vinsamlib.vfs.detect <path>")  # noqa: F541
         return 2
     path = argv[1]
     cls = sniff(path)
@@ -201,4 +202,5 @@ def _main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     import sys
+
     raise SystemExit(_main(sys.argv))

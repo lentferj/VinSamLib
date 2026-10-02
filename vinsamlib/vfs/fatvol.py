@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import struct
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional  # noqa: UP035
 
 from .base import Entry, EntryKind, WritableVolume
 
@@ -75,10 +75,15 @@ class FatFormatError(ValueError):
 
 
 def _classify(name: str) -> EntryKind:
-    return EntryKind.BANK if Path(name).suffix.lower() in _BANK_EXTS else EntryKind.OTHER_FILE
+    return (
+        EntryKind.BANK
+        if Path(name).suffix.lower() in _BANK_EXTS
+        else EntryKind.OTHER_FILE
+    )
 
 
 # ── MBR / BPB parsing ────────────────────────────────────────────────────
+
 
 def _part_offset(f) -> int:
     """Byte offset of the first recognised primary partition, or 0 for a
@@ -86,9 +91,9 @@ def _part_offset(f) -> int:
     MBR at all, so this fallback is required, not an edge case."""
     f.seek(0)
     s0 = f.read(SECTOR)
-    if len(s0) >= 512 and s0[510:512] == b"\x55\xAA":
+    if len(s0) >= 512 and s0[510:512] == b"\x55\xaa":
         for i in range(4):
-            e = s0[0x1BE + i * 16: 0x1BE + i * 16 + 16]
+            e = s0[0x1BE + i * 16 : 0x1BE + i * 16 + 16]
             if len(e) < 16:
                 continue
             if e[4] in _MBR_PART_TYPES:
@@ -114,15 +119,25 @@ def _read_bpb_fat16(f) -> dict:
     tot32 = struct.unpack_from("<I", b, 32)[0]
     if not bps or not spc or not fatsz or not nfats or not root_ents:
         raise FatFormatError("not a FAT12/16 BPB (a required field is 0)")
-    total_sectors = tot16 or tot32   # real spec precedence: nonzero 16-bit wins
+    total_sectors = tot16 or tot32  # real spec precedence: nonzero 16-bit wins
     root_sectors = (root_ents * 32 + bps - 1) // bps
     fat_start = rsvd
     root_start = rsvd + nfats * fatsz
     data_start = root_start + root_sectors
-    return dict(part_off=part_off, bps=bps, spc=spc, rsvd=rsvd, nfats=nfats,
-                root_ents=root_ents, fatsz=fatsz, total_sectors=total_sectors,
-                root_sectors=root_sectors, fat_start=fat_start,
-                root_start=root_start, data_start=data_start)
+    return dict(  # noqa: C408
+        part_off=part_off,
+        bps=bps,
+        spc=spc,
+        rsvd=rsvd,
+        nfats=nfats,  # noqa: C408, RUF100
+        root_ents=root_ents,
+        fatsz=fatsz,
+        total_sectors=total_sectors,
+        root_sectors=root_sectors,
+        fat_start=fat_start,
+        root_start=root_start,
+        data_start=data_start,
+    )
 
 
 def _read_bpb_fat32(f) -> dict:
@@ -142,9 +157,18 @@ def _read_bpb_fat32(f) -> dict:
         raise FatFormatError("not a FAT32 BPB (a required field is 0)")
     fat_start = rsvd
     data_start = rsvd + nfats * fatsz
-    return dict(part_off=part_off, bps=bps, spc=spc, rsvd=rsvd, nfats=nfats,
-                fatsz=fatsz, total_sectors=total_sectors, fat_start=fat_start,
-                data_start=data_start, root_clus=root_clus)
+    return dict(  # noqa: C408
+        part_off=part_off,
+        bps=bps,
+        spc=spc,
+        rsvd=rsvd,
+        nfats=nfats,  # noqa: C408, RUF100
+        fatsz=fatsz,
+        total_sectors=total_sectors,
+        fat_start=fat_start,
+        data_start=data_start,
+        root_clus=root_clus,
+    )
 
 
 def _read_bpb_fat12(f) -> dict:
@@ -169,18 +193,30 @@ def _read_bpb_fat12(f) -> dict:
     fat_start = rsvd
     root_start = rsvd + nfats * fatsz
     data_start = root_start + root_sectors
-    return dict(bps=bps, spc=spc, rsvd=rsvd, nfats=nfats, root_ents=root_ents,
-                fatsz=fatsz, total_sectors=total_sectors,
-                root_sectors=root_sectors, fat_start=fat_start,
-                root_start=root_start, data_start=data_start)
+    return dict(  # noqa: C408
+        bps=bps,
+        spc=spc,
+        rsvd=rsvd,
+        nfats=nfats,
+        root_ents=root_ents,  # noqa: C408, RUF100
+        fatsz=fatsz,
+        total_sectors=total_sectors,
+        root_sectors=root_sectors,
+        fat_start=fat_start,
+        root_start=root_start,
+        data_start=data_start,
+    )
 
 
-def _cluster_offset(part_off: int, data_start: int, bps: int, spc: int, cluster: int) -> int:
+def _cluster_offset(
+    part_off: int, data_start: int, bps: int, spc: int, cluster: int
+) -> int:
     return part_off + (data_start + (cluster - 2) * spc) * bps
 
 
-def _read_chain(f, chain: list[int], offset_of: Callable[[int], int],
-                 cluster_bytes: int) -> bytearray:
+def _read_chain(
+    f, chain: list[int], offset_of: Callable[[int], int], cluster_bytes: int
+) -> bytearray:
     """Read a whole cluster chain, coalescing runs of consecutive clusters
     into one seek + one read.
 
@@ -210,6 +246,7 @@ def _read_chain(f, chain: list[int], offset_of: Callable[[int], int],
 
 # ── FAT12 12-bit entry packing ───────────────────────────────────────────
 
+
 def _fat12_get(fat: bytes, n: int) -> int:
     o = (n * 3) // 2
     if n & 1:
@@ -230,8 +267,10 @@ def _fat12_set(fat: bytearray, n: int, v: int) -> None:
 
 # ── cluster-chain following (shared by all three variants) ──────────────
 
-def _walk_chain(get: Callable[[int], int], start: int, eoc_min: int, bad: int,
-                 n_entries: int) -> list[int]:
+
+def _walk_chain(
+    get: Callable[[int], int], start: int, eoc_min: int, bad: int, n_entries: int
+) -> list[int]:
     """Follow a FAT chain from `start`, stopping (not raising) at a real
     end-of-chain marker or the reserved bad-cluster marker -- both are
     normal chain terminators, not errors. Raises FatFormatError on a
@@ -250,6 +289,7 @@ def _walk_chain(get: Callable[[int], int], start: int, eoc_min: int, bad: int,
 
 
 # ── directory entries: 8.3 + VFAT long names ─────────────────────────────
+
 
 def _iter_dir_entries(data: bytes):
     """Yield dicts (offset, name, attr, cluster, size) for real (non-
@@ -272,7 +312,7 @@ def _iter_dir_entries(data: bytes):
         attr = data[o + 11]
         if attr == _ATTR_LFN:
             seq = first & 0x1F
-            chars = data[o + 1:o + 11] + data[o + 14:o + 26] + data[o + 28:o + 32]
+            chars = data[o + 1 : o + 11] + data[o + 14 : o + 26] + data[o + 28 : o + 32]
             lfn.append((seq, chars))
             continue
         if (attr & _ATTR_VOLUME) and not (attr & _ATTR_DIR):
@@ -284,14 +324,19 @@ def _iter_dir_entries(data: bytes):
                 name += chars.decode("utf-16-le", "ignore")
             name = name.split("\x00", 1)[0].rstrip("￿")
         if not name:
-            base = data[o:o + 8].decode("latin-1").rstrip()
-            ext = data[o + 8:o + 11].decode("latin-1").rstrip()
+            base = data[o : o + 8].decode("latin-1").rstrip()
+            ext = data[o + 8 : o + 11].decode("latin-1").rstrip()
             name = base + ("." + ext if ext else "")
         cluster_hi = struct.unpack_from("<H", data, o + 20)[0]
         cluster_lo = struct.unpack_from("<H", data, o + 26)[0]
         size = struct.unpack_from("<I", data, o + 28)[0]
-        yield {"offset": o, "name": name, "attr": attr,
-               "cluster": (cluster_hi << 16) | cluster_lo, "size": size}
+        yield {
+            "offset": o,
+            "name": name,
+            "attr": attr,
+            "cluster": (cluster_hi << 16) | cluster_lo,
+            "size": size,
+        }
         lfn = []
 
 
@@ -302,7 +347,7 @@ def _lfn_checksum(short11: bytes) -> int:
     return s
 
 
-def _try_83(name: str) -> Optional[bytes]:
+def _try_83(name: str) -> Optional[bytes]:  # noqa: UP045
     """If `name` is already a valid uppercase 8.3 name, return its 11-byte
     padded form so rename() can write a clean short entry with NO VFAT
     long-name entries -- the K2000 reads 8.3 short names only, so a long
@@ -327,14 +372,16 @@ def _short_name(longname: str, used: set) -> bytes:
         stem, ext = ext, ""
 
     def clean(s: str) -> bytes:
-        return bytes(c if c in _SFN_OK else ord("_")
-                      for c in s.upper().replace(".", "").encode("latin-1", "replace"))
+        return bytes(
+            c if c in _SFN_OK else ord("_")
+            for c in s.upper().replace(".", "").encode("latin-1", "replace")
+        )
 
     cbase = clean(stem) or b"BANK"
     cext = clean(ext)[:3]
     for n in range(1, 1000):
         suffix = b"~" + str(n).encode()
-        base = cbase[:8 - len(suffix)] + suffix
+        base = cbase[: 8 - len(suffix)] + suffix
         short = base.ljust(8, b" ") + cext.ljust(3, b" ")
         if short not in used:
             return short
@@ -346,7 +393,7 @@ def _lfn_entries(longname: str, short11: bytes) -> list[bytes]:
     chars = list(longname.encode("utf-16-le")) + [0x00, 0x00]
     while len(chars) % 26:
         chars.append(0xFF)
-    parts = [bytes(chars[i:i + 26]) for i in range(0, len(chars), 26)]
+    parts = [bytes(chars[i : i + 26]) for i in range(0, len(chars), 26)]
     out = []
     n = len(parts)
     for idx, p in enumerate(parts):
@@ -361,20 +408,22 @@ def _lfn_entries(longname: str, short11: bytes) -> list[bytes]:
         e[26:28] = b"\x00\x00"
         e[28:32] = p[22:26]
         out.append(bytes(e))
-    return out[::-1]   # stored highest-sequence-first on disk
+    return out[::-1]  # stored highest-sequence-first on disk
 
 
 def _short_entry(short11: bytes, attr: int, cluster: int, size: int) -> bytes:
     e = bytearray(32)
     e[0:11] = short11
     e[11] = attr
-    struct.pack_into("<H", e, 20, (cluster >> 16) & 0xFFFF)   # FstClusHI
-    struct.pack_into("<H", e, 26, cluster & 0xFFFF)           # FstClusLO
+    struct.pack_into("<H", e, 20, (cluster >> 16) & 0xFFFF)  # FstClusHI
+    struct.pack_into("<H", e, 26, cluster & 0xFFFF)  # FstClusLO
     struct.pack_into("<I", e, 28, size)
     return bytes(e)
 
 
-def _build_entries(longname: str, attr: int, cluster: int, size: int, used: set) -> list[bytes]:
+def _build_entries(
+    longname: str, attr: int, cluster: int, size: int, used: set
+) -> list[bytes]:
     short83 = _try_83(longname)
     if short83 is not None and short83 not in used:
         return [_short_entry(short83, attr, cluster, size)]
@@ -382,7 +431,7 @@ def _build_entries(longname: str, attr: int, cluster: int, size: int, used: set)
     return _lfn_entries(longname, short) + [_short_entry(short, attr, cluster, size)]
 
 
-def _find_free_run(data: bytearray, count: int) -> Optional[int]:
+def _find_free_run(data: bytearray, count: int) -> Optional[int]:  # noqa: UP045
     run = 0
     start = None
     for o in range(0, len(data), 32):
@@ -406,7 +455,7 @@ def _used_shortnames(data: bytearray) -> set:
             break
         if first == _DELETED or data[o + 11] == _ATTR_LFN:
             continue
-        out.add(bytes(data[o:o + 11]))
+        out.add(bytes(data[o : o + 11]))
     return out
 
 
@@ -425,7 +474,7 @@ def _insert_entries(data: bytearray, entries: list[bytes]) -> None:
     if off is None:
         raise FatFormatError("directory is full (no room to rename)")
     for i, e in enumerate(entries):
-        data[off + i * 32:off + i * 32 + 32] = e
+        data[off + i * 32 : off + i * 32 + 32] = e
 
 
 class Fat16Volume(WritableVolume):
@@ -451,46 +500,56 @@ class Fat16Volume(WritableVolume):
         g = self._geo
         f.seek(g["part_off"] + g["fat_start"] * g["bps"])
         raw = f.read(g["fatsz"] * g["bps"])
-        raw = raw.ljust(g["fatsz"] * g["bps"], b"\x00")   # tolerate a truncated image
-        return list(struct.unpack_from("<%dH" % (len(raw) // 2), raw))
+        raw = raw.ljust(g["fatsz"] * g["bps"], b"\x00")  # tolerate a truncated image
+        return list(struct.unpack_from("<%dH" % (len(raw) // 2), raw))  # noqa: UP031
 
     def _write_fat(self, f, fat: list[int]) -> None:
         g = self._geo
-        raw = struct.pack("<%dH" % len(fat), *fat)
+        raw = struct.pack("<%dH" % len(fat), *fat)  # noqa: UP031
         for i in range(g["nfats"]):
             f.seek(g["part_off"] + (g["fat_start"] + i * g["fatsz"]) * g["bps"])
             f.write(raw)
 
-    def _dir_data(self, f, folder_ref: Optional[int]) -> bytearray:
+    def _dir_data(self, f, folder_ref: Optional[int]) -> bytearray:  # noqa: UP045
         g = self._geo
         if folder_ref is None:
             f.seek(g["part_off"] + g["root_start"] * g["bps"])
             return bytearray(f.read(g["root_sectors"] * g["bps"]))
         fat = self._read_fat(f)
-        chain = _walk_chain(lambda n: fat[n], folder_ref, _FAT16_EOC_MIN, _FAT16_BAD, len(fat))
+        chain = _walk_chain(
+            lambda n: fat[n], folder_ref, _FAT16_EOC_MIN, _FAT16_BAD, len(fat)
+        )
         # Padded to the FULL cluster size (see _read_chain): a short read on
         # a truncated image would otherwise shift every later cluster's
         # entries in this concatenated buffer, so the "offset" handed out by
         # list() would address the wrong entry on a later delete()/rename().
         return _read_chain(
-            f, chain,
-            lambda c: _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c),
-            g["bps"] * g["spc"])
+            f,
+            chain,
+            lambda c: _cluster_offset(
+                g["part_off"], g["data_start"], g["bps"], g["spc"], c
+            ),
+            g["bps"] * g["spc"],
+        )
 
-    def _write_dir(self, f, folder_ref: Optional[int], data: bytearray) -> None:
+    def _write_dir(self, f, folder_ref: Optional[int], data: bytearray) -> None:  # noqa: UP045
         g = self._geo
         if folder_ref is None:
             f.seek(g["part_off"] + g["root_start"] * g["bps"])
             f.write(data)
             return
         fat = self._read_fat(f)
-        chain = _walk_chain(lambda n: fat[n], folder_ref, _FAT16_EOC_MIN, _FAT16_BAD, len(fat))
+        chain = _walk_chain(
+            lambda n: fat[n], folder_ref, _FAT16_EOC_MIN, _FAT16_BAD, len(fat)
+        )
         cluster_bytes = g["bps"] * g["spc"]
         for i, c in enumerate(chain):
-            f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-            f.write(data[i * cluster_bytes:(i + 1) * cluster_bytes])
+            f.seek(
+                _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c)
+            )
+            f.write(data[i * cluster_bytes : (i + 1) * cluster_bytes])
 
-    def list(self, folder: Optional[Entry] = None) -> list[Entry]:
+    def list(self, folder: Optional[Entry] = None) -> list[Entry]:  # noqa: UP045
         with open(self.path, "rb") as f:
             data = self._dir_data(f, folder.ref if folder is not None else None)
         out = []
@@ -498,12 +557,23 @@ class Fat16Volume(WritableVolume):
             if e["name"] in (".", ".."):
                 continue
             if e["attr"] & _ATTR_DIR:
-                out.append(Entry(name=e["name"], kind=EntryKind.FOLDER, ref=e["cluster"]))
+                out.append(
+                    Entry(name=e["name"], kind=EntryKind.FOLDER, ref=e["cluster"])
+                )
             else:
-                out.append(Entry(
-                    name=e["name"], kind=_classify(e["name"]), size=e["size"],
-                    ref={"folder": folder.ref if folder is not None else None,
-                         "offset": e["offset"], "cluster": e["cluster"], "size": e["size"]}))
+                out.append(
+                    Entry(
+                        name=e["name"],
+                        kind=_classify(e["name"]),
+                        size=e["size"],
+                        ref={
+                            "folder": folder.ref if folder is not None else None,
+                            "offset": e["offset"],
+                            "cluster": e["cluster"],
+                            "size": e["size"],
+                        },
+                    )
+                )
         return out
 
     def read(self, entry: Entry) -> bytes:
@@ -516,15 +586,22 @@ class Fat16Volume(WritableVolume):
         if not isinstance(r, dict):
             raise IsADirectoryError(
                 f"{entry.name!r} is a folder — list() its contents instead of "
-                f"reading it")
+                f"reading it"
+            )
         with open(self.path, "rb") as f:
             fat = self._read_fat(f)
-            chain = _walk_chain(lambda n: fat[n], r["cluster"], _FAT16_EOC_MIN, _FAT16_BAD, len(fat))
+            chain = _walk_chain(
+                lambda n: fat[n], r["cluster"], _FAT16_EOC_MIN, _FAT16_BAD, len(fat)
+            )
             buf = _read_chain(
-                f, chain,
-                lambda c: _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c),
-                g["bps"] * g["spc"])
-        return bytes(buf[:r["size"]])
+                f,
+                chain,
+                lambda c: _cluster_offset(
+                    g["part_off"], g["data_start"], g["bps"], g["spc"], c
+                ),
+                g["bps"] * g["spc"],
+            )
+        return bytes(buf[: r["size"]])
 
     def delete(self, entry: Entry) -> None:
         r = entry.ref
@@ -557,7 +634,7 @@ class Fat16Volume(WritableVolume):
             _insert_entries(data, entries)
             self._write_dir(f, r["folder"], data)
 
-    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
+    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:  # noqa: UP045
         """NOT IMPLEMENTED, on purpose -- and the class still satisfies
         `isinstance(vol, WritableVolume)`, which is all any caller here
         needs (image_pane gates Rename and Delete on it, never append).
@@ -573,8 +650,10 @@ class Fat16Volume(WritableVolume):
         it, and it would want a test first: it never had one."""
         raise NotImplementedError(
             "FAT volumes are appended to through build/images.py, which "
-            "calls mpc2emu's writers. vfs/ is the read side.")
+            "calls mpc2emu's writers. vfs/ is the read side."
+        )
         from ..mpc2emu_bridge import fat16 as _fat16_mod
+
         fs = _fat16_mod.Fat16(self.path)
         try:
             cl = folder.ref if folder is not None else None
@@ -613,44 +692,52 @@ class Fat32Volume(WritableVolume):
         raw = f.read(g["fatsz"] * g["bps"])
         raw = raw.ljust(g["fatsz"] * g["bps"], b"\x00")
         n = len(raw) // 4
-        return list(struct.unpack_from("<%dI" % n, raw))
+        return list(struct.unpack_from("<%dI" % n, raw))  # noqa: UP031
 
     def _write_fat(self, f, fat: list[int]) -> None:
         g = self._geo
-        raw = struct.pack("<%dI" % len(fat), *fat)
+        raw = struct.pack("<%dI" % len(fat), *fat)  # noqa: UP031
         for i in range(g["nfats"]):
             f.seek(g["part_off"] + (g["fat_start"] + i * g["fatsz"]) * g["bps"])
             f.write(raw)
 
-    def _dir_data(self, f, folder_ref: Optional[int]) -> bytearray:
+    def _dir_data(self, f, folder_ref: Optional[int]) -> bytearray:  # noqa: UP045
         g = self._geo
         start = folder_ref if folder_ref is not None else g["root_clus"]
         fat = self._read_fat(f)
-        chain = _walk_chain(lambda n: fat[n] & _FAT32_MASK, start,
-                             _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
+        chain = _walk_chain(
+            lambda n: fat[n] & _FAT32_MASK, start, _FAT32_EOC_MIN, _FAT32_BAD, len(fat)
+        )
         # Padded to the FULL cluster size (see _read_chain): a short read on
         # a truncated image would otherwise shift every later cluster's
         # entries in this concatenated buffer, so the "offset" handed out by
         # list() would address the wrong entry on a later delete()/rename().
         return _read_chain(
-            f, chain,
-            lambda c: _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c),
-            g["bps"] * g["spc"])
+            f,
+            chain,
+            lambda c: _cluster_offset(
+                g["part_off"], g["data_start"], g["bps"], g["spc"], c
+            ),
+            g["bps"] * g["spc"],
+        )
 
-    def _write_dir(self, f, folder_ref: Optional[int], data: bytearray) -> None:
+    def _write_dir(self, f, folder_ref: Optional[int], data: bytearray) -> None:  # noqa: UP045
         g = self._geo
         start = folder_ref if folder_ref is not None else g["root_clus"]
         fat = self._read_fat(f)
-        chain = _walk_chain(lambda n: fat[n] & _FAT32_MASK, start,
-                             _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
+        chain = _walk_chain(
+            lambda n: fat[n] & _FAT32_MASK, start, _FAT32_EOC_MIN, _FAT32_BAD, len(fat)
+        )
         cluster_bytes = g["bps"] * g["spc"]
         if len(data) > len(chain) * cluster_bytes:
             raise FatFormatError("directory grew beyond its allocated clusters")
         for i, c in enumerate(chain):
-            f.seek(_cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c))
-            f.write(data[i * cluster_bytes:(i + 1) * cluster_bytes])
+            f.seek(
+                _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c)
+            )
+            f.write(data[i * cluster_bytes : (i + 1) * cluster_bytes])
 
-    def list(self, folder: Optional[Entry] = None) -> list[Entry]:
+    def list(self, folder: Optional[Entry] = None) -> list[Entry]:  # noqa: UP045
         with open(self.path, "rb") as f:
             data = self._dir_data(f, folder.ref if folder is not None else None)
         out = []
@@ -658,12 +745,23 @@ class Fat32Volume(WritableVolume):
             if e["name"] in (".", ".."):
                 continue
             if e["attr"] & _ATTR_DIR:
-                out.append(Entry(name=e["name"], kind=EntryKind.FOLDER, ref=e["cluster"]))
+                out.append(
+                    Entry(name=e["name"], kind=EntryKind.FOLDER, ref=e["cluster"])
+                )
             else:
-                out.append(Entry(
-                    name=e["name"], kind=_classify(e["name"]), size=e["size"],
-                    ref={"folder": folder.ref if folder is not None else None,
-                         "offset": e["offset"], "cluster": e["cluster"], "size": e["size"]}))
+                out.append(
+                    Entry(
+                        name=e["name"],
+                        kind=_classify(e["name"]),
+                        size=e["size"],
+                        ref={
+                            "folder": folder.ref if folder is not None else None,
+                            "offset": e["offset"],
+                            "cluster": e["cluster"],
+                            "size": e["size"],
+                        },
+                    )
+                )
         return out
 
     def read(self, entry: Entry) -> bytes:
@@ -671,13 +769,22 @@ class Fat32Volume(WritableVolume):
         r = entry.ref
         with open(self.path, "rb") as f:
             fat = self._read_fat(f)
-            chain = _walk_chain(lambda n: fat[n] & _FAT32_MASK, r["cluster"],
-                                 _FAT32_EOC_MIN, _FAT32_BAD, len(fat))
+            chain = _walk_chain(
+                lambda n: fat[n] & _FAT32_MASK,
+                r["cluster"],
+                _FAT32_EOC_MIN,
+                _FAT32_BAD,
+                len(fat),
+            )
             buf = _read_chain(
-                f, chain,
-                lambda c: _cluster_offset(g["part_off"], g["data_start"], g["bps"], g["spc"], c),
-                g["bps"] * g["spc"])
-        return bytes(buf[:r["size"]])
+                f,
+                chain,
+                lambda c: _cluster_offset(
+                    g["part_off"], g["data_start"], g["bps"], g["spc"], c
+                ),
+                g["bps"] * g["spc"],
+            )
+        return bytes(buf[: r["size"]])
 
     def delete(self, entry: Entry) -> None:
         r = entry.ref
@@ -708,14 +815,16 @@ class Fat32Volume(WritableVolume):
             _insert_entries(data, entries)
             self._write_dir(f, r["folder"], data)
 
-    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
+    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:  # noqa: UP045
         """See Fat16Volume.append() -- not implemented, same reasoning."""
         raise NotImplementedError(
             "FAT volumes are appended to through build/images.py, which "
-            "calls mpc2emu's writers. vfs/ is the read side.")
+            "calls mpc2emu's writers. vfs/ is the read side."
+        )
         # unreachable; the delegation below is kept out of the way
         # rather than deleted, so the shape is visible in one place.
         from ..mpc2emu_bridge import fat32 as _fat32_mod
+
         fs = _fat32_mod.Fat32(self.path)
         try:
             cl = folder.ref if folder is not None else None
@@ -761,7 +870,7 @@ class Fat12Volume(WritableVolume):
         f.seek(g["root_start"] * g["bps"])
         f.write(data)
 
-    def list(self, folder: Optional[Entry] = None) -> list[Entry]:
+    def list(self, folder: Optional[Entry] = None) -> list[Entry]:  # noqa: UP045
         if folder is not None:
             raise ValueError("FAT12 floppies are flat (root directory only)")
         with open(self.path, "rb") as f:
@@ -769,11 +878,20 @@ class Fat12Volume(WritableVolume):
         out = []
         for e in _iter_dir_entries(data):
             if e["attr"] & _ATTR_DIR:
-                continue   # floppies are flat; ignore any stray dir entry
-            out.append(Entry(
-                name=e["name"], kind=_classify(e["name"]), size=e["size"],
-                ref={"folder": None, "offset": e["offset"], "cluster": e["cluster"],
-                     "size": e["size"]}))
+                continue  # floppies are flat; ignore any stray dir entry
+            out.append(
+                Entry(
+                    name=e["name"],
+                    kind=_classify(e["name"]),
+                    size=e["size"],
+                    ref={
+                        "folder": None,
+                        "offset": e["offset"],
+                        "cluster": e["cluster"],
+                        "size": e["size"],
+                    },
+                )
+            )
         return out
 
     def read(self, entry: Entry) -> bytes:
@@ -781,13 +899,20 @@ class Fat12Volume(WritableVolume):
         r = entry.ref
         with open(self.path, "rb") as f:
             fat = self._read_fat(f)
-            chain = _walk_chain(lambda n: _fat12_get(fat, n), r["cluster"],
-                                 _FAT12_EOC_MIN, _FAT12_BAD, len(fat) * 2 // 3)
+            chain = _walk_chain(
+                lambda n: _fat12_get(fat, n),
+                r["cluster"],
+                _FAT12_EOC_MIN,
+                _FAT12_BAD,
+                len(fat) * 2 // 3,
+            )
             buf = _read_chain(
-                f, chain,
+                f,
+                chain,
                 lambda c: _cluster_offset(0, g["data_start"], g["bps"], g["spc"], c),
-                g["bps"] * g["spc"])
-        return bytes(buf[:r["size"]])
+                g["bps"] * g["spc"],
+            )
+        return bytes(buf[: r["size"]])
 
     def delete(self, entry: Entry) -> None:
         r = entry.ref
@@ -818,16 +943,18 @@ class Fat12Volume(WritableVolume):
             _insert_entries(data, entries)
             self._write_dir(f, data)
 
-    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
+    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:  # noqa: UP045
         """See Fat16Volume.append() -- not implemented, same reasoning."""
         raise NotImplementedError(
             "FAT volumes are appended to through build/images.py, which "
-            "calls mpc2emu's writers. vfs/ is the read side.")
+            "calls mpc2emu's writers. vfs/ is the read side."
+        )
         # unreachable; the delegation below is kept out of the way
         # rather than deleted, so the shape is visible in one place.
         if folder is not None:
             raise ValueError("FAT12 floppies are flat (root directory only)")
         from ..mpc2emu_bridge import fat12 as _fat12_mod
+
         fs = _fat12_mod.Fat12(self.path)
         try:
             n = 0

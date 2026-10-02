@@ -28,6 +28,7 @@ because megabytes of PCM in a log helps nobody and because the log
 travels inside the project file, which the user may well hand to someone
 else.
 """
+
 from __future__ import annotations
 
 import json
@@ -63,10 +64,10 @@ _lock = threading.Lock()
 _records: list[dict] = []
 _enabled = False
 _truncated = False
-_spool: Optional[Path] = None
+_spool: Optional[Path] = None  # noqa: UP045
 
 
-def spool_path() -> Optional[Path]:
+def spool_path() -> Optional[Path]:  # noqa: UP045
     """The on-disk log, or None if recording is off and none was opened."""
     return _spool
 
@@ -92,9 +93,10 @@ def set_enabled(on: bool) -> None:
         if _spool is None:
             try:
                 from ..config import user_data_dir
+
                 _spool = Path(user_data_dir()) / SPOOL_NAME
                 _spool.parent.mkdir(parents=True, exist_ok=True)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 _spool = None
     _trim_spool()
 
@@ -135,9 +137,13 @@ def _trim_spool() -> None:
         if len(lines) <= MAX_RECORDS:
             return
         keep = lines[-_TRIM_TO:]
-        note = json.dumps({"t": time.time(), "kind": "trimmed",
-                           "note": f"older lines dropped; kept the most "
-                                   f"recent {len(keep)}"})
+        note = json.dumps(
+            {
+                "t": time.time(),
+                "kind": "trimmed",
+                "note": f"older lines dropped; kept the most " f"recent {len(keep)}",
+            }
+        )
         spool.write_text("\n".join([note] + keep) + "\n", encoding="utf-8")
     except OSError:
         pass
@@ -165,7 +171,7 @@ def _brief(value: Any, depth: int = 0) -> Any:
         # exactly what nobody can reconstruct afterwards.
         try:
             return {k: _brief(v, depth + 1) for k, v in asdict(value).items()}
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             # asdict() recurses and deep-copies, so any field of any depth can
             # raise -- an unpicklable handle, a __getattr__ that throws, a
             # cycle. This is a DIAGNOSTIC describing a call that already
@@ -197,7 +203,7 @@ def _brief(value: Any, depth: int = 0) -> Any:
         got = getattr(value, attr, None)
         try:
             bits.append(f"{attr}={len(got)}")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
     return f"<{name} {' '.join(bits)}>".replace("  ", " ") if bits else f"<{name}>"
 
@@ -210,9 +216,14 @@ def _append(record: dict) -> None:
             _records.append(record)
         elif not _truncated:
             _truncated = True
-            _records.append({"t": time.time(), "kind": "truncated",
-                             "note": f"in-memory log stopped at {MAX_RECORDS} "
-                                     f"records; the spool continues"})
+            _records.append(
+                {
+                    "t": time.time(),
+                    "kind": "truncated",
+                    "note": f"in-memory log stopped at {MAX_RECORDS} "
+                    f"records; the spool continues",
+                }
+            )
     # Written as it happens, outside the lock. A call takes seconds and this
     # takes microseconds, and appending per record rather than at exit is
     # what makes the log survive the case it is most needed for: a session
@@ -220,15 +231,21 @@ def _append(record: dict) -> None:
     if spool is not None:
         try:
             with open(spool, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, ensure_ascii=False,
-                                    default=str) + "\n")
+                fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
         except OSError:
             pass
 
 
-def record_call(fn: Any, args: tuple, kwargs: dict, *,
-                ok: bool, seconds: float, output: str = "",
-                error: str = "") -> None:
+def record_call(
+    fn: Any,
+    args: tuple,
+    kwargs: dict,
+    *,
+    ok: bool,
+    seconds: float,
+    output: str = "",
+    error: str = "",
+) -> None:
     """One mpc2emu call: what was invoked, with what, and what it printed."""
     if not _enabled:
         return
@@ -236,7 +253,10 @@ def record_call(fn: Any, args: tuple, kwargs: dict, *,
     qual = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", repr(fn))
     out = output or ""
     if len(out) > MAX_OUTPUT_CHARS:
-        out = out[:MAX_OUTPUT_CHARS] + f"\n… {len(output) - MAX_OUTPUT_CHARS} more characters"
+        out = (
+            out[:MAX_OUTPUT_CHARS]
+            + f"\n… {len(output) - MAX_OUTPUT_CHARS} more characters"
+        )
     rec = {
         "t": time.time(),
         "kind": "call",
@@ -266,8 +286,7 @@ def note(kind: str, **fields: Any) -> None:
     # XPM has no `path` of its own, and recording `source: ""` invites the
     # reader to conclude something was lost. The preceding parse call
     # carries the real source path in its own arguments.
-    rec.update({k: _brief(v) for k, v in fields.items()
-                if v is not None and v != ""})
+    rec.update({k: _brief(v) for k, v in fields.items() if v is not None and v != ""})
     _append(rec)
 
 
@@ -291,20 +310,33 @@ def traced(fn: Any, *args: Any, **kwargs: Any) -> Any:
         return fn(*args, **kwargs)
     import contextlib
     import io
+
     buf = io.StringIO()
     started = time.monotonic()
     try:
         with contextlib.redirect_stdout(buf):
             result = fn(*args, **kwargs)
     except Exception as ex:
-        record_call(fn, args, kwargs, ok=False,
-                    seconds=time.monotonic() - started,
-                    output=buf.getvalue(), error=str(ex))
+        record_call(
+            fn,
+            args,
+            kwargs,
+            ok=False,
+            seconds=time.monotonic() - started,
+            output=buf.getvalue(),
+            error=str(ex),
+        )
         if buf.getvalue():
             print(buf.getvalue(), end="")
         raise
-    record_call(fn, args, kwargs, ok=True,
-                seconds=time.monotonic() - started, output=buf.getvalue())
+    record_call(
+        fn,
+        args,
+        kwargs,
+        ok=True,
+        seconds=time.monotonic() - started,
+        output=buf.getvalue(),
+    )
     if buf.getvalue():
         print(buf.getvalue(), end="")
     return result
@@ -334,13 +366,14 @@ def as_jsonl() -> bytes:
     for r in rows:
         try:
             lines.append(json.dumps(r, ensure_ascii=False, default=str))
-        except Exception:
-            lines.append(json.dumps({"kind": "unserialisable",
-                                     "fn": str(r.get("fn", ""))}))
+        except Exception:  # noqa: BLE001
+            lines.append(
+                json.dumps({"kind": "unserialisable", "fn": str(r.get("fn", ""))})
+            )
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def summary() -> Optional[str]:
+def summary() -> Optional[str]:  # noqa: UP045
     """One line for a status bar or a load report, or None if empty."""
     rows = []
     raw = as_jsonl()

@@ -41,7 +41,7 @@ segment keymap-id, a Keymap entry's sample-id, and a Sample's PCM word
 offsets. `blocksize` itself is therefore reused unmodified.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import hashlib
 import struct
@@ -64,10 +64,10 @@ KEYMAP_HDR = 28
 KEYMAP_ENTRY_SIZE = 5
 NUM_KEYS = 128
 
-KEYMAP_HDR_FIXED = 12   # `>6h`: sampleId, method, basePitch, centsPerEntry,
-                        # entriesPerVel, entrySize
+KEYMAP_HDR_FIXED = 12  # `>6h`: sampleId, method, basePitch, centsPerEntry,
+# entriesPerVel, entrySize
 KEYMAP_LEVELS_OFF = 12  # velocity-level table: 2-byte signed offset each,
-                        # relative to its own position
+# relative to its own position
 #: K2000 velocity slots (ppp..fff). A keymap holds one entry table per
 #: DISTINCT `Level[]` address, so between 1 and 8 of them -- see band_starts().
 NUM_VELO_LEVELS = 8
@@ -96,11 +96,13 @@ FX_ID_OFF = 0
 # "no effect".) Jan: confirm 127 against the hardware's own limit if you have
 # it; this is a corpus bound, not a documented one.
 FX_MAX_ID = 127
-CAL_KEYMAP_OFF_1 = 7    # 2 bytes, BE u16 — primary keymap slot
-CAL_KEYMAP_OFF_2 = 11   # 2 bytes, BE u16 — secondary keymap slot ("CAL[7,8] is a 2nd keymap slot")
+CAL_KEYMAP_OFF_1 = 7  # 2 bytes, BE u16 — primary keymap slot
+CAL_KEYMAP_OFF_2 = (
+    11  # 2 bytes, BE u16 — secondary keymap slot ("CAL[7,8] is a 2nd keymap slot")
+)
 
-MAX_PRESETS = 800       # ids 200..999 inclusive — see MAX_OBJECT_ID, confirmed
-                        # on hardware 2026-08-10
+MAX_PRESETS = 800  # ids 200..999 inclusive — see MAX_OBJECT_ID, confirmed
+# on hardware 2026-08-10
 
 # The id space a program/keymap/sample hash can actually address. _encode_hash
 # packs those three types as `(type << 10) | (id & 0x3FF)`, so 1023 is the
@@ -171,9 +173,9 @@ PCM_SHORTFALL_SLACK = 64
 # separately from the sample RAM the audio lives in. Object COUNT is not what
 # binds; PRAM BYTES are. Measured by mpc2emu against a K2000R's own object list
 # on 2026-08-10 (disc K2KLIMIT), the machine displaying exactly these sizes:
-PRAM_SAMPLE = 84        # sample header only; the PCM is in sample RAM
+PRAM_SAMPLE = 84  # sample header only; the PCM is in sample RAM
 PRAM_PROGRAM = 272
-PRAM_KEYMAP = 688       # 128 entries x 5 bytes + header -- the dominant cost
+PRAM_KEYMAP = 688  # 128 entries x 5 bytes + header -- the dominant cost
 #
 # This is the real explanation of the hang that produced MAX_OBJECT_ID above.
 # A 796-program bank was blamed here on object count; it is 746 K of PRAM
@@ -231,12 +233,15 @@ DEFAULT_PRAM_KB = 110
 ROM_REF_ADVISORY = 500
 
 
-def rom_keymap_refs(bank: "KrzFile") -> int:
+def rom_keymap_refs(bank: "KrzFile") -> int:  # noqa: UP037
     """How many keymap references the bank's programs make that it does not
     itself contain — i.e. that the machine must resolve against ROM."""
-    return sum(1 for p in bank.programs.values()
-               for k in bank.program_keymap_refs(p)
-               if k and k not in bank.keymaps)
+    return sum(
+        1
+        for p in bank.programs.values()
+        for k in bank.program_keymap_refs(p)
+        if k and k not in bank.keymaps
+    )
 
 
 def pram_budget_bytes(pram_kb: int | None = None) -> int:
@@ -251,9 +256,7 @@ def bank_pram_bytes(n_samples: int, n_keymaps: int, n_programs: int) -> int:
     presets and charges one keymap per voice, because its writer synthesises
     one keymap per voice; we carry the source's own keymaps, so the real
     keymap count is known and is what to charge for."""
-    return (n_samples * PRAM_SAMPLE
-            + n_keymaps * PRAM_KEYMAP
-            + n_programs * PRAM_PROGRAM)
+    return n_samples * PRAM_SAMPLE + n_keymaps * PRAM_KEYMAP + n_programs * PRAM_PROGRAM
 
 
 class KrzFormatError(ValueError):
@@ -278,10 +281,11 @@ class KeymapLayout:
     id at offset 2) does not survive contact with real content. Of 1584
     keymaps across this project's 201-file K2000 library, 1450 use a
     different stride and 1145 are compacted."""
+
     header_sid: int
     method: int
     num_keys: int
-    table: int          # body offset of the first velocity level's entry table
+    table: int  # body offset of the first velocity level's entry table
     stride: int
     id_off: int | None  # offset of the sample id within an entry, or None
     #: Body offset of EVERY velocity band's entry table, `table` included and
@@ -296,7 +300,7 @@ class KeymapLayout:
         id patcher cannot drift apart -- they did, and both read band 0."""
         if self.id_off is None:
             return
-        for base in (self.bands or (self.table,)):
+        for base in self.bands or (self.table,):
             for k in range(self.num_keys):
                 yield base + k * self.stride + self.id_off
 
@@ -307,8 +311,9 @@ def keymap_layout(body: bytes) -> KeymapLayout | None:
     — keep the two in step."""
     if len(body) < KEYMAP_HDR_FIXED:
         return None
-    header_sid, method, _base, _cents, entries_per_vel, _entry_size = \
+    header_sid, method, _base, _cents, entries_per_vel, _entry_size = (
         struct.unpack_from(">6h", body, 0)
+    )
     method &= 0xFFFF
 
     # Recomputed from the method bits rather than trusted from the header's
@@ -328,15 +333,19 @@ def keymap_layout(body: bytes) -> KeymapLayout | None:
 
     if len(body) < KEYMAP_LEVELS_OFF + 2:
         return None
-    table = KEYMAP_LEVELS_OFF + struct.unpack_from(">h", body,
-                                                   KEYMAP_LEVELS_OFF)[0]
+    table = KEYMAP_LEVELS_OFF + struct.unpack_from(">h", body, KEYMAP_LEVELS_OFF)[0]
     if table < 0 or table > len(body):
         return None
     num_keys = entries_per_vel + 1
-    return KeymapLayout(header_sid=header_sid & 0xFFFF, method=method,
-                        num_keys=num_keys, table=table,
-                        stride=stride, id_off=id_off,
-                        bands=band_starts(body, num_keys, stride))
+    return KeymapLayout(
+        header_sid=header_sid & 0xFFFF,
+        method=method,
+        num_keys=num_keys,
+        table=table,
+        stride=stride,
+        id_off=id_off,
+        bands=band_starts(body, num_keys, stride),
+    )
 
 
 def band_starts(body: bytes, num_keys: int, stride: int) -> tuple[int, ...]:
@@ -371,13 +380,11 @@ def band_starts(body: bytes, num_keys: int, stride: int) -> tuple[int, ...]:
     A keymap that was already read correctly must keep assembling
     byte-for-byte identically; that is the property worth more than the fix.
     """
-    single = (KEYMAP_LEVELS_OFF
-              + struct.unpack_from(">h", body, KEYMAP_LEVELS_OFF)[0],)
+    single = (KEYMAP_LEVELS_OFF + struct.unpack_from(">h", body, KEYMAP_LEVELS_OFF)[0],)
     if len(body) < KEYMAP_LEVELS_OFF + 2 * NUM_VELO_LEVELS:
         return single
     levels = struct.unpack_from(f">{NUM_VELO_LEVELS}h", body, KEYMAP_LEVELS_OFF)
-    starts = sorted({KEYMAP_LEVELS_OFF + 2 * j + lv
-                     for j, lv in enumerate(levels)})
+    starts = sorted({KEYMAP_LEVELS_OFF + 2 * j + lv for j, lv in enumerate(levels)})
     if len(starts) <= 1:
         return single
     span = num_keys * stride
@@ -475,7 +482,7 @@ def _walk_segments(body: bytes):
             return
         length = _seg_len(tag)
         data_start = pos + 1
-        seg = body[data_start:data_start + length]
+        seg = body[data_start : data_start + length]
         # A truncated final segment yields fewer bytes than the tag promises,
         # and every caller unpacks at a fixed offset -- which raised
         # struct.error out of assemble() AND out of the browse path, so one
@@ -492,7 +499,7 @@ class KrzObject:
     type: int
     id: int
     name: str
-    block: bytes   # the full physical block: blocksize field through end of block
+    block: bytes  # the full physical block: blocksize field through end of block
 
     def _ofs(self) -> int:
         return struct.unpack_from(">H", self.block, 8)[0]
@@ -503,13 +510,13 @@ class KrzObject:
         return 8 + self._ofs()
 
     def body(self) -> bytes:
-        return self.block[self.body_start():]
+        return self.block[self.body_start() :]
 
 
 @dataclass
 class KrzFile:
     path: str
-    rest: tuple            # header rest[0..5]; rest[2] = software version (KRZ_SOFTWARE_VERSION)
+    rest: tuple  # header rest[0..5]; rest[2] = software version (KRZ_SOFTWARE_VERSION)
     osize: int
     #: Keyed by ID ALONE — and that is safe only because each dict holds
     #: exactly ONE type. `parse_bytes` routes by `type_code` before inserting,
@@ -531,7 +538,7 @@ class KrzFile:
     keymaps: dict[int, KrzObject]
     samples: dict[int, KrzObject]
     other_objects: list[KrzObject]
-    pcm: bytes              # raw big-endian 16-bit PCM region (== data[osize:])
+    pcm: bytes  # raw big-endian 16-bit PCM region (== data[osize:])
     #: (type, id, name) of any object a later object with the SAME id hid.
     #: Empty for all but 3 banks here; surfaced so a duplicate cannot pass as
     #: a bank that simply held fewer objects.
@@ -687,7 +694,7 @@ class KrzFile:
             flags = body[ho + 1]
             if not (flags & 0x40):
                 continue
-            if not (flags & 0x80):   # 0x80 clear = looped -> sampleEnd unreliable
+            if not (flags & 0x80):  # 0x80 clear = looped -> sampleEnd unreliable
                 return None
             st = struct.unpack_from(">i", body, ho + 8)[0]
             en = struct.unpack_from(">i", body, ho + 20)[0]
@@ -729,7 +736,9 @@ class KrzFile:
             if exact[sid] is not None:
                 lengths[sid] = exact[sid]
                 continue
-            next_start = starts[by_start[i + 1]] if i + 1 < len(by_start) else total_words
+            next_start = (
+                starts[by_start[i + 1]] if i + 1 < len(by_start) else total_words
+            )
             n = next_start - starts[sid]
             # Never shorter than the sample's OWN headers say it reaches.
             # `n` is the gap to the next sample's start, which assumes the
@@ -795,7 +804,7 @@ class KrzFile:
                 break
             flags = body[ho + 1]
             if not (flags & 0x40) or (flags & 0x80):
-                continue                      # no local data, or one-shot
+                continue  # no local data, or one-shot
             start = struct.unpack_from(">i", body, ho + 16)[0]
             end = struct.unpack_from(">i", body, ho + 20)[0]
             if end > start >= 0:
@@ -830,9 +839,11 @@ def _split_bank_hint(pos: int) -> str:
     header distinguishes the two."""
     if pos != _FIRST_OBJECT:
         return ""
-    return (" — nothing parses as an object here, so this is most likely one "
-            "of several disks a single bank was split across; open the first "
-            "disk of the set instead")
+    return (
+        " — nothing parses as an object here, so this is most likely one "
+        "of several disks a single bank was split across; open the first "
+        "disk of the set instead"
+    )
 
 
 def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
@@ -857,14 +868,20 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
         if blocksize == 0:
             break
         if blocksize >= 0:
-            raise KrzFormatError(f"{path}: expected a negative blocksize at {pos}, "
-                                  f"got {blocksize}{_split_bank_hint(pos)}")
+            raise KrzFormatError(
+                f"{path}: expected a negative blocksize at {pos}, "
+                f"got {blocksize}{_split_bank_hint(pos)}"
+            )
         next_pos = pos - blocksize
         if next_pos <= pos or next_pos > len(data):
-            raise KrzFormatError(f"{path}: bad blocksize at offset {pos} "
-                                  f"(-> {next_pos}){_split_bank_hint(pos)}")
+            raise KrzFormatError(
+                f"{path}: bad blocksize at offset {pos} "
+                f"(-> {next_pos}){_split_bank_hint(pos)}"
+            )
         if pos + 10 > next_pos:
-            raise KrzFormatError(f"{path}: object at {pos} shorter than its fixed header")
+            raise KrzFormatError(
+                f"{path}: object at {pos} shorter than its fixed header"
+            )
 
         hash_val = struct.unpack_from(">H", data, pos + 4)[0]
         type_code, obj_id = _decode_hash(hash_val)
@@ -897,7 +914,9 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
         # with no trace -- 3 in this library. Keep the FIRST, which is the one
         # every id reference in the file was written against, and record the
         # loss rather than pretending the bank held one object all along.
-        table = {T_PROGRAM: programs, T_KEYMAP: keymaps, T_SAMPLE: samples}.get(type_code)
+        table = {T_PROGRAM: programs, T_KEYMAP: keymaps, T_SAMPLE: samples}.get(
+            type_code
+        )
         if table is None:
             other_objects.append(obj)
         elif obj_id in table:
@@ -907,13 +926,23 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> KrzFile:
         pos = next_pos
 
     if osize < pos or osize > len(data):
-        raise KrzFormatError(f"{path}: header osize={osize} doesn't land inside the file "
-                              f"(objects end at {pos}, file length {len(data)})")
+        raise KrzFormatError(
+            f"{path}: header osize={osize} doesn't land inside the file "
+            f"(objects end at {pos}, file length {len(data)})"
+        )
     pcm = data[osize:]
 
-    return KrzFile(path=path, rest=rest, osize=osize, programs=programs,
-                    keymaps=keymaps, samples=samples, other_objects=other_objects,
-                    pcm=pcm, shadowed_ids=tuple(shadowed))
+    return KrzFile(
+        path=path,
+        rest=rest,
+        osize=osize,
+        programs=programs,
+        keymaps=keymaps,
+        samples=samples,
+        other_objects=other_objects,
+        pcm=pcm,
+        shadowed_ids=tuple(shadowed),
+    )
 
 
 def parse(path: str) -> KrzFile:
@@ -924,7 +953,8 @@ def parse(path: str) -> KrzFile:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
-def program_missing_audio(bank: "KrzFile", program: KrzObject):
+
+def program_missing_audio(bank: "KrzFile", program: KrzObject):  # noqa: UP037
     """``(sample_name, needed_words, present_words)`` for the first sample a
     program needs whose audio is NOT in this file, or ``None`` if it is all
     here.
@@ -958,10 +988,12 @@ def program_missing_audio(bank: "KrzFile", program: KrzObject):
         for sid in bank.keymap_sample_refs(km):
             samp = bank.samples.get(sid)
             if samp is None:
-                continue          # ROM -- a different question, and not ours
+                continue  # ROM -- a different question, and not ours
             try:
                 start, n_words = bank.sample_word_extent(samp)
-            except Exception:     # unreadable extent: leave the row alone
+            except (  # noqa: S112
+                Exception  # noqa: BLE001
+            ):  # unreadable extent: leave the row alone  # noqa: BLE001, RUF100, S112
                 continue
             if not n_words:
                 continue
@@ -975,11 +1007,13 @@ def program_missing_audio(bank: "KrzFile", program: KrzObject):
     return None
 
 
-def assemble(selections: list[tuple[KrzFile, KrzObject]],
-             sample_names: dict | None = None,
-             warnings_out: list | None = None,
-             pram_kb: int | None = None,
-             loop_repair: dict | None = None) -> bytes:
+def assemble(
+    selections: list[tuple[KrzFile, KrzObject]],
+    sample_names: dict | None = None,
+    warnings_out: list | None = None,
+    pram_kb: int | None = None,
+    loop_repair: dict | None = None,
+) -> bytes:
     """Build a new KRZ file from selected (source_bank, program) pairs.
 
     `warnings_out`, if given, collects advisory strings — currently one when
@@ -1079,7 +1113,7 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
         # below has to be taken from the repaired fields (see the helper).
         samp, src_pcm = _repair_sample_loops(src, samp, loop_repair)
         old_start, n_words = src.sample_word_extent(samp)
-        piece = src_pcm[old_start * 2:(old_start + n_words) * 2] if n_words else b""
+        piece = src_pcm[old_start * 2 : (old_start + n_words) * 2] if n_words else b""
 
         # The key includes a digest of the AUDIO, not just the object header.
         # `KrzObject.block` is the header alone -- unlike banks/e4b.py, whose
@@ -1091,8 +1125,11 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
         # sample and the second program played the first one's sound -- while
         # also inheriting its word extent, which is resolved per file by a gap
         # heuristic and need not agree.
-        content_key = (samp.name, samp.block,
-                       hashlib.blake2b(piece, digest_size=16).digest())
+        content_key = (
+            samp.name,
+            samp.block,
+            hashlib.blake2b(piece, digest_size=16).digest(),
+        )
         new_id = dedupe_key_to_new_id.get(content_key)
         if new_id is None:
             new_id = base_id + len(patched_sample_blocks)
@@ -1133,7 +1170,8 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
                     f"in the file -- this bank's sample data is not all here (a "
                     f"multi-disc set stores it on the next volume), so the "
                     f"programs using it cannot be rebuilt from this file "
-                    f"alone")
+                    f"alone"
+                )
             if piece:
                 pcm_pieces.append(piece)
             cursor += got_words
@@ -1172,8 +1210,9 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
         new_id = base_id + i
         keymap_new_id[key] = new_id
         km = keymap_lookup[key]
-        patched = _repatch_keymap_samples(km, key, sample_key_to_new_id,
-                                          range(base_id, base_id + len(sample_objs)))
+        patched = _repatch_keymap_samples(
+            km, key, sample_key_to_new_id, range(base_id, base_id + len(sample_objs))
+        )
         keymap_objs.append(_repack_block(patched, T_KEYMAP, new_id))
 
     # ── carry the FX/Studio objects the programs name ───────────────────────
@@ -1202,7 +1241,8 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
                         f"{str(src.path).split('/')[-1]} (types "
                         f"{', '.join(str(t) for t in clash[fid])}) — a 0x0F "
                         f"reference carries no type, so which one is meant is "
-                        f"undecidable from the file. Taking the first.")
+                        f"undecidable from the file. Taking the first."
+                    )
         for fid in src.program_fx_refs(prog):
             key = (id(src), fid)
             obj = owned.get(fid)
@@ -1213,7 +1253,7 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
 
     fx_new_id: dict[tuple[int, int], int] = {}
     fx_objs: list[bytes] = []
-    fx_taken: set[tuple[int, int]] = set()          # (type, id) already written
+    fx_taken: set[tuple[int, int]] = set()  # (type, id) already written
     fx_by_content: dict[tuple, int] = {}
     for key in fx_order:
         obj = fx_lookup[key]
@@ -1226,10 +1266,12 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
         if (obj.type, nid) in fx_taken:
             # From 1: id 0 is "no effect" in a 0x0F segment, so an object
             # placed there is referenced by a field that reads as empty.
-            nid = next((c for c in range(1, FX_MAX_ID + 1)
-                        if (obj.type, c) not in fx_taken), None)
+            nid = next(
+                (c for c in range(1, FX_MAX_ID + 1) if (obj.type, c) not in fx_taken),
+                None,
+            )
             if nid is None:
-                continue                            # space full: leave it out
+                continue  # space full: leave it out
         fx_taken.add((obj.type, nid))
         fx_by_content[content] = nid
         fx_new_id[key] = nid
@@ -1241,21 +1283,29 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
     for i, (src, prog) in enumerate(prog_list):
         new_id = base_id + i
         patched = _repatch_program_refs(
-            prog, id(src), keymap_new_id,
+            prog,
+            id(src),
+            keymap_new_id,
             range(base_id, base_id + len(keymap_objs)),
-            fx_new_id, fx_written)
+            fx_new_id,
+            fx_written,
+        )
         program_objs.append(_repack_block(patched, T_PROGRAM, new_id))
 
     room = MAX_OBJECT_ID - base_id + 1
-    for kind, objs in (("sample", sample_objs), ("keymap", keymap_objs),
-                       ("program", program_objs)):
+    for kind, objs in (
+        ("sample", sample_objs),
+        ("keymap", keymap_objs),
+        ("program", program_objs),
+    ):
         if len(objs) > room:
             raise ValueError(
                 f"too many {kind}s for the KRZ id space: {len(objs)} needed, "
                 f"ids run {base_id}..{MAX_OBJECT_ID} so {room} are available. "
                 f"Build this in smaller banks: past the limit an id wraps, "
                 f"references point at ids nothing owns, and two objects "
-                f"collide onto one id.")
+                f"collide onto one id."
+            )
 
     if warnings_out is not None:
         used = bank_pram_bytes(len(sample_objs), len(keymap_objs), len(program_objs))
@@ -1269,11 +1319,13 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
                 f"{len(keymap_objs)} keymap(s) alone cost "
                 f"{len(keymap_objs) * PRAM_KEYMAP // 1024} K. A bank that "
                 f"overruns PRAM does not report anything — it hangs the machine "
-                f"on \"Please wait …\".")
+                f'on "Please wait …".'
+            )
 
     preserve_from = selections[0][0]
-    out = _build_file(preserve_from.rest, sample_objs, keymap_objs, program_objs,
-                      fx_objs, new_pcm)
+    out = _build_file(
+        preserve_from.rest, sample_objs, keymap_objs, program_objs, fx_objs, new_pcm
+    )
 
     if warnings_out is not None:
         n_rom = rom_keymap_refs(parse_bytes(out, "built"))
@@ -1286,7 +1338,8 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
                 f"{int(n_rom * 0.37) % 60} s to load against ~20 s for the same "
                 f"programs without them. No bank in a 2128-bank library makes "
                 f"more than 459. The bank is valid and will finish — expect the "
-                f"wait, or split it.")
+                f"wait, or split it."
+            )
 
     # Self-check, and ONLY when a rename actually resized a block. This is the
     # single path in this module that changes a block's physical length, so it
@@ -1301,16 +1354,21 @@ def assemble(selections: list[tuple[KrzFile, KrzObject]],
         except Exception as ex:
             raise ValueError(
                 f"renaming produced a bank that cannot be read back "
-                f"({ex}) -- refusing to hand it on") from ex
+                f"({ex}) -- refusing to hand it on"
+            ) from ex
         if len(check.samples) != len(sample_objs):
             raise ValueError(
                 f"renaming produced a bank with {len(check.samples)} of "
-                f"{len(sample_objs)} sample(s) -- refusing to hand it on")
+                f"{len(sample_objs)} sample(s) -- refusing to hand it on"
+            )
     return out
 
 
-def _repair_sample_loops(src: "KrzFile", samp: KrzObject,
-                         loop_repair: dict | None) -> tuple[KrzObject, bytes]:
+def _repair_sample_loops(
+    src: "KrzFile",  # noqa: UP037
+    samp: KrzObject,  # noqa: RUF100, UP037
+    loop_repair: dict | None,
+) -> tuple[KrzObject, bytes]:
     """Apply the user's chosen loop repair to one sample.
 
     Returns `(sample, pcm)` — the object with its loop fields patched, and
@@ -1343,7 +1401,7 @@ def _repair_sample_loops(src: "KrzFile", samp: KrzObject,
         if hdr + SFH_SIZE > len(block):
             break
         flags = block[hdr + 1]
-        if not (flags & 0x40) or (flags & 0x80):     # ROM, or not looped
+        if not (flags & 0x40) or (flags & 0x80):  # ROM, or not looped
             continue
         start = struct.unpack_from(">i", block, hdr + 16)[0]
         end = struct.unpack_from(">i", block, hdr + 20)[0]
@@ -1391,13 +1449,15 @@ def _rebias_sample_block(samp: KrzObject, delta: int) -> bytes:
                 raise ValueError(
                     f"{samp.name!r}: rebiasing word offset {val} by {delta} "
                     f"leaves the 32-bit field it lives in — this bank's sample "
-                    f"offsets are not consistent with its PCM layout")
+                    f"offsets are not consistent with its PCM layout"
+                )
             struct.pack_into(">i", block, pos, moved)
     return bytes(block)
 
 
-def _repatch_keymap_samples(km: KrzObject, src_key: tuple[int, int],
-                             sample_key_to_new_id: dict, reserved: range) -> bytes:
+def _repatch_keymap_samples(
+    km: KrzObject, src_key: tuple[int, int], sample_key_to_new_id: dict, reserved: range
+) -> bytes:
     block = bytearray(km.block)
     body_start = km.body_start()
     src_id = src_key[0]
@@ -1469,9 +1529,14 @@ def _repatch_keymap_samples(km: KrzObject, src_key: tuple[int, int],
     return bytes(block)
 
 
-def _repatch_program_refs(prog: KrzObject, src_id: int, keymap_new_id: dict,
-                          reserved: range, fx_new_id: dict,
-                          fx_written: set) -> bytes:
+def _repatch_program_refs(
+    prog: KrzObject,
+    src_id: int,
+    keymap_new_id: dict,
+    reserved: range,
+    fx_new_id: dict,
+    fx_written: set,
+) -> bytes:
     """Renumber a Program's outgoing references: keymap ids in its CAL
     segments, FX/Studio ids in its 0x0F segments.
 
@@ -1528,13 +1593,18 @@ def _repack_block(block: bytes, type_code: int, new_id: int) -> bytes:
     return bytes(out)
 
 
-def _build_file(rest: tuple, sample_objs: list[bytes], keymap_objs: list[bytes],
-                 program_objs: list[bytes], fx_objs: list[bytes],
-                 pcm: bytes) -> bytes:
+def _build_file(
+    rest: tuple,
+    sample_objs: list[bytes],
+    keymap_objs: list[bytes],
+    program_objs: list[bytes],
+    fx_objs: list[bytes],
+    pcm: bytes,
+) -> bytes:
     out = bytearray()
     out += FILE_MAGIC
     osize_pos = len(out)
-    out += struct.pack(">i", 0)   # osize placeholder
+    out += struct.pack(">i", 0)  # osize placeholder
     for v in rest:
         out += struct.pack(">i", v)
     for block in sample_objs:
@@ -1549,7 +1619,7 @@ def _build_file(rest: tuple, sample_objs: list[bytes], keymap_objs: list[bytes],
     # referenced object to precede its referrer.
     for block in fx_objs:
         out += block
-    out += struct.pack(">i", 0)   # object-section end marker
+    out += struct.pack(">i", 0)  # object-section end marker
     osize = len(out)
     struct.pack_into(">i", out, osize_pos, osize)
     out += pcm
@@ -1586,7 +1656,7 @@ def _rename_block(block: bytes, new_name: str) -> bytes:
     the re-padded length, never adjusted by the delta.
     """
     old_ofs = struct.unpack_from(">H", block, 8)[0]
-    data_start = 8 + old_ofs                      # object body begins here
+    data_start = 8 + old_ofs  # object body begins here
     body = block[data_start:]
 
     # Name field is `name + NUL`, padded so the body starts on an even
@@ -1608,8 +1678,8 @@ def _rename_block(block: bytes, new_name: str) -> bytes:
     field_len = (len(encoded) + 1 + 1) // 2 * 2
     new_ofs = field_len + 2
     delta = new_ofs - old_ofs
-    if delta == 0 and block[10:10 + field_len].split(b"\x00")[0] == encoded:
-        return block                              # nothing to do
+    if delta == 0 and block[10 : 10 + field_len].split(b"\x00")[0] == encoded:
+        return block  # nothing to do
 
     head = bytearray(block[:10])
     name_field = encoded + b"\x00" * (field_len - len(encoded))
@@ -1623,7 +1693,7 @@ def _rename_block(block: bytes, new_name: str) -> bytes:
     struct.pack_into(">H", head, 8, new_ofs)
 
     out = bytearray(head) + name_field + body
-    pad = (-len(out)) % 4                         # 4-byte boundary, then size it
+    pad = (-len(out)) % 4  # 4-byte boundary, then size it
     out += b"\x00" * pad
     struct.pack_into(">i", out, 0, -len(out))
     return bytes(out)

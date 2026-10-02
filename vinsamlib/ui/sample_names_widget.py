@@ -15,13 +15,20 @@ before it -- parsing a folder just to preview names would undo the laziness
 these dialogs are built around.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001, RUF100
 
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QGridLayout, QGroupBox, QLabel, QLineEdit,
-                                QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QGridLayout,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..notes import midi_to_name
 
@@ -37,8 +44,12 @@ class SampleNamesWidget(QGroupBox):
 
     changed = Signal()
 
-    def __init__(self, octave_offset: int = 2, suggested: str = "",
-                 parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        octave_offset: int = 2,
+        suggested: str = "",
+        parent: Optional[QWidget] = None,  # noqa: UP045
+    ):  # noqa: RUF100, UP045
         super().__init__("Sample names", parent)
         self.setCheckable(True)
         self.setChecked(False)
@@ -51,7 +62,8 @@ class SampleNamesWidget(QGroupBox):
         self._base.setPlaceholderText("e.g. Rhodes")
         self._base.setToolTip(
             "Every sample is renamed <base>-<key>, after the key it plays.\n"
-            "Leave the section unchecked to keep the names the conversion gives them.")
+            "Leave the section unchecked to keep the names the conversion gives them."
+        )
         grid.addWidget(self._base, 0, 1)
         layout.addLayout(grid)
 
@@ -63,7 +75,8 @@ class SampleNamesWidget(QGroupBox):
         self._with_key.setChecked(True)
         self._with_key.setToolTip(
             "Off names every sample the same, which only makes sense for E4B —\n"
-            "its own sample-name field already carries the note.")
+            "its own sample-name field already carries the note."
+        )
         self._with_key.toggled.connect(self._refresh)
         layout.addWidget(self._with_key)
 
@@ -76,7 +89,7 @@ class SampleNamesWidget(QGroupBox):
         self.toggled.connect(self._refresh)
         self._refresh()
 
-    def set_octave_offset(self, octave_offset: Optional[int]) -> None:
+    def set_octave_offset(self, octave_offset: Optional[int]) -> None:  # noqa: UP045
         """Follow the dialog's "Middle C is:" picker: a preview that said C3
         where the import wrote C4 would be worse than no preview at all."""
         if octave_offset is not None:
@@ -103,13 +116,19 @@ class SampleNamesWidget(QGroupBox):
         if not self._with_key.isChecked():
             self._preview.setText(
                 f"Every sample will be named {base!r} — E4B adds the note itself; "
-                f"for KRZ or EIII they would be numbered apart.")
+                f"for KRZ or EIII they would be numbered apart."
+            )
             return
-        keys = [midi_to_name(r, self._octave_offset).replace("#", "s") for r in _PREVIEW_ROOTS]
+        keys = [
+            midi_to_name(r, self._octave_offset).replace("#", "s")
+            for r in _PREVIEW_ROOTS
+        ]
         example = ", ".join(f"{base}-{k}" for k in keys)
         text = f"Samples will be named: {example}, …"
-        longest = len(base) + 1 + max(len(k) for k in keys) + 1   # room for a sharp
+        longest = len(base) + 1 + max(len(k) for k in keys) + 1  # room for a sharp
         if longest > NAME_LIMIT:
-            text += (f"\n⚠️ {longest} characters — a name field holds {NAME_LIMIT}, "
-                     f"so the end will be cut. Try a shorter base.")
+            text += (
+                f"\n⚠️ {longest} characters — a name field holds {NAME_LIMIT}, "
+                f"so the end will be cut. Try a shorter base."
+            )
         self._preview.setText(text)

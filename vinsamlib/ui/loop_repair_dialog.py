@@ -27,15 +27,24 @@ bank is assembled, exactly like a rename: the source file on disk is never
 modified by this program.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001, RUF100
 
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
-                               QDialogButtonBox, QHBoxLayout, QHeaderView,
-                               QLabel, QPushButton, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
 
 from ..banks import loopcheck
 
@@ -53,17 +62,17 @@ _SHORT = {"snap": "Snap", "nudge": "Nudge", "fade": "Cross-fade"}
 _HINTS = {
     "": "The loop is written to the new bank exactly as the source has it.",
     "snap": "Moves both loop points to the nearest zero crossing of the same "
-            "slope. Audio untouched. Cleared the click in about two thirds of "
-            "the loops it was measured on — it is the least invasive and the "
-            "least reliable.",
+    "slope. Audio untouched. Cleared the click in about two thirds of "
+    "the loops it was measured on — it is the least invasive and the "
+    "least reliable.",
     "nudge": "Searches backwards for the point where the waveform best matches "
-             "the loop start, and moves the loop END there. Audio untouched; "
-             "the loop gets slightly shorter. Cleared the click in almost "
-             "every loop measured.",
+    "the loop start, and moves the loop END there. Audio untouched; "
+    "the loop gets slightly shorter. Cleared the click in almost "
+    "every loop measured.",
     "fade": "Blends the frames approaching the loop end into the frames before "
-            "the loop start, so the wrap is continuous. Always works. THIS "
-            "REWRITES AUDIO in the new bank — the original frames in the fade "
-            "window are gone, and the source file on disk is untouched.",
+    "the loop start, so the wrap is continuous. Always works. THIS "
+    "REWRITES AUDIO in the new bank — the original frames in the fade "
+    "window are gone, and the source file on disk is untouched.",
 }
 
 
@@ -71,8 +80,12 @@ class LoopRepairDialog(QDialog):
     """Per-sample repair choices. `rows` are dicts with 'name', 'step_pct'
     and optionally 'presets' (labels the sample appears in)."""
 
-    def __init__(self, rows: list[dict], existing: Optional[dict] = None,
-                 parent=None) -> None:
+    def __init__(
+        self,
+        rows: list[dict],
+        existing: Optional[dict] = None,  # noqa: UP045
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Clicking Loops")
         self._rows = rows
@@ -81,7 +94,8 @@ class LoopRepairDialog(QDialog):
         intro = QLabel(
             f"{len(rows)} sample(s) have a loop that steps audibly where it "
             f"wraps.\nNothing is changed unless you choose a repair — and a "
-            f"loop that clicks may well be intended.")
+            f"loop that clicks may well be intended."
+        )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -101,9 +115,12 @@ class LoopRepairDialog(QDialog):
             item = QTableWidgetItem(name)
             where = row.get("presets") or []
             if where:
-                item.setToolTip("Used by: " + ", ".join(sorted(where))
-                                + "\nA repair is keyed by sample, so it "
-                                  "applies everywhere the sample is used.")
+                item.setToolTip(
+                    "Used by: "
+                    + ", ".join(sorted(where))
+                    + "\nA repair is keyed by sample, so it "
+                    "applies everywhere the sample is used."
+                )
             self._table.setItem(r, 0, item)
 
             # The step as a percentage of the local peak: the number that
@@ -118,7 +135,7 @@ class LoopRepairDialog(QDialog):
                 combo.addItem(label, kind)
             prev = (existing or {}).get(name, "")
             idx = combo.findData(prev)
-            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)  # noqa: FURB136
             combo.currentIndexChanged.connect(self._update_hint)
             self._table.setCellWidget(r, 2, combo)
             self._combos.append(combo)
@@ -133,7 +150,8 @@ class LoopRepairDialog(QDialog):
         self._experimental = QLabel(
             "⚠ Repairs are EXPERIMENTAL — no sampler has yet played a loop "
             "repaired this way. Your source file is never modified; keep the "
-            "bank you build until you have heard it.")
+            "bank you build until you have heard it."
+        )
         self._experimental.setWordWrap(True)
         self._experimental.setStyleSheet("color: #c07000;")
         self._experimental.setVisible(False)
@@ -181,8 +199,7 @@ class LoopRepairDialog(QDialog):
     def _update_hint(self) -> None:
         """Describe whichever repair the user is currently looking at."""
         kinds = {c.currentData() for c in self._combos}
-        self._experimental.setVisible(
-            any(k in loopcheck.REPAIRS for k in kinds))
+        self._experimental.setVisible(any(k in loopcheck.REPAIRS for k in kinds))
         kind = kinds.pop() if len(kinds) == 1 else None
         if kind is None:
             self._hint.setText("Different repairs chosen for different samples.")
@@ -206,8 +223,11 @@ class LoopRepairDialog(QDialog):
         return out
 
     @staticmethod
-    def get_repairs(rows: list[dict], existing: Optional[dict] = None,
-                    parent=None) -> Optional[dict]:
+    def get_repairs(
+        rows: list[dict],
+        existing: Optional[dict] = None,  # noqa: UP045
+        parent=None,
+    ) -> Optional[dict]:  # noqa: UP045
         """The dict, or None if cancelled."""
         dlg = LoopRepairDialog(rows, existing=existing, parent=parent)
         if dlg.exec() != QDialog.Accepted:

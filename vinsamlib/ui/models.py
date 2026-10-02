@@ -10,18 +10,24 @@ ui.workers.Worker on the shared thread pool, and results come back via a
 queued Qt signal connection.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import gzip
 import os
 import xml.etree.ElementTree as ET
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field  # noqa: F401
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import (QAbstractItemModel, QMimeData, QModelIndex,
-                            QSortFilterProxyModel, Qt, Signal)
+from PySide6.QtCore import (
+    QAbstractItemModel,
+    QMimeData,
+    QModelIndex,
+    QSortFilterProxyModel,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QColor
 
 from . import dnd, workers
@@ -33,25 +39,38 @@ from ..vfs.base import EntryKind
 from ..vfs.detect import open_volume, sniff
 from ..vfs.localdir import LocalDirVolume
 
-EXPANDABLE_KINDS = {"directory", "volume_root", "folder", "bank", "mpc_project",
-                    "foreign_bank"}
-
-_KIND_ICON = {
-    "directory": "\U0001F4C1",     # 📁
-    "volume_root": "\U0001F4BF",   # 💿
-    "folder": "\U0001F4C1",        # 📁
-    "bank": "\U0001F4E6",          # 📦
-    "preset": "\U0001F3B9",        # 🎹
-    "xpm": "\U0001F39B",           # 🎛
-    "mpc_project": "\U0001F5C2",   # 🗂
-    "mpc_program": "\U0001F39B",   # 🎛
-    "foreign_bank": "\U0001F4DA",    # 📚 -- one file, many instruments
-    "foreign_preset": "\U0001F3BC",  # 🎼 -- one instrument, not a preset yet
-    "unsupported": "\U00002753",   # ❓
+EXPANDABLE_KINDS = {
+    "directory",
+    "volume_root",
+    "folder",
+    "bank",
+    "mpc_project",
+    "foreign_bank",
 }
 
-_BANK_EXT_FORMAT = {".e4b": "E4B", ".krz": "KRZ", ".k25": "KRZ", ".k26": "KRZ",
-                     ".e3x": "EIII", ".esi": "EIII", ".e3b": "EIII"}
+_KIND_ICON = {
+    "directory": "\U0001f4c1",  # 📁
+    "volume_root": "\U0001f4bf",  # 💿
+    "folder": "\U0001f4c1",  # 📁
+    "bank": "\U0001f4e6",  # 📦
+    "preset": "\U0001f3b9",  # 🎹
+    "xpm": "\U0001f39b",  # 🎛
+    "mpc_project": "\U0001f5c2",  # 🗂
+    "mpc_program": "\U0001f39b",  # 🎛
+    "foreign_bank": "\U0001f4da",  # 📚 -- one file, many instruments
+    "foreign_preset": "\U0001f3bc",  # 🎼 -- one instrument, not a preset yet
+    "unsupported": "\U00002753",  # ❓
+}
+
+_BANK_EXT_FORMAT = {
+    ".e4b": "E4B",
+    ".krz": "KRZ",
+    ".k25": "KRZ",
+    ".k26": "KRZ",
+    ".e3x": "EIII",
+    ".esi": "EIII",
+    ".e3b": "EIII",
+}
 # The MPC's three containers for one and the same keygroup program (see
 # build/xpm_import.py, which owns the mapping): the leaf ones hold exactly
 # one, a project holds one per track and is browsed like a bank.
@@ -120,11 +139,15 @@ def _import_request(node: TreeNode) -> dict:
         path, ordinal = node.payload
     else:
         path, ordinal = node.payload, None
-    return {"path": str(path), "format": node.format_label,
-            "ordinal": ordinal, "name": node.label}
+    return {
+        "path": str(path),
+        "format": node.format_label,
+        "ordinal": ordinal,
+        "name": node.label,
+    }
 
 
-def formats_for_filter(wanted: Optional[str]) -> Optional[list[str]]:
+def formats_for_filter(wanted: Optional[str]) -> Optional[list[str]]:  # noqa: UP045
     """The format labels a dropdown entry covers, for an index query.
 
     The same definition format_matches_filter() applies row by row, in the
@@ -137,7 +160,7 @@ def formats_for_filter(wanted: Optional[str]) -> Optional[list[str]]:
     return list(MPC_FORMATS) if wanted == MPC_FILTER else [wanted]
 
 
-def format_matches_filter(format_label: str, wanted: Optional[str]) -> bool:
+def format_matches_filter(format_label: str, wanted: Optional[str]) -> bool:  # noqa: UP045
     """Shared by the tree's filter proxy and the search-results filter, so
     both read one definition of what the dropdown's entries mean."""
     if wanted is None:
@@ -155,7 +178,7 @@ def _guess_format(name: str, meta_format: str = "") -> str:
     if meta_format in ("E4B", "EIII", "AKAI"):
         return meta_format
     if meta_format and meta_format != "system":
-        return ""   # an unrecognised detected format — not one this app shows as a bank
+        return ""  # an unrecognised detected format — not one this app shows as a bank
     return _BANK_EXT_FORMAT.get(Path(name).suffix.lower(), "")
 
 
@@ -170,8 +193,11 @@ def human_size(n: int) -> str:
     return f"{size:.1f} GB"
 
 
-def size_suffix(size: Optional[int], audio_bytes: Optional[int],
-                note_short: str = "") -> str:
+def size_suffix(
+    size: Optional[int],  # noqa: UP045
+    audio_bytes: Optional[int],  # noqa: UP045
+    note_short: str = "",
+) -> str:
     """The size tail of a row -- "   9.0 KB audio", or "" when nothing is known.
 
     ONE implementation, called by the tree row and by the search-result row.
@@ -223,14 +249,16 @@ def size_suffix(size: Optional[int], audio_bytes: Optional[int],
 
 @dataclass
 class TreeNode:
-    kind: str                                  # 'directory' | 'volume_root' | 'folder' | 'bank' | 'preset'
-                                                # | 'xpm' | 'mpc_project' | 'mpc_program'
+    kind: str  # 'directory' | 'volume_root' | 'folder' | 'bank' | 'preset'
+    # | 'xpm' | 'mpc_project' | 'mpc_program'
     label: str
-    parent: Optional["TreeNode"]
-    payload: Any                                # Path | (Volume, Entry) | (BankFile, preset_obj)
-                                                # | (Path, preset index) for 'mpc_program'
-    children: Optional[list["TreeNode"]] = None  # None == not yet fetched
-    handle: Any = None                          # opened Volume (volume_root/folder) or parsed BankFile (bank)
+    parent: Optional["TreeNode"]  # noqa: UP037, UP045
+    payload: Any  # Path | (Volume, Entry) | (BankFile, preset_obj)
+    # | (Path, preset index) for 'mpc_program'
+    children: Optional[list["TreeNode"]] = (  # noqa: UP037, UP045
+        None  # None == not yet fetched  # noqa: RUF100, UP037, UP045
+    )
+    handle: Any = None  # opened Volume (volume_root/folder) or parsed BankFile (bank)
     size: int = 0
     #: Loadable audio this row costs, in bytes -- what a sampler has to find
     #: room for, which is the question the browser is actually asked. None
@@ -241,18 +269,18 @@ class TreeNode:
     #: (what loading it costs); a preset's is what that one alone needs, so
     #: the children do not sum to the parent and are not meant to -- presets
     #: share samples.
-    audio_bytes: Optional[int] = None
+    audio_bytes: Optional[int] = None  # noqa: UP045
     #: Replaces "no audio" on a row whose zero has a better explanation.
     note_short: str = ""
     format_label: str = ""
     fetching: bool = False
-    error: Optional[str] = None
-    note: str = ""                              # tooltip/Detail-pane reason for an
-                                                # 'unsupported' row, when the generic
-                                                # "no reader for this format" is wrong
-    empty_reason: str = ""                      # read fine, holds nothing to import --
-                                                # a different thing from `error`, and
-                                                # the row must not claim it broke
+    error: Optional[str] = None  # noqa: UP045
+    note: str = ""  # tooltip/Detail-pane reason for an
+    # 'unsupported' row, when the generic
+    # "no reader for this format" is wrong
+    empty_reason: str = ""  # read fine, holds nothing to import --
+    # a different thing from `error`, and
+    # the row must not claim it broke
 
     def display_text(self) -> str:
         icon = _KIND_ICON.get(self.kind, "")
@@ -275,8 +303,7 @@ def _size_would_mislead(node: TreeNode) -> bool:
     path = node.payload
     if isinstance(path, tuple) and path:
         path = path[0]
-    return (isinstance(path, Path)
-            and path.suffix.lower() in _AUDIO_LIVES_ELSEWHERE)
+    return isinstance(path, Path) and path.suffix.lower() in _AUDIO_LIVES_ELSEWHERE
 
 
 def _container_path_of(node: TreeNode) -> str:
@@ -335,11 +362,11 @@ def akai_samples_elsewhere(bank, prog) -> bool:
         if not wanted:
             return False
         return len(bank.missing_samples(prog)) == len(set(wanted))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
-def _preset_audio_bytes(bank, obj) -> Optional[int]:
+def _preset_audio_bytes(bank, obj) -> Optional[int]:  # noqa: UP045
     """Loadable audio for one preset, or None if it cannot be worked out.
 
     Free at this point and only at this point: the bank has just been parsed
@@ -350,8 +377,9 @@ def _preset_audio_bytes(bank, obj) -> Optional[int]:
     """
     try:
         from ..banks import summary
+
         return summary.summarize_preset(bank, obj).total_sample_bytes
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -373,20 +401,21 @@ def _container_empty_reason(node: TreeNode) -> str:
     """
     kids = node.children
     if kids is None:
-        return ""                      # not read yet
+        return ""  # not read yet
     if not kids:
         return f"{node.label} is empty."
     for k in kids:
         if k.kind in _CONTAINER_KINDS and k.children is None:
-            return ""                  # unread subfolder -- unknown
+            return ""  # unread subfolder -- unknown
         if k.error:
-            return ""                  # a row that FAILED is not a row that is empty
+            return ""  # a row that FAILED is not a row that is empty
         if not k.empty_reason and k.kind != "unsupported":
-            return ""                  # something in here can be acted on
+            return ""  # something in here can be acted on
     return f"nothing under {node.label} can be imported."
 
 
 # ── background fetch functions (run on a worker thread — no Qt here) ───────
+
 
 def _fetch_children(node: TreeNode) -> list[TreeNode]:
     if node.kind == "directory":
@@ -411,12 +440,13 @@ def _fetch_directory(node: TreeNode) -> list[TreeNode]:
     # next to the discs it describes. Those rows are dropped -- the user still
     # sees every library root, just not dead ends below it.
     budget = [_PROBE_DIR_BUDGET]
-    return [n for n in out
-            if n.kind != "directory" or _dir_has_content(n.payload, budget)]
+    return [
+        n for n in out if n.kind != "directory" or _dir_has_content(n.payload, budget)
+    ]
 
 
-_PROBE_DIR_BUDGET = 400   # directories a single listing may look into before
-                          # it stops judging and just shows the rows
+_PROBE_DIR_BUDGET = 400  # directories a single listing may look into before
+# it stops judging and just shows the rows
 
 
 def visible_suffixes() -> frozenset:
@@ -439,7 +469,8 @@ def visible_suffixes() -> frozenset:
         | set(xpm_import.PROGRAM_EXTS)
         | {xpm_import.PROJECT_EXT}
         | set(foreign_import.FOREIGN_EXT_FORMAT)
-        | set(foreign_import.IMAGE_CONTENT_EXTS))
+        | set(foreign_import.IMAGE_CONTENT_EXTS)
+    )
 
 
 def _dir_has_content(path: Path, budget: list[int]) -> bool:
@@ -477,7 +508,7 @@ def _dir_has_content(path: Path, budget: list[int]) -> bool:
         with os.scandir(path) as it:
             entries = list(it)
     except OSError:
-        return True              # never got to see it; it keeps its row
+        return True  # never got to see it; it keeps its row
     visible = visible_suffixes()
     subdirs = []
     for e in entries:
@@ -498,8 +529,9 @@ def _dir_has_content(path: Path, budget: list[int]) -> bool:
 
 #: The suffixes whose NAME does not settle the question -- see
 #: `_dir_has_content`. Same two tables `_list_directory`'s image branch uses.
-_IMAGE_SUFFIXES = frozenset(set(_LOCALDIR_IMAGE_EXTS)
-                            | set(foreign_import.IMAGE_CONTENT_EXTS))
+_IMAGE_SUFFIXES = frozenset(
+    set(_LOCALDIR_IMAGE_EXTS) | set(foreign_import.IMAGE_CONTENT_EXTS)
+)
 
 
 def _image_is_content(path: str) -> bool:
@@ -513,8 +545,8 @@ def _image_is_content(path: str) -> bool:
         if sniff(path) is not None:
             return True
         return foreign_import.inspect(Path(path)) is not None
-    except Exception:
-        return True              # unsure is not a reason to hide a folder
+    except Exception:  # noqa: BLE001
+        return True  # unsure is not a reason to hide a folder
 
 
 #: Extensions a loose AKAI program file can carry. `.P3`/`.P1` is the
@@ -524,8 +556,9 @@ _AKAI_PROGRAM_EXTS = {".p3", ".p1", ".a3p", ".s3p"}
 
 
 #: What `foreign_import.inspect()` will even look at -- its own first test.
-_FOREIGN_SUFFIXES = frozenset(set(foreign_import.FOREIGN_EXT_FORMAT)
-                              | set(foreign_import.IMAGE_CONTENT_EXTS))
+_FOREIGN_SUFFIXES = frozenset(
+    set(foreign_import.FOREIGN_EXT_FORMAT) | set(foreign_import.IMAGE_CONTENT_EXTS)
+)
 
 
 def sized_suffixes() -> frozenset:
@@ -540,10 +573,11 @@ def sized_suffixes() -> frozenset:
         | set(_LOCALDIR_IMAGE_EXTS)
         | set(foreign_import.IMAGE_CONTENT_EXTS)
         | set(foreign_import.FOREIGN_EXT_FORMAT)
-        | {xpm_import.PROJECT_EXT})
+        | {xpm_import.PROJECT_EXT}
+    )
 
 
-def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
+def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:  # noqa: UP045
     vol = LocalDirVolume(str(path))
     out: list[TreeNode] = []
     # Sizes only for the suffixes that show one. A folder of 8 912 samples
@@ -557,21 +591,33 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
     # not each .P3 in it -- which is also the only affordable shape, since
     # every program in such a folder resolves against the same samples and
     # one row per program would re-read all of them once per row.
-    if any(os.path.splitext(e.name)[1].lower() in _AKAI_PROGRAM_EXTS
-           for e in entries if e.kind != EntryKind.DIRECTORY):
-        out.append(TreeNode("bank", path.name, node, (None, path),
-                             format_label="AKAI"))
+    if any(
+        os.path.splitext(e.name)[1].lower() in _AKAI_PROGRAM_EXTS
+        for e in entries
+        if e.kind != EntryKind.DIRECTORY
+    ):
+        out.append(TreeNode("bank", path.name, node, (None, path), format_label="AKAI"))
 
     for e in entries:
         suffix = os.path.splitext(e.name)[1].lower()
         if e.kind == EntryKind.DIRECTORY:
             out.append(TreeNode("directory", e.name, node, Path(e.ref)))
         elif e.kind == EntryKind.BANK:
-            out.append(TreeNode("bank", e.name, node, (vol, e), size=e.size,
-                                 format_label=_guess_format(e.name)))
+            out.append(
+                TreeNode(
+                    "bank",
+                    e.name,
+                    node,
+                    (vol, e),
+                    size=e.size,
+                    format_label=_guess_format(e.name),
+                )
+            )
         elif e.kind == EntryKind.OTHER_FILE and e.meta.get("is_image"):
             if sniff(e.ref) is not None:
-                out.append(TreeNode("volume_root", e.name, node, Path(e.ref), size=e.size))
+                out.append(
+                    TreeNode("volume_root", e.name, node, Path(e.ref), size=e.size)
+                )
             else:
                 # NOT the end of the question. `sniff()` knows the volume
                 # formats THIS project reads for itself; a Roland S-7xx or
@@ -593,8 +639,16 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
             # browses like a bank -- expandable into its programs. Its own
             # kind, not "bank": _fetch_bank parses E4B/KRZ/EIII magic bytes
             # and would only fail on it.
-            out.append(TreeNode("mpc_project", e.name, node, Path(e.ref), size=e.size,
-                                 format_label=xpm_import.MPC_EXT_FORMAT[xpm_import.PROJECT_EXT]))
+            out.append(
+                TreeNode(
+                    "mpc_project",
+                    e.name,
+                    node,
+                    Path(e.ref),
+                    size=e.size,
+                    format_label=xpm_import.MPC_EXT_FORMAT[xpm_import.PROJECT_EXT],
+                )
+            )
         elif e.kind == EntryKind.OTHER_FILE and suffix in xpm_import.PROGRAM_EXTS:
             # One program per file: importable (see build/xpm_import.py),
             # with nothing to browse into -- a leaf row. But a project's data
@@ -608,10 +662,21 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
                 # A drum program reaching here is always MPC 2.x XML -- an
                 # MPC 3 one is gzipped and reports kind None -- and 2.x is
                 # exactly the case whose pad->key map is missing.
-                out.append(TreeNode(
-                    "xpm", e.name, node, Path(e.ref), size=0,
-                    format_label=f"{label} drum kit" if kind == xpm_import.DRUM else label,
-                    note=xpm_import.DRUM_2X_PAD_MAP_NOTE if kind == xpm_import.DRUM else ""))
+                out.append(
+                    TreeNode(
+                        "xpm",
+                        e.name,
+                        node,
+                        Path(e.ref),
+                        size=0,
+                        format_label=f"{label} drum kit"
+                        if kind == xpm_import.DRUM
+                        else label,
+                        note=xpm_import.DRUM_2X_PAD_MAP_NOTE
+                        if kind == xpm_import.DRUM
+                        else "",
+                    )
+                )
         elif e.kind == EntryKind.OTHER_FILE and suffix in _FOREIGN_SUFFIXES:
             # Gated on the suffix FIRST. `inspect()` starts with exactly this
             # test and returns None, but reaching it meant building a Path per
@@ -622,12 +687,18 @@ def _list_directory(path: Path, node: Optional[TreeNode]) -> list[TreeNode]:
             if foreign is not None:
                 out.append(foreign)
         # plain OTHER_FILE (WAVs, docs, ...): out of scope for this browser
-    out.sort(key=lambda n: (n.kind not in ("directory", "volume_root"), n.label.lower()))
+    out.sort(
+        key=lambda n: (n.kind not in ("directory", "volume_root"), n.label.lower())
+    )
     return out
 
 
-def _foreign_node(path: Path, name: str, node: Optional[TreeNode],
-                  size: int) -> Optional[TreeNode]:
+def _foreign_node(
+    path: Path,
+    name: str,
+    node: Optional[TreeNode],  # noqa: UP045
+    size: int,
+) -> Optional[TreeNode]:  # noqa: UP045
     """A row for a soundfont-style import source, or None if this is not one.
 
     Gated on mpc2emu being present (foreign_import.available()): these
@@ -647,10 +718,16 @@ def _foreign_node(path: Path, name: str, node: Optional[TreeNode],
     # embed their audio and keep theirs.
     if path.suffix.lower() in _AUDIO_LIVES_ELSEWHERE:
         size = 0
-    return TreeNode(kind, name, node,
-                    (path, None) if kind == "foreign_preset" else path,
-                    size=size, format_label=verdict.format,
-                    note=verdict.note, empty_reason=verdict.empty_reason)
+    return TreeNode(
+        kind,
+        name,
+        node,
+        (path, None) if kind == "foreign_preset" else path,
+        size=size,
+        format_label=verdict.format,
+        note=verdict.note,
+        empty_reason=verdict.empty_reason,
+    )
 
 
 def _fetch_foreign_bank(node: TreeNode) -> list[TreeNode]:
@@ -670,8 +747,9 @@ def _fetch_foreign_bank(node: TreeNode) -> list[TreeNode]:
     path: Path = node.payload
     listed = foreign_import.list_presets(path)
     if listed is None:
-        raise ValueError(f"{path.name} does not read as a "
-                         f"{node.format_label} file.")
+        raise ValueError(
+            f"{path.name} does not read as a " f"{node.format_label} file."
+        )
     if not listed:
         node.empty_reason = f"{path.name} holds no preset."
         return []
@@ -689,12 +767,18 @@ def _fetch_foreign_bank(node: TreeNode) -> list[TreeNode]:
     # attached. Putting both in `audio_bytes` would have been one line
     # shorter and would have made the EPS rows say something untrue.
     exact = node.format_label != "EPS"
-    return [TreeNode("foreign_preset", entry.display, node, (path, i),
-                     format_label=node.format_label,
-                     size=(0 if exact else (getattr(entry, "size", 0) or 0)),
-                     audio_bytes=(getattr(entry, "size", None)
-                                  if exact else None))
-            for i, entry in enumerate(listed)]
+    return [
+        TreeNode(
+            "foreign_preset",
+            entry.display,
+            node,
+            (path, i),
+            format_label=node.format_label,
+            size=(0 if exact else (getattr(entry, "size", 0) or 0)),
+            audio_bytes=(getattr(entry, "size", None) if exact else None),
+        )
+        for i, entry in enumerate(listed)
+    ]
 
 
 def _fetch_volume_root(node: TreeNode) -> list[TreeNode]:
@@ -715,7 +799,7 @@ def _fetch_volume_root(node: TreeNode) -> list[TreeNode]:
         if callable(warn):
             try:
                 node.note = warn() or ""
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
     return _fetch_vfs_listing(node.handle, None, node)
 
@@ -734,13 +818,22 @@ def _fetch_vfs_listing(vol, folder_entry, parent_node: TreeNode) -> list[TreeNod
             # and nowhere else. So it becomes a bank row expanding to its
             # programs, not a folder row expanding to files -- samples are
             # never tree rows in this browser, in any format.
-            out.append(TreeNode("bank", e.name, parent_node, (vol, e),
-                                 format_label="AKAI"))
+            out.append(
+                TreeNode("bank", e.name, parent_node, (vol, e), format_label="AKAI")
+            )
         elif e.kind == EntryKind.FOLDER:
             out.append(TreeNode("folder", e.name, parent_node, (vol, e)))
         elif e.kind == EntryKind.BANK:
-            out.append(TreeNode("bank", e.name, parent_node, (vol, e), size=e.size,
-                                 format_label=_guess_format(e.name, e.meta.get("format", ""))))
+            out.append(
+                TreeNode(
+                    "bank",
+                    e.name,
+                    parent_node,
+                    (vol, e),
+                    size=e.size,
+                    format_label=_guess_format(e.name, e.meta.get("format", "")),
+                )
+            )
         elif e.kind == EntryKind.OTHER_FILE and e.meta.get("format"):
             # Real content VinSamLib has no reader for (e.g. EIII/ESI-32
             # banks living inside an EMU3-filesystem disc alongside real
@@ -749,14 +842,25 @@ def _fetch_vfs_listing(vol, folder_entry, parent_node: TreeNode) -> list[TreeNod
             # dropped, so the folder doesn't look mysteriously empty when
             # it actually holds real (just unsupported) content -- not
             # expandable/importable, there's nothing to read it with yet.
-            out.append(TreeNode("unsupported", e.name, parent_node, None, size=e.size,
-                                 format_label=e.meta["format"]))
+            out.append(
+                TreeNode(
+                    "unsupported",
+                    e.name,
+                    parent_node,
+                    None,
+                    size=e.size,
+                    format_label=e.meta["format"],
+                )
+            )
         # Plain OTHER_FILE with no detected format at all (WAVs, docs,
         # ...): still genuinely out of scope, not listed.
     out.sort(key=lambda n: (n.kind != "folder", n.label.lower()))
     budget = [_PROBE_DIR_BUDGET]
-    return [n for n in out
-            if n.kind != "folder" or _vfs_folder_has_content(*n.payload, budget)]
+    return [
+        n
+        for n in out
+        if n.kind != "folder" or _vfs_folder_has_content(*n.payload, budget)
+    ]
 
 
 def _vfs_folder_has_content(vol, entry, budget: list[int]) -> bool:
@@ -768,14 +872,15 @@ def _vfs_folder_has_content(vol, entry, budget: list[int]) -> bool:
         return True
     try:
         children = vol.list(entry)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return True
     subfolders = []
     for e in children:
         if e.kind == EntryKind.FOLDER:
             subfolders.append(e)
-        elif e.kind == EntryKind.BANK or (e.kind == EntryKind.OTHER_FILE
-                                          and e.meta.get("format")):
+        elif e.kind == EntryKind.BANK or (
+            e.kind == EntryKind.OTHER_FILE and e.meta.get("format")
+        ):
             return True
     return any(_vfs_folder_has_content(vol, e, budget) for e in subfolders)
 
@@ -809,8 +914,9 @@ def _fetch_mpc_project(node: TreeNode) -> list[TreeNode]:
             # MPC document at all), so the exception cannot tell them apart.
             # The container itself can: if it still reads as an MPC project,
             # nothing failed and the row must not claim it did.
-            if not (isinstance(ex.__cause__, ValueError)
-                    and _reads_as_mpc_container(path)):
+            if not (
+                isinstance(ex.__cause__, ValueError) and _reads_as_mpc_container(path)
+            ):
                 raise
             node.empty_reason = workers.last_error_line(str(ex))
             return []
@@ -828,13 +934,19 @@ def _fetch_mpc_project(node: TreeNode) -> list[TreeNode]:
         node.empty_reason = (
             f"{path.name} holds no program with sampled content: every "
             f"program in it is an empty kit or track, so there is nothing "
-            f"to import.")
+            f"to import."
+        )
         return []
     labels = _project_program_labels(path, presets)
-    return [TreeNode("mpc_program",
-                     (labels[i] if labels else preset.name).strip() or "(untitled)",
-                     node, (path, i))
-            for i, preset in enumerate(presets)]
+    return [
+        TreeNode(
+            "mpc_program",
+            (labels[i] if labels else preset.name).strip() or "(untitled)",
+            node,
+            (path, i),
+        )
+        for i, preset in enumerate(presets)
+    ]
 
 
 _MPC_XML_ROOTS = {"Project", "MPCVObject"}
@@ -855,7 +967,7 @@ def _reads_as_mpc_container(path: Path) -> bool:
             with gzip.open(path, "rt", encoding="utf-8", errors="replace") as g:
                 return g.readline().rstrip("\n") == "ACVS"
         return ET.fromstring(path.read_bytes()).tag in _MPC_XML_ROOTS
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -899,11 +1011,12 @@ def _project_program_labels(path: Path, presets: list) -> list[str]:
         return []
     data_dir = path.parent / f"{path.stem}_[ProjectData]"
     if not data_dir.is_dir():
-        return []      # an MPC 3 project keeps its programs inside the .xpj
-    stems = [p.name.rsplit(".Keygroup", 1)[0]
-             for p in sorted(data_dir.glob("*.Keygroup.xpm"))]
-    stems += [p.name.rsplit(".Drum", 1)[0]
-              for p in sorted(data_dir.glob("*.Drum.xpm"))]
+        return []  # an MPC 3 project keeps its programs inside the .xpj
+    stems = [
+        p.name.rsplit(".Keygroup", 1)[0]
+        for p in sorted(data_dir.glob("*.Keygroup.xpm"))
+    ]
+    stems += [p.name.rsplit(".Drum", 1)[0] for p in sorted(data_dir.glob("*.Drum.xpm"))]
     short = [safe_name(s) for s in stems]
     have, want = Counter(short), Counter(p.name for p in presets)
     # Several programs can truncate to one name. That is still resolvable
@@ -915,7 +1028,7 @@ def _project_program_labels(path: Path, presets: list) -> list[str]:
     labels, at = [], 0
     for preset in presets:
         while at < len(stems) and short[at] != preset.name:
-            at += 1    # a program that carried no samples -- skipped upstream
+            at += 1  # a program that carried no samples -- skipped upstream
         if at == len(stems):
             return []
         labels.append(stems[at])
@@ -929,12 +1042,14 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
         # AKAI has no bank FILE to sniff -- a bank is a volume on a disk, or
         # a folder of loose .P3/.S3 files, so the payload names one of those
         # rather than a file to read bytes from.
-        node.handle = (akai.parse_dir(str(entry)) if vol is None
-                       else vol.volume_bank(entry))
+        node.handle = (
+            akai.parse_dir(str(entry)) if vol is None else vol.volume_bank(entry)
+        )
         if not node.handle.programs:
             node.empty_reason = (
                 f"{node.label} holds {len(node.handle.samples)} sample(s) but "
-                f"no program, so there is nothing to import as a preset.")
+                f"no program, so there is nothing to import as a preset."
+            )
             return []
     if node.handle is None:
         data = vol.read(entry)
@@ -952,11 +1067,19 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
             return []
 
     bank = node.handle
-    return [TreeNode("preset", (p.name.strip() or "(untitled)"), node, (bank, p),
-                     audio_bytes=_preset_audio_bytes(bank, p),
-                     note_short=("samples on another volume"
-                                 if akai_samples_elsewhere(bank, p) else ""))
-            for p in bank_presets(bank)]
+    return [
+        TreeNode(
+            "preset",
+            (p.name.strip() or "(untitled)"),
+            node,
+            (bank, p),
+            audio_bytes=_preset_audio_bytes(bank, p),
+            note_short=(
+                "samples on another volume" if akai_samples_elsewhere(bank, p) else ""
+            ),
+        )
+        for p in bank_presets(bank)
+    ]
     # preset order preserved — it reflects the bank's own numbering
 
 
@@ -998,12 +1121,13 @@ def bank_presets(bank) -> list:
     # helper is the single place that knows.
     if isinstance(bank, akai.AkaiBank):
         return list(bank.programs)
-    if isinstance(bank, e4b.E4BFile) or isinstance(bank, eiii.EIIIFile):
+    if isinstance(bank, e4b.E4BFile) or isinstance(bank, eiii.EIIIFile):  # noqa: SIM101
         return list(bank.presets)
     return list(bank.programs.values())
 
 
 # ── the Qt model ─────────────────────────────────────────────────────────────
+
 
 class LibraryTreeModel(QAbstractItemModel):
     #: Something the model refused to do, in words. Qt gives a rejected drag
@@ -1018,8 +1142,12 @@ class LibraryTreeModel(QAbstractItemModel):
         #: _fill_in_audio_sizes for why that matters with sqlite.
         self._index_db = index_db
         sorted_roots = sorted(roots, key=lambda p: str(p).lower())
-        self._roots: list[TreeNode] = [TreeNode("directory", str(p), None, p) for p in sorted_roots]
-        self._live_workers: list[workers.Worker] = []   # keep references alive until done
+        self._roots: list[TreeNode] = [
+            TreeNode("directory", str(p), None, p) for p in sorted_roots
+        ]
+        self._live_workers: list[
+            workers.Worker
+        ] = []  # keep references alive until done
 
     # -- growing/shrinking the tree from the outside (File > Add/Remove
     # Library Folder…) -----------------------------------------------------
@@ -1030,7 +1158,10 @@ class LibraryTreeModel(QAbstractItemModel):
         # regardless of where it belongs alongside the others.
         key = str(path).lower()
         insert_at = 0
-        while insert_at < len(self._roots) and str(self._roots[insert_at].payload).lower() < key:
+        while (
+            insert_at < len(self._roots)
+            and str(self._roots[insert_at].payload).lower() < key
+        ):
             insert_at += 1
         self.beginInsertRows(QModelIndex(), insert_at, insert_at)
         self._roots.insert(insert_at, TreeNode("directory", str(path), None, path))
@@ -1050,12 +1181,17 @@ class LibraryTreeModel(QAbstractItemModel):
 
     # -- QAbstractItemModel plumbing -----------------------------------------
 
-    def _node_for(self, index: QModelIndex) -> Optional[TreeNode]:
+    def _node_for(self, index: QModelIndex) -> Optional[TreeNode]:  # noqa: UP045
         if not index.isValid():
             return None
         return index.internalPointer()
 
-    def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:
+    def index(
+        self,
+        row: int,
+        column: int,
+        parent: QModelIndex = QModelIndex(),  # noqa: B008
+    ) -> QModelIndex:  # noqa: B008, RUF100
         if not self.hasIndex(row, column, parent):
             return QModelIndex()
         node = self._node_for(parent)
@@ -1075,23 +1211,23 @@ class LibraryTreeModel(QAbstractItemModel):
         row = siblings.index(node.parent)
         return self.createIndex(row, 0, node.parent)
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
         node = self._node_for(parent)
         if node is None:
             return len(self._roots)
         return len(node.children) if node.children is not None else 0
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
         return 1
 
-    def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:
+    def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:  # noqa: B008
         node = self._node_for(parent)
         if node is None:
             return bool(self._roots)
         if node.kind not in EXPANDABLE_KINDS:
             return False
         if node.children is None:
-            return True   # not fetched yet — show the expand arrow optimistically
+            return True  # not fetched yet — show the expand arrow optimistically
         return len(node.children) > 0
 
     def canFetchMore(self, parent: QModelIndex) -> bool:
@@ -1107,14 +1243,19 @@ class LibraryTreeModel(QAbstractItemModel):
         node.fetching = True
         worker = workers.Worker(_fetch_children, node)
         worker.signals.finished.connect(
-            lambda children, n=node, idx=QModelIndex(parent): self._on_fetched(n, children, idx))
+            lambda children, n=node, idx=QModelIndex(parent): self._on_fetched(  # noqa: B008
+                n, children, idx
+            )
+        )  # noqa: B008, RUF100
         worker.signals.error.connect(lambda msg, n=node: self._on_fetch_error(n, msg))
         worker.signals.finished.connect(lambda *_: self._live_workers.remove(worker))
         worker.signals.error.connect(lambda *_: self._live_workers.remove(worker))
         self._live_workers.append(worker)
         workers.run(worker)
 
-    def _on_fetched(self, node: TreeNode, children: list[TreeNode], parent_index: QModelIndex) -> None:
+    def _on_fetched(
+        self, node: TreeNode, children: list[TreeNode], parent_index: QModelIndex
+    ) -> None:
         node.fetching = False
         if not children:
             node.children = []
@@ -1138,8 +1279,14 @@ class LibraryTreeModel(QAbstractItemModel):
     #: Row kinds that ARE an indexed container, so the scan's recorded audio
     #: total is theirs. A preset row computes its own at expand time and a
     #: folder has no total of its own, so neither is looked up.
-    _INDEXED_CONTAINER_KINDS = ("bank", "volume_root", "xpm", "mpc_project",
-                                 "foreign_bank", "foreign_preset")
+    _INDEXED_CONTAINER_KINDS = (
+        "bank",
+        "volume_root",
+        "xpm",
+        "mpc_project",
+        "foreign_bank",
+        "foreign_preset",
+    )
 
     def _fill_in_audio_sizes(self, children: list[TreeNode]) -> None:
         """Put the scan's recorded audio total onto rows that have one.
@@ -1171,8 +1318,8 @@ class LibraryTreeModel(QAbstractItemModel):
         if wanted:
             try:
                 found = self._index_db.audio_bytes_for_paths(list(wanted))
-            except Exception:
-                found = {}   # a stale or busy index must not break a listing
+            except Exception:  # noqa: BLE001
+                found = {}  # a stale or busy index must not break a listing
             for path, total in found.items():
                 for n in wanted.get(path, ()):
                     n.audio_bytes = total
@@ -1198,13 +1345,13 @@ class LibraryTreeModel(QAbstractItemModel):
                 continue
             vol_path = getattr(payload[0], "path", None)
             if not vol_path or Path(str(vol_path)).is_dir():
-                continue     # a plain folder listing, already handled above
+                continue  # a plain folder listing, already handled above
             by_image.setdefault(str(vol_path), []).append(n)
         for image_path, rows in by_image.items():
             names = [r.label for r in rows]
             try:
                 found = self._index_db.audio_bytes_for_items(image_path, names)
-            except Exception:
+            except Exception:  # noqa: BLE001, S112
                 continue
             for r in rows:
                 if r.audio_bytes is None and r.label in found:
@@ -1226,6 +1373,7 @@ class LibraryTreeModel(QAbstractItemModel):
         if self._index_db is None:
             return
         from ..build import refaudio
+
         todo = []
         for n in children:
             if n.audio_bytes is not None:
@@ -1247,13 +1395,17 @@ class LibraryTreeModel(QAbstractItemModel):
 
         w = workers.Worker(_work)
         w.signals.finished.connect(
-            lambda sizes, rows=list(todo): self._apply_reference_audio(rows, sizes))
+            lambda sizes, rows=list(todo): self._apply_reference_audio(rows, sizes)
+        )
         w.signals.error.connect(
-            lambda *_a, ps=list(pending): [self._measuring.discard(p) for p in ps])
-        w.signals.finished.connect(lambda *_: self._live_workers.remove(w)
-                                   if w in self._live_workers else None)
-        w.signals.error.connect(lambda *_: self._live_workers.remove(w)
-                                if w in self._live_workers else None)
+            lambda *_a, ps=list(pending): [self._measuring.discard(p) for p in ps]
+        )
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         self._live_workers.append(w)
         workers.run(w)
 
@@ -1264,7 +1416,7 @@ class LibraryTreeModel(QAbstractItemModel):
                 continue
             try:
                 self._index_db.set_container_audio_by_path(path, total)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
             for p, node in rows:
                 if p != path or node.audio_bytes is not None:
@@ -1276,8 +1428,9 @@ class LibraryTreeModel(QAbstractItemModel):
                 if node.parent is not None:
                     self._roll_up_audio(node.parent)
 
-    def _measure_embedded_presets(self, node: TreeNode,
-                                   children: list[TreeNode]) -> None:
+    def _measure_embedded_presets(
+        self, node: TreeNode, children: list[TreeNode]
+    ) -> None:
         """Work out an SF2 or GIG's per-preset audio, once, on expand.
 
         SF2 and GIG only, and the docstring means it: a disc is excluded
@@ -1313,9 +1466,8 @@ class LibraryTreeModel(QAbstractItemModel):
         # 79 ms for Roland, from directory and table reads that touch no PCM.
         if Path(path).suffix.lower() in foreign_import.IMAGE_CONTENT_EXTS:
             return
-        if all(c.audio_bytes is not None for c in children
-               if c.kind in _FOREIGN_KINDS):
-            return                      # already recorded; nothing to do
+        if all(c.audio_bytes is not None for c in children if c.kind in _FOREIGN_KINDS):
+            return  # already recorded; nothing to do
         if path in getattr(self, "_measuring", set()):
             return
         if not hasattr(self, "_measuring"):
@@ -1329,14 +1481,17 @@ class LibraryTreeModel(QAbstractItemModel):
 
         w = workers.Worker(_work)
         w.signals.finished.connect(
-            lambda sizes, p=path, rows=list(children):
-            self._apply_embedded_sizes(p, rows, sizes))
+            lambda sizes, p=path, rows=list(children): self._apply_embedded_sizes(
+                p, rows, sizes
+            )
+        )
+        w.signals.error.connect(lambda *_a, p=path: self._measuring.discard(p))
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         w.signals.error.connect(
-            lambda *_a, p=path: self._measuring.discard(p))
-        w.signals.finished.connect(lambda *_: self._live_workers.remove(w)
-                                   if w in self._live_workers else None)
-        w.signals.error.connect(lambda *_: self._live_workers.remove(w)
-                                if w in self._live_workers else None)
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
         self._live_workers.append(w)
         workers.run(w)
 
@@ -1346,13 +1501,14 @@ class LibraryTreeModel(QAbstractItemModel):
         if not sizes:
             return
         from ..build import refaudio
+
         container_total = sizes.pop(refaudio.CONTAINER_KEY, None)
         try:
             self._index_db.set_item_audio_by_name(path, sizes)
             if container_total is not None:
                 self._index_db.set_container_audio_by_path(path, container_total)
-        except Exception:
-            pass                        # a busy index must not lose the display
+        except Exception:  # noqa: BLE001, S110
+            pass  # a busy index must not lose the display
         if container_total is not None:
             row = self._node_by_path(path)
             if row is not None:
@@ -1372,7 +1528,7 @@ class LibraryTreeModel(QAbstractItemModel):
                 if idx.isValid():
                     self.dataChanged.emit(idx, idx)
 
-    def _node_by_path(self, path: str) -> Optional[TreeNode]:
+    def _node_by_path(self, path: str) -> Optional[TreeNode]:  # noqa: UP045
         """The row a container path belongs to, searched from the roots."""
         stack = list(self._roots)
         while stack:
@@ -1406,7 +1562,7 @@ class LibraryTreeModel(QAbstractItemModel):
         # with 0, because the rows inside it had not been filled in yet. A
         # folder is the only container the index knows nothing about, so it
         # is the only one whose total has to be added up.
-        cur: Optional[TreeNode] = node
+        cur: Optional[TreeNode] = node  # noqa: UP045
         while cur is not None and cur.kind in ("directory", "folder"):
             kids = cur.children
             if kids is None:
@@ -1428,7 +1584,7 @@ class LibraryTreeModel(QAbstractItemModel):
                 if value is None:
                     return
             if cur.audio_bytes == total:
-                return                          # nothing new to carry upward
+                return  # nothing new to carry upward
             # NOT guarded on "already has a figure": a folder's total is only
             # ever as good as what its children knew at the time, and a child
             # that has since been measured has to be able to correct it.
@@ -1451,7 +1607,7 @@ class LibraryTreeModel(QAbstractItemModel):
         cannot make its own parent change either. That keeps an expand from
         walking to the library root every time.
         """
-        cur: Optional[TreeNode] = node
+        cur: Optional[TreeNode] = node  # noqa: UP045
         while cur is not None and cur.kind in _CONTAINER_KINDS:
             before = cur.empty_reason
             after = _container_empty_reason(cur)
@@ -1485,30 +1641,40 @@ class LibraryTreeModel(QAbstractItemModel):
             if node.empty_reason:
                 return node.empty_reason
             if node.kind == "unsupported":
-                return node.note or ("Real content, but VinSamLib has no reader "
-                                      f"for this format ({node.format_label}) yet.")
-            if (node.kind in _FOREIGN_KINDS and node.audio_bytes is None
-                    and node.parent is not None
-                    and node.parent.kind in _FOREIGN_KINDS):
+                return node.note or (
+                    "Real content, but VinSamLib has no reader "
+                    f"for this format ({node.format_label}) yet."
+                )
+            if (
+                node.kind in _FOREIGN_KINDS
+                and node.audio_bytes is None
+                and node.parent is not None
+                and node.parent.kind in _FOREIGN_KINDS
+            ):
                 # A preset inside an SF2 or GIG. Its own audio total is
                 # knowable but not cheaply: those formats embed their samples,
                 # so the figure needs a real parse -- 2.7 s and about 3 GB of
                 # RSS for the largest SoundFont here -- which has no business
                 # running for every row of a listing. The Detail pane does
                 # exactly that parse for the row you select, and shows it.
-                return ("This format stores its samples inside the file, so "
-                        "working out one preset's share means reading it. "
-                        "Select the row and the Detail pane reports "
-                        "\"Total sample size\".")
+                return (
+                    "This format stores its samples inside the file, so "
+                    "working out one preset's share means reading it. "
+                    "Select the row and the Detail pane reports "
+                    '"Total sample size".'
+                )
             if _size_would_mislead(node):
                 # Not silence about a missing column: the row deliberately has
                 # no size, and the reason is the useful half.
-                return ("This format keeps its audio in separate files, so the "
-                        "file's own size is not what importing it costs. "
-                        "Select it and see \"Total sample size\" in the Detail "
-                        "pane.")
-        if role == Qt.ItemDataRole.ForegroundRole and (node.kind == "unsupported"
-                                                        or node.empty_reason):
+                return (
+                    "This format keeps its audio in separate files, so the "
+                    "file's own size is not what importing it costs. "
+                    'Select it and see "Total sample size" in the Detail '
+                    "pane."
+                )
+        if role == Qt.ItemDataRole.ForegroundRole and (
+            node.kind == "unsupported" or node.empty_reason
+        ):
             # Same grey as unsupported content, and for the same reason: real,
             # readable, nothing here to act on.
             return QColor(Qt.GlobalColor.gray)
@@ -1536,7 +1702,7 @@ class LibraryTreeModel(QAbstractItemModel):
     def mimeTypes(self) -> list[str]:
         return [dnd.DRAG_MIME_TYPE, dnd.IMPORT_MIME_TYPE]
 
-    def mimeData(self, indexes: list[QModelIndex]) -> Optional[QMimeData]:
+    def mimeData(self, indexes: list[QModelIndex]) -> Optional[QMimeData]:  # noqa: UP045
         seen: set[int] = set()
         items = []
         requests = []
@@ -1558,7 +1724,8 @@ class LibraryTreeModel(QAbstractItemModel):
             # clearer than half-doing it.
             self.statusMessage.emit(
                 "Presets and import sources can't be dragged together — "
-                "drop one kind at a time")
+                "drop one kind at a time"
+            )
             return None
         if requests:
             return dnd.build_import_mime_data(requests)
@@ -1569,12 +1736,16 @@ class LibraryTreeModel(QAbstractItemModel):
     def node_index(self, node: TreeNode) -> QModelIndex:
         """Find the QModelIndex for a node we already have a reference to
         (used to refresh a row after an async error)."""
-        parent_children = self._roots if node.parent is None else (node.parent.children or [])
+        parent_children = (
+            self._roots if node.parent is None else (node.parent.children or [])
+        )
         try:
             row = parent_children.index(node)
         except ValueError:
             return QModelIndex()
-        parent_index = QModelIndex() if node.parent is None else self.node_index(node.parent)
+        parent_index = (
+            QModelIndex() if node.parent is None else self.node_index(node.parent)
+        )
         return self.index(row, 0, parent_index)
 
 
@@ -1599,9 +1770,9 @@ class BankFormatFilterProxy(QSortFilterProxyModel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._format_filter: Optional[str] = None
+        self._format_filter: Optional[str] = None  # noqa: UP045
 
-    def set_format_filter(self, fmt: Optional[str]) -> None:
+    def set_format_filter(self, fmt: Optional[str]) -> None:  # noqa: UP045
         self._format_filter = fmt
         self.invalidateFilter()
 
@@ -1612,6 +1783,11 @@ class BankFormatFilterProxy(QSortFilterProxyModel):
         index = source_model.index(source_row, 0, source_parent)
         node = index.data(Qt.ItemDataRole.UserRole)
         if node is None or node.kind not in (
-                "bank", "xpm", "mpc_project", "foreign_bank", "foreign_preset"):
+            "bank",
+            "xpm",
+            "mpc_project",
+            "foreign_bank",
+            "foreign_preset",
+        ):
             return True
         return format_matches_filter(node.format_label, self._format_filter)

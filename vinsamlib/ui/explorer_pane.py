@@ -7,24 +7,43 @@ Both views sit over the same DetailPane, and both funnel selection through
 one path so the rest of the app doesn't need to know which one is active.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
-from typing import Callable, Optional
+from typing import Callable, Optional  # noqa: UP035
 
 from PySide6.QtCore import QModelIndex, QTimer, Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QLabel,
-                             QLineEdit, QListWidget, QListWidgetItem, QMenu,
-                             QSplitter, QStackedWidget, QTreeView, QVBoxLayout,
-                             QWidget)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,  # noqa: F401
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QSplitter,
+    QStackedWidget,
+    QTreeView,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import dnd, search_resolve
 from .detail_pane import DetailPane
-from .models import (MPC_FILTER, BankFormatFilterProxy, LibraryTreeModel, TreeNode,
-                     _FOREIGN_KINDS, _IMPORT_DRAG_KINDS, _import_request,
-                     format_matches_filter)
+from .models import (
+    MPC_FILTER,
+    BankFormatFilterProxy,
+    LibraryTreeModel,
+    TreeNode,
+    _FOREIGN_KINDS,
+    _IMPORT_DRAG_KINDS,
+    _import_request,
+    format_matches_filter,
+)
 from . import models
 from ..build import foreign_import
 from ..index.db import IndexDB, SearchResult
+
 
 def _format_filters() -> list[str]:
     """The dropdown's entries, decided when the pane is built rather than at
@@ -78,39 +97,51 @@ class _ResultsListWidget(QListWidget):
             return None
         return dnd.build_mime_data(payload_items)
 
-_KIND_ICON = {"folder": "\U0001F4C1", "bank": "\U0001F4E6", "preset": "\U0001F3B9",
-              "xpm": "\U0001F39B", "mpc_project": "\U0001F5C2",
-              "mpc_program": "\U0001F39B", "foreign_bank": "\U0001F4DA",
-              "foreign_preset": "\U0001F3BC"}
+
+_KIND_ICON = {
+    "folder": "\U0001f4c1",
+    "bank": "\U0001f4e6",
+    "preset": "\U0001f3b9",
+    "xpm": "\U0001f39b",
+    "mpc_project": "\U0001f5c2",
+    "mpc_program": "\U0001f39b",
+    "foreign_bank": "\U0001f4da",
+    "foreign_preset": "\U0001f3bc",
+}
 _SEARCH_DEBOUNCE_MS = 200
 
 
 class ExplorerPane(QWidget):
-    selectionChanged = Signal(object)   # TreeNode | None
-    addToBankRequested = Signal(list)   # list[TreeNode] (always kind == "preset")
-    addFavouritesRequested = Signal(object)   # a single TreeNode, kind == "bank"
+    selectionChanged = Signal(object)  # TreeNode | None
+    addToBankRequested = Signal(list)  # list[TreeNode] (always kind == "preset")
+    addFavouritesRequested = Signal(object)  # a single TreeNode, kind == "bank"
     # (absolute path to an MPC .xpm/.xty/.xpj file, program index or None).
     # None means "everything the file holds" -- one program for a .xpm or
     # .xty, every keygroup track for a project.
     importXpmRequested = Signal(str, object)
-    convertPresetRequested = Signal(list)   # list[TreeNode], one or more "preset" nodes
+    convertPresetRequested = Signal(list)  # list[TreeNode], one or more "preset" nodes
     # Import-request dicts for soundfont-style sources (see ui/dnd.py) --
     # the same payload a drag onto New Bank carries, so both routes land in
     # one handler.
     importForeignRequested = Signal(list)
-    removeLibraryRootRequested = Signal(object)   # Path of a root "directory" node
-    auditionRequested = Signal(object)   # a single TreeNode to audition
+    removeLibraryRootRequested = Signal(object)  # Path of a root "directory" node
+    auditionRequested = Signal(object)  # a single TreeNode to audition
 
-    def __init__(self, model: LibraryTreeModel, index_db: Optional[IndexDB] = None, parent=None):
+    def __init__(
+        self,
+        model: LibraryTreeModel,
+        index_db: Optional[IndexDB] = None,
+        parent=None,  # noqa: UP045
+    ):  # noqa: RUF100, UP045
         super().__init__(parent)
         self._index_db = index_db
-        self._current_node: Optional[TreeNode] = None
+        self._current_node: Optional[TreeNode] = None  # noqa: UP045
         #: What format New Bank is locked to right now, or None while it is
         #: empty. Set by MainWindow. A CALLABLE rather than a stored value
         #: because the lock changes as the user fills and clears New Bank,
         #: and a menu built from a stale copy would offer exactly the action
         #: that is about to be refused.
-        self.locked_format: Callable[[], Optional[str]] = lambda: None
+        self.locked_format: Callable[[], Optional[str]] = lambda: None  # noqa: UP045
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -128,7 +159,8 @@ class ExplorerPane(QWidget):
         self._filter_box.addItems(_format_filters())
         self._filter_box.setToolTip(
             "Only show banks of this format (MPC covers .xpm programs, "
-            ".xty tracks and .xpj projects)")
+            ".xty tracks and .xpj projects)"
+        )
         self._filter_box.currentTextChanged.connect(self._on_filter_changed)
         search_row.addWidget(self._filter_box)
         layout.addLayout(search_row)
@@ -150,14 +182,18 @@ class ExplorerPane(QWidget):
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setDragEnabled(True)
         self._tree.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
-        self._tree.selectionModel().currentChanged.connect(self._on_tree_current_changed)
+        self._tree.selectionModel().currentChanged.connect(
+            self._on_tree_current_changed
+        )
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self._tree.doubleClicked.connect(self._on_tree_double_clicked)
         self._stack.addWidget(self._tree)
 
         self._results = _ResultsListWidget()
-        self._results.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._results.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self._results.setDragEnabled(True)
         self._results.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self._results.currentItemChanged.connect(self._on_result_current_changed)
@@ -176,14 +212,14 @@ class ExplorerPane(QWidget):
 
         layout.addWidget(splitter)
 
-    def set_index_db(self, index_db: Optional[IndexDB]) -> None:
+    def set_index_db(self, index_db: Optional[IndexDB]) -> None:  # noqa: UP045
         self._index_db = index_db
         if self._search_box.text().strip():
             self._run_search()
 
     # -- format filter ----------------------------------------------------------
 
-    def _current_format_filter(self) -> Optional[str]:
+    def _current_format_filter(self) -> Optional[str]:  # noqa: UP045
         text = self._filter_box.currentText()
         return None if text == "All" else text
 
@@ -209,7 +245,9 @@ class ExplorerPane(QWidget):
         self._stack.setCurrentWidget(self._results)
         self._results.clear()
         if self._index_db is None:
-            placeholder = QListWidgetItem("Index isn't ready yet — still scanning the library.")
+            placeholder = QListWidgetItem(
+                "Index isn't ready yet — still scanning the library."
+            )
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
             self._results.addItem(placeholder)
             return
@@ -219,7 +257,8 @@ class ExplorerPane(QWidget):
         # rows that can survive the filter, or a format with fewer or
         # lower-ranked matches reads as "No matches" on a big library.
         page = self._index_db.search_page(
-            text, formats=models.formats_for_filter(format_filter))
+            text, formats=models.formats_for_filter(format_filter)
+        )
         hits = page.hits
         if format_filter is not None:
             # Non-bank hits (folders, presets/programs) carry the format of
@@ -243,7 +282,8 @@ class ExplorerPane(QWidget):
         if page.truncated:
             more = QListWidgetItem(
                 f"Showing {len(hits)} of {page.total} matches — keep typing "
-                f"to narrow the search.")
+                f"to narrow the search."
+            )
             more.setFlags(Qt.ItemFlag.NoItemFlags)
             self._results.addItem(more)
 
@@ -259,7 +299,7 @@ class ExplorerPane(QWidget):
         if current is None:
             self._select(None)
             return
-        hit: Optional[SearchResult] = current.data(Qt.ItemDataRole.UserRole)
+        hit: Optional[SearchResult] = current.data(Qt.ItemDataRole.UserRole)  # noqa: UP045
         if hit is None:
             self._select(None)
             return
@@ -287,8 +327,11 @@ class ExplorerPane(QWidget):
         # project is the only sensible primary action.
         self._trigger_primary_action(node, allow_container=True)
 
-    def _trigger_primary_action(self, node: Optional[TreeNode],
-                                 allow_container: bool = False) -> None:
+    def _trigger_primary_action(
+        self,
+        node: Optional[TreeNode],  # noqa: UP045
+        allow_container: bool = False,
+    ) -> None:
         if node is None:
             return
         if node.kind == "mpc_project":
@@ -311,7 +354,7 @@ class ExplorerPane(QWidget):
         elif node.kind == "foreign_preset" and not node.empty_reason:
             self.importForeignRequested.emit([_import_request(node)])
 
-    def _select(self, node: Optional[TreeNode]) -> None:
+    def _select(self, node: Optional[TreeNode]) -> None:  # noqa: UP045
         self._current_node = node
         self._detail.show_node(node)
         self.selectionChanged.emit(node)
@@ -341,9 +384,10 @@ class ExplorerPane(QWidget):
         walk(QModelIndex())
         cur = self._tree.currentIndex()
         node = cur.data(Qt.ItemDataRole.UserRole) if cur.isValid() else None
-        return {"expanded": expanded,
-                "current": (models._container_path_of(node)
-                            if node is not None else "")}
+        return {
+            "expanded": expanded,
+            "current": (models._container_path_of(node) if node is not None else ""),
+        }
 
     def restore_view_state(self, state: dict) -> None:
         """Unfold what was unfolded, as the tree fills in.
@@ -415,8 +459,9 @@ class ExplorerPane(QWidget):
             self._idle_passes = 0
         else:
             self._idle_passes = getattr(self, "_idle_passes", 0) + 1
-        if (not self._wanted_expanded and not self._wanted_current) \
-                or self._idle_passes >= 3:
+        if (
+            not self._wanted_expanded and not self._wanted_current
+        ) or self._idle_passes >= 3:
             self._unhook_expansion()
 
     def _unhook_expansion(self) -> None:
@@ -457,7 +502,7 @@ class ExplorerPane(QWidget):
         nodes = [search_resolve.resolve_result(hit) for hit in hits if hit is not None]
         self._show_context_menu(nodes, self._results.viewport().mapToGlobal(pos))
 
-    def _show_context_menu(self, nodes: list[Optional[TreeNode]], global_pos) -> None:
+    def _show_context_menu(self, nodes: list[Optional[TreeNode]], global_pos) -> None:  # noqa: UP045
         presets = [n for n in nodes if n is not None and n.kind == "preset"]
         xpms = [n for n in nodes if n is not None and n.kind == "xpm"]
         programs = [n for n in nodes if n is not None and n.kind == "mpc_program"]
@@ -465,7 +510,11 @@ class ExplorerPane(QWidget):
         # A library root is a top-level "directory" node (no parent) --
         # only those are individually tracked in Config.library_roots and
         # thus removable; a plain subdirectory isn't its own library entry.
-        roots = [n for n in nodes if n is not None and n.kind == "directory" and n.parent is None]
+        roots = [
+            n
+            for n in nodes
+            if n is not None and n.kind == "directory" and n.parent is None
+        ]
         banks = [n for n in nodes if n is not None and n.kind == "bank"]
         # A row that already declared itself unimportable offers no import
         # action -- it stays visible and searchable, and says why in the
@@ -477,15 +526,25 @@ class ExplorerPane(QWidget):
         # supported yet" note that outlived the limitation, so re-importing
         # ten programs meant ten trips through the dialog.
         multi_kinds = _FOREIGN_KINDS + ("xpm", "mpc_project")
-        foreigns = [n for n in nodes if n is not None
-                    and n.kind in multi_kinds and not n.empty_reason]
+        foreigns = [
+            n
+            for n in nodes
+            if n is not None and n.kind in multi_kinds and not n.empty_reason
+        ]
         if len(foreigns) < 2:
             # One row keeps its own wording and its own action below: an
             # .xpm alone says 'Import "NAME"…', which is what the single
             # case has always said and what the tests expect.
             foreigns = [n for n in foreigns if n.kind in _FOREIGN_KINDS]
-        if not presets and not xpms and not programs and not projects \
-                and not roots and not foreigns and not banks:
+        if (
+            not presets
+            and not xpms
+            and not programs
+            and not projects
+            and not roots
+            and not foreigns
+            and not banks
+        ):
             return
         menu = QMenu(self)
         add_action = None
@@ -501,11 +560,13 @@ class ExplorerPane(QWidget):
         # "Import via mpc2emu..." below is exactly that, so dropping the dead
         # action leaves the right one in place rather than an empty menu.
         locked = self.locked_format()
-        addable = [n for n in presets
-                   if not locked or _node_format(n) == locked]
+        addable = [n for n in presets if not locked or _node_format(n) == locked]
         if addable:
-            label = f'Add "{addable[0].label}" to New Bank' if len(addable) == 1 \
+            label = (
+                f'Add "{addable[0].label}" to New Bank'
+                if len(addable) == 1
                 else f"Add {len(addable)} presets to New Bank"
+            )
             add_action = menu.addAction(label)
         # Excludes any preset node with no resolvable parent bank -- same
         # guard as before, just applied per-node instead of only to a lone
@@ -538,32 +599,38 @@ class ExplorerPane(QWidget):
             # parsers.eiii_parser (added 2026-07-28) made KRZ/EIII real
             # *input* formats too, so a preset from any of the three can
             # be converted the same way, to any target format.
-            label = "Import via mpc2emu…" if len(convertible) == 1 \
+            label = (
+                "Import via mpc2emu…"
+                if len(convertible) == 1
                 else f"Import {len(convertible)} presets via mpc2emu…"
+            )
             convert_action = menu.addAction(label)
         # Audition: offered for exactly one playable node. Refusals are NAMED,
         # disabled actions -- the ROM-only precedent below -- so "why can I
         # not audition this" is answered where the question is asked rather
         # than by a silent absence.
-        auditionable = [n for n in nodes if n is not None
-                        and n.kind in ("preset", "xpm", "mpc_program",
-                                       "foreign_preset")
-                        and not n.empty_reason]
+        auditionable = [
+            n
+            for n in nodes
+            if n is not None
+            and n.kind in ("preset", "xpm", "mpc_program", "foreign_preset")
+            and not n.empty_reason
+        ]
         if len(auditionable) == 1:
             node = auditionable[0]
-            from .audition_player import check_playback
+            from .audition_player import check_playback  # noqa: I001
             from .. import audition as audition_mod
+
             model_ok, model_why = audition_mod.available(None)
             # Playback by ANY route -- Qt's device probe alone says "no" on a
             # working JACK desktop, where an external player reaches the audio
             # perfectly well.
             dev_ok, dev_why = check_playback()
             rom_only_node = node.kind == "preset" and _krz_rom_only(node)
-            missing = ("" if node.kind != "preset"
-                       else _krz_missing_audio(node))
+            missing = "" if node.kind != "preset" else _krz_missing_audio(node)
             label, enabled, tooltip = _audition_decision(
-                node, model_ok, model_why, dev_ok, dev_why, rom_only_node,
-                missing)
+                node, model_ok, model_why, dev_ok, dev_why, rom_only_node, missing
+            )
             audition_action = menu.addAction(label)
             audition_action.setEnabled(enabled)
             if tooltip:
@@ -572,11 +639,14 @@ class ExplorerPane(QWidget):
             # Named rather than simply absent: "why can I not convert this
             # one" is the question the row otherwise leaves behind, and the
             # answer is a property of the material, not of the program.
-            what = (f'"{rom_only[0].label}" uses' if len(rom_only) == 1
-                    else f"{len(rom_only)} of these use")
+            what = (
+                f'"{rom_only[0].label}" uses'
+                if len(rom_only) == 1
+                else f"{len(rom_only)} of these use"
+            )
             menu.addAction(
-                f"{what} only the K2000's own ROM — nothing to convert to "
-                f"{locked}").setEnabled(False)
+                f"{what} only the K2000's own ROM — nothing to convert to " f"{locked}"
+            ).setEnabled(False)
         if len(xpms) == 1 and len(foreigns) < 2:
             import_action = menu.addAction(f'Import "{xpms[0].label}"…')
         elif len(programs) == 1:
@@ -589,7 +659,8 @@ class ExplorerPane(QWidget):
             # does. The program count is only known once the project has
             # been expanded (that is what parses it), so don't promise one.
             import_action = menu.addAction(
-                f'Import all programs of "{projects[0].label}"…')
+                f'Import all programs of "{projects[0].label}"…'
+            )
         foreign_action = None
         if foreigns:
             # Unlike the MPC actions above this one takes a multi-selection:
@@ -597,9 +668,11 @@ class ExplorerPane(QWidget):
             # through one shared options dialog and a serial queue.
             if len(foreigns) == 1:
                 node = foreigns[0]
-                label = (f'Import all of "{node.label}"…'
-                         if node.kind == "foreign_bank"
-                         else f'Import "{node.label}"…')
+                label = (
+                    f'Import all of "{node.label}"…'
+                    if node.kind == "foreign_bank"
+                    else f'Import "{node.label}"…'
+                )
             else:
                 label = f"Import {len(foreigns)} instruments…"
                 if all(n.kind in ("xpm", "mpc_project") for n in foreigns):
@@ -611,8 +684,7 @@ class ExplorerPane(QWidget):
             # one bank, so the bank is the thing being named. Picking it here
             # also means no name matching -- the list in the spreadsheet says
             # "Big Bank 64" where the image says "Big Bank 64k".
-            fav_action = menu.addAction(
-                f'Add favourites from a list to New Bank…')
+            fav_action = menu.addAction(f"Add favourites from a list to New Bank…")  # noqa: F541
         if len(roots) == 1:
             # Multi-root removal isn't offered either -- same reasoning,
             # keep the one-item-at-a-time pattern consistent.
@@ -623,8 +695,10 @@ class ExplorerPane(QWidget):
             # above that is single-item-only (favourites, MPC import, removing
             # a library root) silently produced exactly that on a
             # multi-selection. Say which one it was instead.
-            menu.addAction(_no_action_reason(
-                banks, xpms, programs, projects, roots, presets, locked)
+            menu.addAction(
+                _no_action_reason(
+                    banks, xpms, programs, projects, roots, presets, locked
+                )
             ).setEnabled(False)
         chosen = menu.exec(global_pos)
         if fav_action is not None and chosen == fav_action:
@@ -662,6 +736,7 @@ def _format_hit(hit: SearchResult) -> str:
     # it says the true generic thing rather than inventing a reason.
     label += models.size_suffix(hit.size, hit.audio_bytes)
     from pathlib import Path
+
     container_name = Path(hit.container_path).name
     ancestry = " ▸ ".join(c.name for c in hit.chain[:-1])
     where = f"{container_name}" + (f" ▸ {ancestry}" if ancestry else "")
@@ -697,7 +772,7 @@ def _krz_rom_only(node: TreeNode) -> bool:
         return False
     bank, preset = payload
     if not hasattr(bank, "program_keymap_refs"):
-        return False                     # not KRZ; this question is KRZ-only
+        return False  # not KRZ; this question is KRZ-only
     try:
         for km_id in bank.program_keymap_refs(preset):
             km = bank.keymaps.get(km_id)
@@ -706,7 +781,7 @@ def _krz_rom_only(node: TreeNode) -> bool:
             for sid in bank.keymap_sample_refs(km):
                 if bank.samples.get(sid) is not None:
                     return False
-    except Exception:
+    except Exception:  # noqa: BLE001
         # "Is this bank empty of anything playable?" asked to decide whether
         # to GREY a row. A bank we cannot walk is not evidence of emptiness,
         # and the safe answer is the one that keeps the row live and lets the
@@ -735,22 +810,31 @@ def _krz_missing_audio(node: TreeNode) -> str:
         return ""
     bank, preset = payload
     if not hasattr(bank, "program_keymap_refs"):
-        return ""                        # not KRZ; this question is KRZ-only
+        return ""  # not KRZ; this question is KRZ-only
     try:
         from ..banks import krz as vs_krz
+
         missing = vs_krz.program_missing_audio(bank, preset)
-    except Exception:
-        return ""                        # never let a guess block a real row
+    except Exception:  # noqa: BLE001
+        return ""  # never let a guess block a real row
     if missing is None:
         return ""
-    name, needed, got = missing
-    return (f"{name!r} needs {needed} words of audio that are not in this "
-            f"file — a multi-disc set stores them on the next volume")
+    name, needed, got = missing  # noqa: RUF059
+    return (
+        f"{name!r} needs {needed} words of audio that are not in this "
+        f"file — a multi-disc set stores them on the next volume"
+    )
 
 
-def _audition_decision(node, model_ok: bool, model_why: str, play_ok: bool,
-                       play_why: str, rom_only: bool,
-                       missing_audio: str = "") -> tuple:
+def _audition_decision(
+    node,
+    model_ok: bool,
+    model_why: str,
+    play_ok: bool,
+    play_why: str,
+    rom_only: bool,
+    missing_audio: str = "",
+) -> tuple:
     """``(label, enabled, tooltip)`` for the Audition menu entry.
 
     A refusal is a NAMED, disabled action rather than a silent absence, so
@@ -762,8 +846,7 @@ def _audition_decision(node, model_ok: bool, model_why: str, play_ok: bool,
     that decides what this menu should say.
     """
     if not model_ok:
-        return ("Audition — needs an mpc2emu checkout (Settings…)",
-                False, model_why)
+        return ("Audition — needs an mpc2emu checkout (Settings…)", False, model_why)
     if not play_ok:
         # ENABLED, NOT DISABLED. Rendering needs no audio device -- Save as
         # WAV… is documented as "the path that works headless", and the
@@ -771,26 +854,33 @@ def _audition_decision(node, model_ok: bool, model_why: str, play_ok: bool,
         # holds Save as WAV unreachable, so the documented path could not be
         # taken on exactly the machines that need it. The device gates PLAY,
         # inside the dialog, and the label says so up front.
-        return (f'Audition "{node.label}" — no audio device, saves to WAV',
-                True,
-                f"{play_why}. The audition still renders; use Save as WAV… in "
-                f"the dialog.")
+        return (
+            f'Audition "{node.label}" — no audio device, saves to WAV',
+            True,
+            f"{play_why}. The audition still renders; use Save as WAV… in "  # noqa: ISC004
+            f"the dialog.",
+        )
     if rom_only:
-        return ("Audition — this program references only ROM samples", False,
-                "the bank file holds no audio for this program; its samples "
-                "live in the sampler's ROM")
+        return (
+            "Audition — this program references only ROM samples",
+            False,
+            "the bank file holds no audio for this program; its samples "  # noqa: ISC004
+            "live in the sampler's ROM",
+        )
     if missing_audio:
         # Named and DISABLED, like the ROM-only case and unlike the no-device
         # case: there is no audio to render, so there is no WAV to save
         # either, and an enabled action could only end in the modal this
         # exists to replace.
-        return ("Audition — this program's audio is not in this file", False,
-                missing_audio)
+        return (
+            "Audition — this program's audio is not in this file",
+            False,
+            missing_audio,
+        )
     return (f'Audition "{node.label}"', True, "")
 
 
-def _no_action_reason(banks, xpms, programs, projects, roots, presets,
-                      locked) -> str:
+def _no_action_reason(banks, xpms, programs, projects, roots, presets, locked) -> str:
     """Why a right-click produced nothing, in the user's terms."""
     if len(banks) > 1:
         return "Adding favourites works on one bank at a time"

@@ -10,13 +10,13 @@ The one sentence that governs everything here, from the spec's §9:
     sampler, and it will not sound like the hardware.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import threading
 from collections import OrderedDict
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple  # noqa: UP035
 
 from ..notes import name_to_midi
 from .caveats import AuditionReport, Caveat, Severity
@@ -46,26 +46,28 @@ class NoteEvent:
     whatever Settings happened to hold when the text was parsed.
     """
 
-    notes: Tuple[int, ...]
-    hold_seconds: Optional[float] = None
+    notes: Tuple[int, ...]  # noqa: UP006
+    hold_seconds: Optional[float] = None  # noqa: UP045
 
     @property
     def is_chord(self) -> bool:
         return len(self.notes) > 1
 
     def held_for(self, default_seconds: float) -> float:
-        return (default_seconds if self.hold_seconds is None
-                else self.hold_seconds)
+        return default_seconds if self.hold_seconds is None else self.hold_seconds
 
     def __str__(self) -> str:
-        body = (f"({'+'.join(str(n) for n in self.notes)})" if self.is_chord
-                else str(self.notes[0]))
+        body = (
+            f"({'+'.join(str(n) for n in self.notes)})"
+            if self.is_chord
+            else str(self.notes[0])
+        )
         if self.hold_seconds is None:
             return body
-        return f"{body} {int(round(self.hold_seconds * 1000))} ms"
+        return f"{body} {int(round(self.hold_seconds * 1000))} ms"  # noqa: RUF046
 
 
-def as_events(notes: Sequence) -> Tuple[NoteEvent, ...]:
+def as_events(notes: Sequence) -> Tuple[NoteEvent, ...]:  # noqa: UP006
     """Accept either bare MIDI numbers or ``NoteEvent``s.
 
     Audition took a flat tuple of ints before chords existed, and plenty of
@@ -95,21 +97,21 @@ def describe_events(events: Sequence[NoteEvent]) -> str:
 
 @dataclass(frozen=True)
 class AuditionOptions:
-    notes: Tuple                    # NoteEvent, or bare MIDI ints (see as_events)
-    velocity: int                   # 1..127
-    hold_seconds: float             # note-on to note-off
-    gap_seconds: float              # silence between notes
-    render_rate: int                # Hz, negotiated from the device
-    channels: int                   # 1 or 2
+    notes: Tuple  # NoteEvent, or bare MIDI ints (see as_events)  # noqa: UP006
+    velocity: int  # 1..127
+    hold_seconds: float  # note-on to note-off
+    gap_seconds: float  # silence between notes
+    render_rate: int  # Hz, negotiated from the device
+    channels: int  # 1 or 2
     headroom_db: float = -6.0
 
 
 @dataclass
 class Rendering:
-    pcm: bytes                      # interleaved signed 16-bit LE
+    pcm: bytes  # interleaved signed 16-bit LE
     rate: int
     channels: int
-    peak_before_limit: float        # 0..N; >1.0 means the limiter engaged
+    peak_before_limit: float  # 0..N; >1.0 means the limiter engaged
     report: AuditionReport
     seconds: float
 
@@ -133,8 +135,7 @@ def _split_top_level(text: str) -> list:
         elif ch == CHORD_CLOSE:
             depth -= 1
             if depth < 0:
-                raise ValueError(
-                    "a ')' closes a chord that was never opened")
+                raise ValueError("a ')' closes a chord that was never opened")
         if ch == NOTE_SEP and depth == 0:
             out.append("".join(current))
             current = []
@@ -158,7 +159,8 @@ def _parse_one_note(token: str) -> int:
         # would otherwise be read as a completely different number, silently.
         raise ValueError(
             f"{token!r} still contains '{HOLD_SEP}': a hold goes after the "
-            f"note or chord, as A4{HOLD_SEP}100 or (A3,C4){HOLD_SEP}100")
+            f"note or chord, as A4{HOLD_SEP}100 or (A3,C4){HOLD_SEP}100"
+        )
     try:
         note = int(token, 10)
     except ValueError:
@@ -166,8 +168,7 @@ def _parse_one_note(token: str) -> int:
     if note is None:
         raise ValueError(f"{token!r} is not a note name or MIDI number")
     if not (0 <= note <= 127):
-        raise ValueError(
-            f"{token!r} is MIDI {note}, outside the playable range 0–127")
+        raise ValueError(f"{token!r} is MIDI {note}, outside the playable range 0–127")
     return note
 
 
@@ -180,14 +181,16 @@ def _split_hold(token: str) -> tuple:
     if not ms_text.isdigit():
         raise ValueError(
             f"{tail.strip()!r} is not a whole number of milliseconds "
-            f"(after '{HOLD_SEP}' in {token.strip()!r})")
+            f"(after '{HOLD_SEP}' in {token.strip()!r})"
+        )
     ms = int(ms_text, 10)
     if ms <= 0:
         raise ValueError(f"a hold of {ms} ms in {token.strip()!r} plays nothing")
     if ms > MAX_HOLD_MS:
         raise ValueError(
             f"a hold of {ms} ms in {token.strip()!r} is longer than the "
-            f"{MAX_HOLD_MS} ms limit")
+            f"{MAX_HOLD_MS} ms limit"
+        )
     return head, ms / 1000.0
 
 
@@ -222,12 +225,12 @@ def parse_notes(text: str) -> list:
             if not body.endswith(CHORD_CLOSE):
                 raise ValueError(
                     f"{token!r} opens a chord that does not close before its "
-                    f"hold; write (A3,C4){HOLD_SEP}100")
+                    f"hold; write (A3,C4){HOLD_SEP}100"
+                )
             inner = body[1:-1].strip()
             if not inner:
                 raise ValueError("an empty chord '()' sounds nothing")
-            notes = tuple(_parse_one_note(part)
-                          for part in inner.split(NOTE_SEP))
+            notes = tuple(_parse_one_note(part) for part in inner.split(NOTE_SEP))
         else:
             if CHORD_CLOSE in body:
                 raise ValueError(f"{token!r} has a stray ')'")
@@ -238,7 +241,7 @@ def parse_notes(text: str) -> list:
     return events
 
 
-def available(config) -> Tuple[bool, str]:
+def available(config) -> Tuple[bool, str]:  # noqa: UP006
     """Whether the mpc2emu side can support audition.
 
     The device probe lives in ``ui/audition_player``; this checks only the
@@ -246,6 +249,7 @@ def available(config) -> Tuple[bool, str]:
     """
     if config is None:
         from ..config import Config
+
         config = Config.load()
     return config.check_audition_support()
 
@@ -258,27 +262,31 @@ def acceleration_note() -> str:
     takes one'.
     """
     from . import render as _render
+
     if _render.numpy_in_use():
         return ""
     if _render.numpy_available():
         # Installed but switched off -- say WHICH, or the note reads as "numpy
         # is missing" to someone who can see it in their site-packages.
-        return ("Audition is running on the pure-Python renderer because "
-                "VINSAMLIB_NO_NUMPY is set; unset it to use the accelerator.")
-    return ("Audition is running on the pure-Python renderer; installing "
-            "numpy makes long presets render several times faster.")
+        return (
+            "Audition is running on the pure-Python renderer because "
+            "VINSAMLIB_NO_NUMPY is set; unset it to use the accelerator."
+        )
+    return (
+        "Audition is running on the pure-Python renderer; installing "
+        "numpy makes long presets render several times faster."
+    )
 
 
 #: Rendered auditions, most-recently-used last. In this process only, and
 #: gone when the app quits -- there is no file anywhere and nothing to
 #: invalidate on the next run.
 RENDER_CACHE_MAX = 20
-_RENDER_CACHE: "OrderedDict" = OrderedDict()
+_RENDER_CACHE: "OrderedDict" = OrderedDict()  # noqa: UP037
 _RENDER_CACHE_LOCK = threading.Lock()
 
 
-def render_cache_key(kind: str, payload, opts: AuditionOptions,
-                     extra=None) -> tuple:
+def render_cache_key(kind: str, payload, opts: AuditionOptions, extra=None) -> tuple:
     """A key that changes whenever the AUDIO would.
 
     The spec said never to cache rendered audio, and the reason it gave was
@@ -297,8 +305,11 @@ def render_cache_key(kind: str, payload, opts: AuditionOptions,
     of the new one would play the old one.
     """
     ident: tuple
-    if isinstance(payload, tuple) and len(payload) == 2 \
-            and not isinstance(payload[0], (str, Path)):
+    if (
+        isinstance(payload, tuple)
+        and len(payload) == 2
+        and not isinstance(payload[0], (str, Path))
+    ):
         ident = ("obj", id(payload[0]), id(payload[1]))
     elif isinstance(payload, tuple) and len(payload) == 2:
         path, index = payload
@@ -357,24 +368,26 @@ def render_cache_size() -> int:
         return len(_RENDER_CACHE)
 
 
-def render_node(payload, kind: str, opts: AuditionOptions,
-                progress=None) -> Rendering:
+def render_node(payload, kind: str, opts: AuditionOptions, progress=None) -> Rendering:
     """Explorer TreeNode payload -> audio. Runs on a worker thread."""
     from . import params as _params
     from . import render as _render
+
     key = render_cache_key(kind, payload, opts)
     got = cached_render(key)
     if got is not None:
         return got
     parsed = _params.parameters_for_node(payload, kind)
-    out = _render.render(parsed.bank, parsed.preset, parsed.provenance, opts,
-                         progress=progress)
+    out = _render.render(
+        parsed.bank, parsed.preset, parsed.provenance, opts, progress=progress
+    )
     _cache_render(key, out, payload if isinstance(payload, tuple) else ())
     return out
 
 
-def render_staged(bank, preset_obj, opts: AuditionOptions,
-                  name: str = "", edits=None, progress=None) -> Rendering:
+def render_staged(
+    bank, preset_obj, opts: AuditionOptions, name: str = "", edits=None, progress=None
+) -> Rendering:
     """New Bank's ``(bank, preset_obj, name)`` tuple -> audio.
 
     `edits` are the pane's staged renames, placement, velocity and loop
@@ -384,24 +397,44 @@ def render_staged(bank, preset_obj, opts: AuditionOptions,
     """
     from . import params as _params
     from . import render as _render
-    key = render_cache_key("staged", (bank, preset_obj), opts,
-                           (name, _params._edits_fingerprint(edits)))
+
+    key = render_cache_key(
+        "staged", (bank, preset_obj), opts, (name, _params._edits_fingerprint(edits))
+    )
     got = cached_render(key)
     if got is not None:
         return got
     parsed = _params.parameters_for_staged(bank, preset_obj, name, edits)
-    out = _render.render(parsed.bank, parsed.preset, parsed.provenance, opts,
-                         progress=progress)
+    out = _render.render(
+        parsed.bank, parsed.preset, parsed.provenance, opts, progress=progress
+    )
     _cache_render(key, out, (bank, preset_obj))
     return out
 
 
-__all__ = [
-    "NOTE_SEP", "OCTAVE_OFFSET", "AuditionOptions", "Rendering",
-    "parse_notes", "NoteEvent", "as_events", "describe_events",
-    "render_cache_key", "cached_render", "clear_render_cache",
-    "render_cache_size", "render_cache_retains", "RENDER_CACHE_MAX",
-    "available", "acceleration_note", "render_node",
-    "render_staged", "AuditionReport", "Caveat", "Severity",
-    "AuditionError", "SourceProvenance", "Sounding",
+__all__ = [  # noqa: RUF022
+    "NOTE_SEP",
+    "OCTAVE_OFFSET",
+    "AuditionOptions",
+    "Rendering",
+    "parse_notes",
+    "NoteEvent",
+    "as_events",
+    "describe_events",
+    "render_cache_key",
+    "cached_render",
+    "clear_render_cache",
+    "render_cache_size",
+    "render_cache_retains",
+    "RENDER_CACHE_MAX",
+    "available",
+    "acceleration_note",
+    "render_node",
+    "render_staged",
+    "AuditionReport",
+    "Caveat",
+    "Severity",
+    "AuditionError",
+    "SourceProvenance",
+    "Sounding",
 ]

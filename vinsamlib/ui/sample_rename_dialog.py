@@ -14,19 +14,28 @@ writer's own uniquifier. Both are warnings, never blocking, on the same
 "show, don't block" principle the placement dialog uses.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from typing import Optional
 
 from PySide6.QtCore import Qt
 
 from ..notes import midi_to_name
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog,
-                             QDialogButtonBox,
-                             QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                             QMessageBox,
-                             QPushButton, QTableWidget, QTableWidgetItem,
-                             QVBoxLayout)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
 
 #: Both E4B (`body[2:18]`) and EIII (`body[0:16]`) store a sample name in a
 #: fixed 16-byte field. Longer is not refused -- the writer truncates -- but
@@ -34,14 +43,20 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog,
 MAX_NAME = 16
 
 
-def _note(root: Optional[int], octave_offset: int) -> str:
+def _note(root: Optional[int], octave_offset: int) -> str:  # noqa: UP045
     """The key a sample plays, or an em dash when the bank did not say."""
     return midi_to_name(root, octave_offset) if root is not None else "—"
 
 
 class SampleRenameDialog(QDialog):
-    def __init__(self, rows: list, fmt: str = "E4B", octave_offset: int = 2,
-                 existing: Optional[dict] = None, parent=None):
+    def __init__(
+        self,
+        rows: list,
+        fmt: str = "E4B",
+        octave_offset: int = 2,
+        existing: Optional[dict] = None,  # noqa: UP045
+        parent=None,
+    ):  # noqa: RUF100, UP045
         """`rows`: [{"name": str, "root": int|None}] in bank order, or plain
         names for callers that have no mapping. Duplicates are kept as
         separate rows -- two samples really can share a name, and renaming
@@ -57,25 +72,32 @@ class SampleRenameDialog(QDialog):
         self.setMinimumSize(560, 420)
         self._octave_offset = octave_offset
         self._rows: list[dict] = [
-            {"name": r["name"] if isinstance(r, dict) else r,
-             "root": r.get("root") if isinstance(r, dict) else None,
-             "vel": r.get("vel") if isinstance(r, dict) else None,
-             # Carried through, not rebuilt: the caller knows which other
-             # staged presets use this sample and the dialog cannot work it
-             # out. Dropping it here silently disabled both the italic
-             # marking and the confirmation that depend on it, while the
-             # caller went on supplying it -- the two halves each looked
-             # right in isolation.
-             "shared_with": list(r.get("shared_with") or ()) if isinstance(r, dict) else [],
-             # Renames already set for these samples come back in, so
-             # reopening the dialog shows the work rather than a blank
-             # slate -- and marks them hand-typed, so a bulk apply respects
-             # them exactly as if they had just been entered.
-             "new_name": (existing or {}).get(
-                 r["name"] if isinstance(r, dict) else r, ""),
-             "hand_typed": bool((existing or {}).get(
-                 r["name"] if isinstance(r, dict) else r))}
-            for r in rows]
+            {
+                "name": r["name"] if isinstance(r, dict) else r,
+                "root": r.get("root") if isinstance(r, dict) else None,
+                "vel": r.get("vel") if isinstance(r, dict) else None,
+                # Carried through, not rebuilt: the caller knows which other
+                # staged presets use this sample and the dialog cannot work it
+                # out. Dropping it here silently disabled both the italic
+                # marking and the confirmation that depend on it, while the
+                # caller went on supplying it -- the two halves each looked
+                # right in isolation.
+                "shared_with": list(r.get("shared_with") or ())
+                if isinstance(r, dict)
+                else [],
+                # Renames already set for these samples come back in, so
+                # reopening the dialog shows the work rather than a blank
+                # slate -- and marks them hand-typed, so a bulk apply respects
+                # them exactly as if they had just been entered.
+                "new_name": (existing or {}).get(
+                    r["name"] if isinstance(r, dict) else r, ""
+                ),
+                "hand_typed": bool(
+                    (existing or {}).get(r["name"] if isinstance(r, dict) else r)
+                ),
+            }
+            for r in rows
+        ]
         self._have_roots = any(r["root"] is not None for r in self._rows)
 
         layout = QVBoxLayout(self)
@@ -89,7 +111,8 @@ class SampleRenameDialog(QDialog):
             f"instrument shows changes.\n"
             f"A name over {MAX_NAME} characters is truncated, and two samples "
             f"sharing a name are numbered apart. Italic rows are used by "
-            f"another preset too, and will be renamed there as well.")
+            f"another preset too, and will be renamed there as well."
+        )
         info.setWordWrap(True)
         info.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(info)
@@ -104,7 +127,8 @@ class SampleRenameDialog(QDialog):
         self._base_edit.setPlaceholderText("base name")
         self._base_edit.setToolTip(
             "Fill every row with this name plus a number. Rows you have "
-            "already typed into are left alone.")
+            "already typed into are left alone."
+        )
         base_row.addWidget(self._base_edit, 1)
         # Numbered, NOT key-suffixed, and the difference is deliberate. The
         # import dialog offers `<base>-<key>` because it holds a parsed Bank
@@ -119,9 +143,10 @@ class SampleRenameDialog(QDialog):
         self._with_key.setToolTip(
             "Name each sample after the key it plays, e.g. Strings-C3 --\n"
             "the same scheme the sample-folder import offers."
-            if self._have_roots else
-            "No root notes could be read from this bank's zones, so the "
-            "samples are numbered instead.")
+            if self._have_roots
+            else "No root notes could be read from this bank's zones, so the "
+            "samples are numbered instead."
+        )
         base_row.addWidget(self._with_key)
         self._apply_base_btn = QPushButton("Apply")
         self._apply_base_btn.clicked.connect(self._apply_base)
@@ -143,17 +168,22 @@ class SampleRenameDialog(QDialog):
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.SelectedClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
-            | QAbstractItemView.EditTrigger.AnyKeyPressed)
+            | QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
         self._table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch)
+            0, QHeaderView.ResizeMode.Stretch
+        )
         self._table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents)
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
         self._table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch)
+            2, QHeaderView.ResizeMode.Stretch
+        )
         layout.addWidget(self._table, 1)
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -166,7 +196,7 @@ class SampleRenameDialog(QDialog):
         self._table.setRowCount(len(self._rows))
         for r, row in enumerate(self._rows):
             original = QTableWidgetItem(row["name"])
-            original.setFlags(Qt.ItemFlag.ItemIsEnabled)      # identity, never edited
+            original.setFlags(Qt.ItemFlag.ItemIsEnabled)  # identity, never edited
             self._table.setItem(r, 0, original)
 
             shared = row.get("shared_with") or []
@@ -187,7 +217,7 @@ class SampleRenameDialog(QDialog):
             if vel and tuple(vel) != (0, 127):
                 label = f"{label}  v{vel[0]}-{vel[1]}"
             plays = QTableWidgetItem(label)
-            plays.setFlags(Qt.ItemFlag.ItemIsEnabled)      # read-only: information
+            plays.setFlags(Qt.ItemFlag.ItemIsEnabled)  # read-only: information
             plays.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(r, 1, plays)
 
@@ -277,8 +307,9 @@ class SampleRenameDialog(QDialog):
             self._table.blockSignals(False)
 
     def _paint_warnings(self) -> None:
-        final = {i: (r["new_name"] or r["name"]).strip()
-                 for i, r in enumerate(self._rows)}
+        final = {
+            i: (r["new_name"] or r["name"]).strip() for i, r in enumerate(self._rows)
+        }
         counts: dict[str, int] = {}
         for n in final.values():
             counts[n] = counts.get(n, 0) + 1
@@ -291,13 +322,15 @@ class SampleRenameDialog(QDialog):
             if len(name) > MAX_NAME:
                 trouble.append(f"{len(name)} characters — the field holds {MAX_NAME}")
             if counts.get(name, 0) > 1:
-                trouble.append("another sample has this name — it will be numbered apart")
+                trouble.append(
+                    "another sample has this name — it will be numbered apart"
+                )
             item.setToolTip("; ".join(trouble) if trouble else name)
             font = item.font()
             font.setItalic(bool(trouble))
             item.setFont(font)
 
-    def accept(self) -> None:      # noqa: N802  (Qt casing)
+    def accept(self) -> None:  # noqa: N802, RUF100
         """Confirm before renaming a sample another preset also uses.
 
         ONE prompt for the whole dialog, not one per row. Sharing is the norm
@@ -314,23 +347,28 @@ class SampleRenameDialog(QDialog):
         """
         affected = [r for r in self._rows if r["new_name"] and r.get("shared_with")]
         if affected:
-            lines = [f"• {r['name'].strip()} → {r['new_name']}"
-                     f"   (also in {', '.join(r['shared_with'])})"
-                     for r in affected[:8]]
-            more = (f"\n…and {len(affected) - 8} more"
-                    if len(affected) > 8 else "")
+            lines = [
+                f"• {r['name'].strip()} → {r['new_name']}"
+                f"   (also in {', '.join(r['shared_with'])})"
+                for r in affected[:8]
+            ]
+            more = f"\n…and {len(affected) - 8} more" if len(affected) > 8 else ""
             answer = QMessageBox.question(
-                self, "Samples used by other presets",
+                self,
+                "Samples used by other presets",
                 f"{len(affected)} of the samples you renamed are also used by "
                 f"other presets staged in this bank.\n\n"
                 f"A rename follows the sample, so those presets will show the "
                 f"new names too — the audio is shared, and only one copy of it "
-                f"goes into the bank.\n\n" + "\n".join(lines) + more +
-                f"\n\nRename them anyway?",
+                f"goes into the bank.\n\n"
+                + "\n".join(lines)
+                + more
+                + f"\n\nRename them anyway?",  # noqa: F541
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Yes)
+                QMessageBox.StandardButton.Yes,
+            )
             if answer != QMessageBox.StandardButton.Yes:
-                return                 # back to the table, edits intact
+                return  # back to the table, edits intact
         super().accept()
 
     def renames(self) -> dict:
@@ -343,12 +381,17 @@ class SampleRenameDialog(QDialog):
         return {r["name"]: r["new_name"] for r in self._rows if r["new_name"]}
 
     @staticmethod
-    def get_renames(rows: list, fmt: str = "E4B", octave_offset: int = 2,
-                     existing: Optional[dict] = None,
-                     parent=None) -> Optional[dict]:
+    def get_renames(
+        rows: list,
+        fmt: str = "E4B",
+        octave_offset: int = 2,
+        existing: Optional[dict] = None,  # noqa: UP045
+        parent=None,
+    ) -> Optional[dict]:  # noqa: UP045
         """None if cancelled, otherwise the (possibly empty) rename map."""
-        dialog = SampleRenameDialog(rows, fmt=fmt, octave_offset=octave_offset,
-                                     existing=existing, parent=parent)
+        dialog = SampleRenameDialog(
+            rows, fmt=fmt, octave_offset=octave_offset, existing=existing, parent=parent
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog.renames()

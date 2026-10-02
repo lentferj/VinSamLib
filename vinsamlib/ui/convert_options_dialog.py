@@ -26,16 +26,31 @@ KRZ/EIII. _current_target_format() is the hook for that, overridden by
 FormatConvertDialog's live "Import as:" picker.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001, RUF100
 
-from typing import Callable, Optional
+from typing import Callable, Optional  # noqa: UP035
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
-                             QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-                             QFrame, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
-                             QPushButton, QScrollArea, QSlider, QSpinBox,
-                             QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..build.convert import ConversionOptions, stereo_mono_risk, suggest_mono_side
 from ..mpc2emu_bridge import resampler
@@ -55,7 +70,7 @@ _DEFAULT_REDUCE_PCT = 30
 # away from with a different pre-selection. E-mu hardware confirmed a stereo
 # E4B bank loads and plays as stereo with the correct channel order
 # (measured per-channel on a real E4XT, mpc2emu 0868233, 2026-07-31).
-_MONO_CHOICES: list[tuple[str, Optional[str]]] = [
+_MONO_CHOICES: list[tuple[str, Optional[str]]] = [  # noqa: UP045
     ("Keep Stereo", None),
     ("Reduce to Mono — Mix (average both sides)", "mix"),
     ("Reduce to Mono — Left channel only", "left"),
@@ -73,8 +88,12 @@ _MAX_TRIM_DB = 96.0
 
 
 class ConvertOptionsDialog(QDialog):
-    def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
-                 bank_loader: Optional[Callable[[], list]] = None):
+    def __init__(
+        self,
+        parent=None,
+        initial: Optional[ConversionOptions] = None,  # noqa: UP045
+        bank_loader: Optional[Callable[[], list]] = None,  # noqa: UP045
+    ):  # noqa: RUF100, UP045
         super().__init__(parent)
         self.setWindowTitle("Convert Options")
         self.setMinimumWidth(460)
@@ -86,7 +105,9 @@ class ConvertOptionsDialog(QDialog):
         # accept()'s own risk check -- never by the real conversion, which
         # always re-parses its own real source regardless of this.
         self._bank_loader = bank_loader
-        self._tested_mono: Optional[str] = None  # method last successfully Tested
+        self._tested_mono: Optional[str] = (  # noqa: UP045
+            None  # method last successfully Tested  # noqa: RUF100, UP045
+        )
 
         layout = QVBoxLayout(self)
 
@@ -94,9 +115,12 @@ class ConvertOptionsDialog(QDialog):
             "Applying vintage resample/reduce re-encodes this bank through "
             "mpc2emu's own model; a few advanced parameters not covered by "
             "that model may reset to defaults, and the final bank size may "
-            "differ from what New Bank's meter showed.")
+            "differ from what New Bank's meter showed."
+        )
         self._warning_label.setWordWrap(True)
-        self._warning_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+        self._warning_label.setStyleSheet(
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         layout.addWidget(self._warning_label)
 
         # The groups live in a scroll area, and with six of them that is no
@@ -140,7 +164,8 @@ class ConvertOptionsDialog(QDialog):
         self._refresh_akai_hw_availability()
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self._on_accept_clicked)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -152,7 +177,9 @@ class ConvertOptionsDialog(QDialog):
         """Re-opening for a bank that already has options set (per-bank
         storage, see pending_pane.py) should show its current choice, not
         silently reset to defaults."""
-        mono_idx = next((i for i, (_label, m) in enumerate(_MONO_CHOICES) if m == opts.mono), 0)
+        mono_idx = next(
+            (i for i, (_label, m) in enumerate(_MONO_CHOICES) if m == opts.mono), 0
+        )
         self._mono_box.setCurrentIndex(mono_idx)
         if opts.resample_profile is not None:
             self._resample_group.setChecked(True)
@@ -179,9 +206,14 @@ class ConvertOptionsDialog(QDialog):
             self._shrink_group.setChecked(True)
             self._shrink_mode.setCurrentIndex(1)
             self._shrink_by_spin.setValue(int(opts.shrink_by_pct))
-        krz_idx = next((i for i, (_l, f, d) in enumerate(self._KRZ_LAYER_CHOICES)
-                        if f == opts.krz_faithful_layers
-                        and d == opts.krz_drum_program), 0)
+        krz_idx = next(
+            (
+                i
+                for i, (_l, f, d) in enumerate(self._KRZ_LAYER_CHOICES)
+                if f == opts.krz_faithful_layers and d == opts.krz_drum_program
+            ),
+            0,
+        )
         self._krz_layers_box.setCurrentIndex(krz_idx)
         self._akai_ib304f_box.setChecked(opts.akai_ib304f)
         self._chromatic_pads_box.setChecked(opts.chromatic_pads)
@@ -253,27 +285,38 @@ class ConvertOptionsDialog(QDialog):
         group = QGroupBox("Trim Silence")
         outer = QVBoxLayout(group)
 
-        (self._trim_start_group, self._trim_start_db_spin,
-         self._trim_start_fade_spin, self._trim_start_keep_loops) = self._build_trim_subgroup(
+        (
+            self._trim_start_group,
+            self._trim_start_db_spin,
+            self._trim_start_fade_spin,
+            self._trim_start_keep_loops,
+        ) = self._build_trim_subgroup(
             "Trim Start (leading silence)",
             "Cuts everything before the onset and fades in over the first kept "
             "frames so the cut is click-free. A loop starting inside the cut "
             "lead-in (an autosampler's whole-take loop) is dropped unless you "
-            "keep it below.")
+            "keep it below.",
+        )
         outer.addWidget(self._trim_start_group)
 
-        (self._trim_tail_group, self._trim_tail_db_spin,
-         self._trim_tail_fade_spin, self._trim_tail_keep_loops) = self._build_trim_subgroup(
+        (
+            self._trim_tail_group,
+            self._trim_tail_db_spin,
+            self._trim_tail_fade_spin,
+            self._trim_tail_keep_loops,
+        ) = self._build_trim_subgroup(
             "Trim Tail (trailing decay/silence)",
             "Cuts everything after the last audible frame and fades out into "
             "it. A loop spanning the cut tail is dropped unless you keep it "
-            "below.")
+            "below.",
+        )
         outer.addWidget(self._trim_tail_group)
 
         return group
 
-    def _build_trim_subgroup(self, title: str, help_text: str
-                              ) -> tuple[QGroupBox, QDoubleSpinBox, QDoubleSpinBox, QCheckBox]:
+    def _build_trim_subgroup(
+        self, title: str, help_text: str
+    ) -> tuple[QGroupBox, QDoubleSpinBox, QDoubleSpinBox, QCheckBox]:
         group = QGroupBox(title)
         group.setCheckable(True)
         group.setChecked(False)
@@ -306,7 +349,8 @@ class ConvertOptionsDialog(QDialog):
         db_spin.setToolTip(
             "How far below the sample's own peak still counts as silence. "
             "72 dB (the default) removes silence only; lower values such as "
-            "45 cut into the natural attack/release for a tighter sample.")
+            "45 cut into the natural attack/release for a tighter sample."
+        )
         db_spin.setMinimumWidth(150)
         form.addRow("Threshold:", db_spin)
 
@@ -333,7 +377,8 @@ class ConvertOptionsDialog(QDialog):
             "it, and a pad that loses its loop stops sustaining -- a change "
             "in what the instrument can play, not just in how it sounds. "
             "With this on the cut stops at the loop edge instead; samples "
-            "with no loop are trimmed exactly the same either way.")
+            "with no loop are trimmed exactly the same either way."
+        )
         inner.addWidget(keep_loops)
 
         label = QLabel(help_text)
@@ -350,7 +395,7 @@ class ConvertOptionsDialog(QDialog):
     def _build_pan_law_group(self) -> QGroupBox:
         group = QGroupBox("Constant-Power Pan Compensation")
         group.setCheckable(True)
-        group.setChecked(False)     # mpc2emu's own default is --pan-law hardware
+        group.setChecked(False)  # mpc2emu's own default is --pan-law hardware
         self._pan_law_group = group
         outer = QVBoxLayout(group)
 
@@ -370,7 +415,8 @@ class ConvertOptionsDialog(QDialog):
             "use it when you care about the balance the source author heard.\n\n"
             "This is ONE-WAY: the correction lands in each voice's volume and "
             "cannot be undone by re-reading the bank, so don't apply it twice "
-            "to the same material.")
+            "to the same material."
+        )
         label.setWordWrap(True)
         label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         inner.addWidget(label)
@@ -415,7 +461,8 @@ class ConvertOptionsDialog(QDialog):
             "the default.\n\n"
             "Keep every layer when you are writing for a drum channel "
             "deliberately, or when you would rather hear the source exactly "
-            "and decide for yourself.")
+            "and decide for yourself."
+        )
         label.setWordWrap(True)
         label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(label)
@@ -427,7 +474,8 @@ class ConvertOptionsDialog(QDialog):
         outer = QVBoxLayout(group)
 
         self._akai_ib304f_box = QCheckBox(
-            "This machine has the IB-304F second-filter board")
+            "This machine has the IB-304F second-filter board"
+        )
         outer.addWidget(self._akai_ib304f_box)
 
         label = QLabel(
@@ -439,11 +487,12 @@ class ConvertOptionsDialog(QDialog):
             "so this can only be you telling us about your own machine — "
             "which is also why it is off by default. Tick it only if yours "
             "has one: a machine WITHOUT the board refuses such a program "
-            "outright with \"2nd filter board IB304F not fitted!\".\n\n"
+            'outright with "2nd filter board IB304F not fitted!".\n\n'
             "Not hardware-verified. The corner law behind it was measured in "
             "lowpass mode only, and the corner moves about 41% between modes, "
             "so a highpass or EQ corner is placed by a law measured on a "
-            "different one.")
+            "different one."
+        )
         label.setWordWrap(True)
         label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(label)
@@ -457,16 +506,19 @@ class ConvertOptionsDialog(QDialog):
         if not is_akai:
             self._akai_ib304f_box.setChecked(False)
         self._akai_hw_group.setToolTip(
-            "" if is_akai else
-            "Akai (AKAI) only — the IB-304F is an S3000XL expansion board and "
-            "no other target here has a second filter to map onto.")
+            ""
+            if is_akai
+            else "Akai (AKAI) only — the IB-304F is an S3000XL expansion board and "
+            "no other target here has a second filter to map onto."
+        )
 
     def _build_source_group(self) -> QGroupBox:
         group = QGroupBox("Source Handling")
         outer = QVBoxLayout(group)
 
         self._chromatic_pads_box = QCheckBox(
-            "Lay MPC drum pads out chromatically from C1")
+            "Lay MPC drum pads out chromatically from C1"
+        )
         outer.addWidget(self._chromatic_pads_box)
         lab1 = QLabel(
             "An MPC drum program carries its own pad-to-note map, and that "
@@ -477,14 +529,14 @@ class ConvertOptionsDialog(QDialog):
             "Faithful, and right for a real kit whose GM positions a pattern "
             "was written against. Rarely what you want for a MELODIC program "
             "on pads — piano chords, say — which this lays out on consecutive "
-            "keys instead. Affects MPC sources only.")
+            "keys instead. Affects MPC sources only."
+        )
         lab1.setWordWrap(True)
         lab1.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(lab1)
         self._mpc_only_widgets = [self._chromatic_pads_box, lab1]
 
-        self._split_vel_box = QCheckBox(
-            "Split velocity layers into separate presets")
+        self._split_vel_box = QCheckBox("Split velocity layers into separate presets")
         outer.addWidget(self._split_vel_box)
         lab2 = QLabel(
             "Each velocity layer becomes a preset of its own at full "
@@ -492,7 +544,8 @@ class ConvertOptionsDialog(QDialog):
             "playable one at a time.\n\n"
             "The opposite instrument to Reduce Velocity Layers below, which "
             "throws them away. This keeps every one and costs preset slots "
-            "instead: a four-layer preset becomes four.")
+            "instead: a four-layer preset becomes four."
+        )
         lab2.setWordWrap(True)
         lab2.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(lab2)
@@ -519,7 +572,8 @@ class ConvertOptionsDialog(QDialog):
             "reproduced against an assumed one. Left off, mpc2emu assumes "
             "120, the MPC's own new-project default. Set it to the tempo the "
             "material was actually made at and every synced LFO lands at the "
-            "rate it had.")
+            "rate it had."
+        )
         lab3.setWordWrap(True)
         lab3.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         outer.addWidget(lab3)
@@ -534,9 +588,11 @@ class ConvertOptionsDialog(QDialog):
         is_krz = self._current_target_format() == "KRZ"
         self._krz_layers_group.setEnabled(is_krz)
         self._krz_layers_group.setToolTip(
-            "" if is_krz else
-            "K2000 (KRZ) only — the three-layer limit and the drum-program "
-            "rule are the K2000's, and no other target here has an equivalent.")
+            ""
+            if is_krz
+            else "K2000 (KRZ) only — the three-layer limit and the drum-program "
+            "rule are the K2000's, and no other target here has an equivalent."
+        )
 
     def _current_target_format(self) -> str:
         """Which format this conversion will actually write. The base dialog
@@ -563,9 +619,10 @@ class ConvertOptionsDialog(QDialog):
                 "E4B only — the K2000's pan law is constant power too, but "
                 "+3.0 dB hard-panned against the E4XT's +4.5, so this "
                 "correction would be the wrong number for it."
-                if fmt == "KRZ" else
-                f"E4B only — the pan loudness law was measured on an E4XT "
-                f"and nothing equivalent is known for {fmt}.")
+                if fmt == "KRZ"
+                else f"E4B only — the pan loudness law was measured on an E4XT "
+                f"and nothing equivalent is known for {fmt}."
+            )
         else:
             self._pan_law_group.setToolTip("")
 
@@ -585,20 +642,22 @@ class ConvertOptionsDialog(QDialog):
         self._test_button = QPushButton("Test")
         self._test_button.setToolTip(
             "Check the actual samples for stereo content and, for Mix, "
-            "whether averaging would cancel signal on any of them.")
+            "whether averaging would cancel signal on any of them."
+        )
         self._test_button.clicked.connect(self._on_test_clicked)
         self._test_button.setEnabled(self._bank_loader is not None)
         if self._bank_loader is None:
             self._test_button.setToolTip(
-                "Not available here -- nothing to preview yet for this "
-                "conversion.")
+                "Not available here -- nothing to preview yet for this " "conversion."
+            )
         row.addWidget(self._test_button)
         outer.addLayout(row)
 
         self._stereo_result_label = QLabel()
         self._stereo_result_label.setWordWrap(True)
         self._stereo_result_label.setStyleSheet(
-            "color: palette(placeholdertext); font-size: 11px;")
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         outer.addWidget(self._stereo_result_label)
 
         # Fill the label from the CURRENT selection rather than hard-coding
@@ -611,7 +670,7 @@ class ConvertOptionsDialog(QDialog):
 
         return group
 
-    def _current_mono_method(self) -> Optional[str]:
+    def _current_mono_method(self) -> Optional[str]:  # noqa: UP045
         return _MONO_CHOICES[self._mono_box.currentIndex()][1]
 
     def _on_mono_choice_changed(self, _index: int) -> None:
@@ -620,7 +679,8 @@ class ConvertOptionsDialog(QDialog):
         # trusting a stale result for a different method.
         self._tested_mono = None
         self._stereo_result_label.setStyleSheet(
-            "color: palette(placeholdertext); font-size: 11px;")
+            "color: palette(placeholdertext); font-size: 11px;"
+        )
         if self._current_mono_method() is None:
             self._stereo_result_label.setText(
                 "Keeping stereo samples in stereo -- no cancellation risk, "
@@ -628,18 +688,21 @@ class ConvertOptionsDialog(QDialog):
                 "(mpc2emu's E4B writer stores both channels in one object; "
                 "KRZ does too since 2026-08-02, so only EIII still "
                 "downmixes regardless of this setting -- an mpc2emu "
-                "checkout older than that downmixes KRZ as well).")
+                "checkout older than that downmixes KRZ as well)."
+            )
         elif self._current_mono_method() == "mix":
             self._stereo_result_label.setText(
                 "Averaging (Mix) can cancel signal on decorrelated stereo "
                 "content -- across 247 real stereo E-mu samples, mpc2emu "
                 "found a median channel correlation of just 0.076, so this "
                 "is common, not an edge case. Use Test to check the actual "
-                "samples, or prefer Left/Right if in doubt.")
+                "samples, or prefer Left/Right if in doubt."
+            )
         else:
             self._stereo_result_label.setText(
                 "Picking one side never cancels signal, unlike averaging -- "
-                "no test needed for this choice.")
+                "no test needed for this choice."
+            )
 
     def _on_test_clicked(self) -> None:
         if self._bank_loader is None:
@@ -648,7 +711,7 @@ class ConvertOptionsDialog(QDialog):
         self._test_button.setEnabled(False)
         try:
             samples = self._bank_loader()
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
             QMessageBox.warning(self, "Test", f"Couldn't preview the samples:\n\n{ex}")
             return
         finally:
@@ -656,23 +719,33 @@ class ConvertOptionsDialog(QDialog):
         self._show_risk(stereo_mono_risk(samples, method or "mix"), method, samples)
         self._tested_mono = method
 
-    def _show_risk(self, risk: dict, method: Optional[str], samples: list) -> None:
+    def _show_risk(self, risk: dict, method: Optional[str], samples: list) -> None:  # noqa: UP045
         if risk["stereo_count"] == 0:
-            self._stereo_result_label.setText("No stereo samples found -- this setting has no effect.")
-            self._stereo_result_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+            self._stereo_result_label.setText(
+                "No stereo samples found -- this setting has no effect."
+            )
+            self._stereo_result_label.setStyleSheet(
+                "color: palette(placeholdertext); font-size: 11px;"
+            )
             return
         if method != "mix":
             self._stereo_result_label.setText(
                 f"{risk['stereo_count']} stereo sample(s) found. "
-                f"{'Keeping stereo.' if method is None else 'Picking one side never cancels signal.'}")
-            self._stereo_result_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+                f"{'Keeping stereo.' if method is None else 'Picking one side never cancels signal.'}"
+            )
+            self._stereo_result_label.setStyleSheet(
+                "color: palette(placeholdertext); font-size: 11px;"
+            )
             return
         n = len(risk["decorrelated"])
         if n == 0:
             self._stereo_result_label.setText(
                 f"{risk['stereo_count']} stereo sample(s) checked -- none are "
-                f"decorrelated enough for averaging to be a concern.")
-            self._stereo_result_label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
+                f"decorrelated enough for averaging to be a concern."
+            )
+            self._stereo_result_label.setStyleSheet(
+                "color: palette(placeholdertext); font-size: 11px;"
+            )
         else:
             worst_name, worst_r = risk["decorrelated"][0]
             # Same rough loudness heuristic the accept()-time confirmation
@@ -683,14 +756,20 @@ class ConvertOptionsDialog(QDialog):
             # (mpc2emu's own db5d599 -- the 111dacd this used to cite was
             # rebased away and is no longer reachable from its main.)
             suggestion = suggest_mono_side(samples)
-            side_note = (f" (measured ~{suggestion['avg_db']:.1f} dB louder on average)"
-                         if suggestion["n"] else "")
+            side_note = (
+                f" (measured ~{suggestion['avg_db']:.1f} dB louder on average)"
+                if suggestion["n"]
+                else ""
+            )
             self._stereo_result_label.setText(
                 f"⚠ {n} of {risk['stereo_count']} stereo sample(s) have decorrelated "
                 f"channels (worst: \"{worst_name}\", r={worst_r:+.2f}) -- averaging "
                 f"cancels signal there. Consider {suggestion['side'].capitalize()} "
-                f"instead{side_note}.")
-            self._stereo_result_label.setStyleSheet("color: palette(link); font-size: 11px;")
+                f"instead{side_note}."
+            )
+            self._stereo_result_label.setStyleSheet(
+                "color: palette(link); font-size: 11px;"
+            )
 
     def _on_accept_clicked(self) -> None:
         """Only Mix carries a cancellation risk (see stereo_mono_risk()).
@@ -709,59 +788,82 @@ class ConvertOptionsDialog(QDialog):
             try:
                 samples = self._bank_loader()
                 risk = stereo_mono_risk(samples, "mix")
-            except Exception:
-                samples, risk = None, None   # fall through to the generic warning below
+            except Exception:  # noqa: BLE001
+                samples, risk = None, None  # fall through to the generic warning below
         if risk is not None and not risk["decorrelated"]:
             self.accept()
             return
         self._confirm_mono_mix_risk(risk, samples)
 
-    def _confirm_mono_mix_risk(self, risk: Optional[dict], samples: Optional[list]) -> None:
+    def _confirm_mono_mix_risk(
+        self,
+        risk: Optional[dict],
+        samples: Optional[list],  # noqa: UP045
+    ) -> None:  # noqa: RUF100, UP045
         if risk is not None:
             worst_name, worst_r = risk["decorrelated"][0]
-            detail = (f"{len(risk['decorrelated'])} of {risk['stereo_count']} stereo "
-                      f"sample(s) have decorrelated channels (worst: \"{worst_name}\", "
-                      f"r={worst_r:+.2f}).")
+            detail = (
+                f"{len(risk['decorrelated'])} of {risk['stereo_count']} stereo "
+                f"sample(s) have decorrelated channels (worst: \"{worst_name}\", "
+                f"r={worst_r:+.2f})."
+            )
         else:
-            detail = ("This hasn't been tested, and across 247 real stereo E-mu "
-                      "samples mpc2emu measured a median channel correlation of "
-                      "just 0.076 -- decorrelated stereo is the common case, not "
-                      "the exception.")
+            detail = (
+                "This hasn't been tested, and across 247 real stereo E-mu "
+                "samples mpc2emu measured a median channel correlation of "
+                "just 0.076 -- decorrelated stereo is the common case, not "
+                "the exception."
+            )
 
         # Picking EITHER side (unlike Mix) never cancels signal, so this
         # suggestion is a secondary nudge, not the actual fix -- see
         # suggest_mono_side()'s own docstring for why it's deliberately
         # rough (mpc2emu's own 111dacd found no reliable way to pick
         # between sides and declined to automate it).
-        suggestion = suggest_mono_side(samples) if samples else {"side": "left", "avg_db": 0.0, "n": 0}
+        suggestion = (
+            suggest_mono_side(samples)
+            if samples
+            else {"side": "left", "avg_db": 0.0, "n": 0}
+        )
         side_label = suggestion["side"].capitalize()
         if suggestion["n"]:
             suggestion_detail = (
                 f"The {suggestion['side']} channel measured ~{suggestion['avg_db']:.1f} dB "
                 f"louder on average across the affected sample(s) -- a rough loudness "
                 f"heuristic, not a strong signal, but picking either side avoids Mix's "
-                f"cancellation risk regardless.")
+                f"cancellation risk regardless."
+            )
         else:
             suggestion_detail = (
                 "No sample data to measure a suggestion from, so this is an arbitrary "
-                "pick -- picking either side avoids Mix's cancellation risk regardless.")
+                "pick -- picking either side avoids Mix's cancellation risk regardless."
+            )
 
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Averaging may cancel signal")
         box.setText(
             f"{detail}\n\nAveraging both sides (Mix) can cancel signal on "
-            f"decorrelated stereo content.\n\n{suggestion_detail}")
-        proceed_btn = box.addButton("Go Ahead Anyway", QMessageBox.ButtonRole.AcceptRole)
-        suggested_btn = box.addButton(f"Use {side_label} Instead", QMessageBox.ButtonRole.ActionRole)
-        go_back_btn = box.addButton("Go Back", QMessageBox.ButtonRole.RejectRole)
+            f"decorrelated stereo content.\n\n{suggestion_detail}"
+        )
+        proceed_btn = box.addButton(
+            "Go Ahead Anyway", QMessageBox.ButtonRole.AcceptRole
+        )
+        suggested_btn = box.addButton(
+            f"Use {side_label} Instead", QMessageBox.ButtonRole.ActionRole
+        )
+        go_back_btn = box.addButton("Go Back", QMessageBox.ButtonRole.RejectRole)  # noqa: F841
         box.setDefaultButton(suggested_btn)
         box.exec()
         clicked = box.clickedButton()
         if clicked is proceed_btn:
             self.accept()
         elif clicked is suggested_btn:
-            idx = next(i for i, (_label, m) in enumerate(_MONO_CHOICES) if m == suggestion["side"])
+            idx = next(
+                i
+                for i, (_label, m) in enumerate(_MONO_CHOICES)
+                if m == suggestion["side"]
+            )
             self._mono_box.setCurrentIndex(idx)
         # Go Back (or closing the box): stay on the dialog, current
         # selection unchanged -- lets the user pick a different setting
@@ -883,7 +985,7 @@ class ConvertOptionsDialog(QDialog):
             "Thins each preset until it fits, and works out HOW per preset "
             "rather than applying one rule to all of them — a two-zone "
             "one-shot has nothing to give while a twelve-zone pad has "
-            "plenty, which is exactly what \"Reduce Sample Count\" above "
+            'plenty, which is exactly what "Reduce Sample Count" above '
             "cannot tell apart.\n\n"
             "It searches the combinations of key-zone and velocity-layer "
             "thinning instead of walking a fixed order, scoring both in one "
@@ -899,9 +1001,10 @@ class ConvertOptionsDialog(QDialog):
             "The target is PER PRESET, so the bank will not shrink by the "
             "same proportion: presets share samples, and one stays as long "
             "as any preset still needs it. Measured on a real 29 MB bank, "
-            "\"shrink by 50%\" came out at 26.5 MB — the presets each gave "
+            '"shrink by 50%" came out at 26.5 MB — the presets each gave '
             "up half of what they alone required, and most of the audio was "
-            "required by something else too.")
+            "required by something else too."
+        )
         label.setWordWrap(True)
         label.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         inner.addWidget(label)
@@ -912,8 +1015,9 @@ class ConvertOptionsDialog(QDialog):
         self._shrink_to_spin.setVisible(index == 0)
         self._shrink_by_spin.setVisible(index == 1)
 
-    def apply_source_capabilities(self, source_format: str,
-                                   has_velocity_layers=None) -> None:
+    def apply_source_capabilities(
+        self, source_format: str, has_velocity_layers=None
+    ) -> None:
         """Hide the controls this SOURCE cannot be acted on by.
 
         Not cosmetics. Jan, importing a Roland disc: "Lay MPC drum pads
@@ -950,7 +1054,7 @@ class ConvertOptionsDialog(QDialog):
         """
         fmt = (source_format or "").strip()
         if not fmt and has_velocity_layers is None:
-            return                      # mixed or unknown: assume nothing
+            return  # mixed or unknown: assume nothing
         # No format named means mixed or unknown, and then the MPC-only
         # controls stay: assume nothing. Only a known non-MPC source
         # hides them.
@@ -959,10 +1063,13 @@ class ConvertOptionsDialog(QDialog):
         # them. Every other source is left alone -- absence of a measurement
         # is not a measurement of absence.
         from ..build import foreign_import
-        by_format = fmt not in (foreign_import.EPS_FORMAT,
-                                foreign_import.ROLAND_FORMAT)
-        has_velocity_layers = (by_format if has_velocity_layers is None
-                               else bool(has_velocity_layers) and by_format)
+
+        by_format = fmt not in (foreign_import.EPS_FORMAT, foreign_import.ROLAND_FORMAT)
+        has_velocity_layers = (
+            by_format
+            if has_velocity_layers is None
+            else bool(has_velocity_layers) and by_format
+        )
         for w in getattr(self, "_mpc_only_widgets", []):
             w.setVisible(mpc)
         for w in getattr(self, "_velocity_layer_widgets", []):
@@ -988,11 +1095,13 @@ class ConvertOptionsDialog(QDialog):
         outer = QVBoxLayout(group)
 
         self._key_zone_group, self._key_zone_slider = self._build_reduce_subgroup(
-            "Reduce Key Zones by")
+            "Reduce Key Zones by"
+        )
         outer.addWidget(self._key_zone_group)
 
         self._velocity_group, self._velocity_slider = self._build_reduce_subgroup(
-            "Reduce Velocity Layers by")
+            "Reduce Velocity Layers by"
+        )
         outer.addWidget(self._velocity_group)
         self._velocity_layer_widgets.append(self._velocity_group)
         self._reduce_group = group
@@ -1041,24 +1150,40 @@ class ConvertOptionsDialog(QDialog):
             no_bandpass = not self._bandpass_check.isChecked()
             resample_keep_gain = self._keep_gain_check.isChecked()
 
-        max_sample_rate = self._max_rate_spin.value() if self._max_rate_group.isChecked() else None
+        max_sample_rate = (
+            self._max_rate_spin.value() if self._max_rate_group.isChecked() else None
+        )
 
         reduce_key_zones_pct = (
-            float(self._key_zone_slider.value()) if self._key_zone_group.isChecked() else 0.0)
+            float(self._key_zone_slider.value())
+            if self._key_zone_group.isChecked()
+            else 0.0
+        )
         reduce_velocity_layers_pct = (
-            float(self._velocity_slider.value()) if self._velocity_group.isChecked() else 0.0)
+            float(self._velocity_slider.value())
+            if self._velocity_group.isChecked()
+            else 0.0
+        )
 
         # isChecked() alone would report True for a group that is checked but
         # DISABLED (Qt keeps the check state when a group is greyed out), so a
         # non-E4B target could still smuggle pan compensation through.
-        pan_law = ("constant-power"
-                    if self._pan_law_group.isEnabled() and self._pan_law_group.isChecked()
-                    else "hardware")
+        pan_law = (
+            "constant-power"
+            if self._pan_law_group.isEnabled() and self._pan_law_group.isChecked()
+            else "hardware"
+        )
 
-        trim_start_db = (self._trim_start_db_spin.value()
-                          if self._trim_start_group.isChecked() else None)
-        trim_tail_db = (self._trim_tail_db_spin.value()
-                         if self._trim_tail_group.isChecked() else None)
+        trim_start_db = (
+            self._trim_start_db_spin.value()
+            if self._trim_start_group.isChecked()
+            else None
+        )
+        trim_tail_db = (
+            self._trim_tail_db_spin.value()
+            if self._trim_tail_group.isChecked()
+            else None
+        )
 
         shrink_to = shrink_by = None
         if self._shrink_group.isChecked():
@@ -1067,7 +1192,8 @@ class ConvertOptionsDialog(QDialog):
             else:
                 shrink_by = float(self._shrink_by_spin.value())
         _label, krz_faithful, krz_drum = self._KRZ_LAYER_CHOICES[
-            self._krz_layers_box.currentIndex()]
+            self._krz_layers_box.currentIndex()
+        ]
         return ConversionOptions(
             resample_profile=resample_profile,
             no_bandpass=no_bandpass,
@@ -1090,14 +1216,17 @@ class ConvertOptionsDialog(QDialog):
             akai_ib304f=self._akai_ib304f_box.isChecked(),
             chromatic_pads=self._chromatic_pads_box.isChecked(),
             split_velocity_layers=self._split_vel_box.isChecked(),
-            lfo_sync_bpm=(self._lfo_bpm_spin.value()
-                          if self._lfo_bpm_box.isChecked() else None),
+            lfo_sync_bpm=(
+                self._lfo_bpm_spin.value() if self._lfo_bpm_box.isChecked() else None
+            ),
         )
 
     @staticmethod
-    def get_options(parent=None, initial: Optional[ConversionOptions] = None,
-                     bank_loader: Optional[Callable[[], list]] = None
-                     ) -> Optional[ConversionOptions]:
+    def get_options(
+        parent=None,
+        initial: Optional[ConversionOptions] = None,  # noqa: UP045
+        bank_loader: Optional[Callable[[], list]] = None,  # noqa: UP045
+    ) -> Optional[ConversionOptions]:  # noqa: UP045
         """Modal convenience entry point, matching this codebase's other
         static dialog helpers (QInputDialog.getText(), QFileDialog.get...).
         Returns None on Cancel, a populated ConversionOptions on OK.

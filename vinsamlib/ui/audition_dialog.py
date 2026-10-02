@@ -13,22 +13,32 @@ device and the one a headless test can assert on; it writes a sibling ``.txt``
 carrying ``report.as_text()``.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt  # noqa: F401
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog,
-                               QHBoxLayout, QLabel, QMessageBox,
-                               QProgressBar, QPushButton,
-                               QTextBrowser, QVBoxLayout)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTextBrowser,
+    QVBoxLayout,
+)
 
 from ..audition.caveats import SEVERITY_ORDER
-from .audition_player import (AuditionPlayer, check_playback, write_wav)
+from .audition_player import AuditionPlayer, check_playback, write_wav
 
-HEADER = ("This is a model of the preset's parameters. It is not a model of "
-          "the sampler, and it will not sound like the hardware.")
+HEADER = (
+    "This is a model of the preset's parameters. It is not a model of "
+    "the sampler, and it will not sound like the hardware."
+)
 
 
 class AuditionDialog(QDialog):
@@ -40,15 +50,22 @@ class AuditionDialog(QDialog):
     #: is how a checkbox and a menu tick come to disagree.
     showReportChanged = Signal(bool)
 
-    def __init__(self, rendering, title: str = "Audition", parent=None,
-                 show_report_default: bool = True, volume: int = 100,
-                 player=None):
+    def __init__(
+        self,
+        rendering,
+        title: str = "Audition",
+        parent=None,
+        show_report_default: bool = True,
+        volume: int = 100,
+        player=None,
+    ):
         super().__init__(parent)
         self._rendering = rendering
         # `player` is a RUNNING player handed over by the notice window, so
         # opening the report does not interrupt the sound it describes.
-        self._player = player if player is not None \
-            else AuditionPlayer(self, volume=volume)
+        self._player = (
+            player if player is not None else AuditionPlayer(self, volume=volume)
+        )
         if player is not None:
             self._player.setParent(self)
         self._player.finished.connect(self._on_finished)
@@ -90,7 +107,8 @@ class AuditionDialog(QDialog):
         self._show_again.setToolTip(
             "Off: an audition plays straight away behind a small notice.\n"
             "The report still opens when there is no way to play it, and\n"
-            "Save as WAV\u2026 always writes it beside the audio.")
+            "Save as WAV\u2026 always writes it beside the audio."
+        )
         self._show_again.toggled.connect(self.showReportChanged)
         close_row.addWidget(self._show_again)
         close_row.addStretch(1)
@@ -123,10 +141,10 @@ class AuditionDialog(QDialog):
                 continue
             parts.append(
                 f"<p><b>{severity.heading}</b> "
-                f"<span style='color:gray'>({severity.value})</span></p><ul>")
+                f"<span style='color:gray'>({severity.value})</span></p><ul>"
+            )
             for c in group:
-                parts.append(f"<li><b>{_esc(c.subject)}</b> — "
-                             f"{_esc(c.text)}</li>")
+                parts.append(f"<li><b>{_esc(c.subject)}</b> — " f"{_esc(c.text)}</li>")
             parts.append("</ul>")
         parts.append("</body></html>")
         return "".join(parts)
@@ -158,7 +176,7 @@ class AuditionDialog(QDialog):
 
     def _on_play(self) -> None:
         if not self._player.play(self._rendering):
-            ok, reason = check_playback()
+            ok, reason = check_playback()  # noqa: RUF059
             self._play_btn.setEnabled(False)
             self._play_btn.setText("No audio output")
             self._play_btn.setToolTip(reason)
@@ -170,7 +188,8 @@ class AuditionDialog(QDialog):
             # from the Qt route and the tooltip should not claim otherwise.
             self._play_btn.setToolTip(
                 "playing through an external player — Qt found no audio "
-                "device on this system")
+                "device on this system"
+            )
 
     def _on_finished(self) -> None:
         self._sync_transport()
@@ -185,9 +204,10 @@ class AuditionDialog(QDialog):
         player's own last line of stderr.
         """
         self._stop_btn.setEnabled(False)
-        self._play_btn.setText("Playback failed")   # not a state: an outcome
+        self._play_btn.setText("Playback failed")  # not a state: an outcome
         self._play_btn.setToolTip(
-            f"{why}\n\nUse Save as WAV… and play the file yourself.")
+            f"{why}\n\nUse Save as WAV… and play the file yourself."
+        )
 
     def _on_save(self) -> None:
         # An instance rather than getSaveFileName(), only because the static
@@ -215,15 +235,19 @@ class AuditionDialog(QDialog):
             # audio device this is the ONLY way to hear the render at all --
             # a failure here has to be said out loud.
             QMessageBox.warning(
-                self, "Save Audition",
-                f"Could not write {Path(path).name}\n\n{exc.strerror or exc}")
+                self,
+                "Save Audition",
+                f"Could not write {Path(path).name}\n\n{exc.strerror or exc}",
+            )
             return
         if sidecar is None:
             QMessageBox.warning(
-                self, "Save Audition",
+                self,
+                "Save Audition",
                 f"{Path(path).name} was written, but its report could not be "
                 f"saved beside it.\n\nThe audio now travels with none of the "
-                f"caveats that say what it is.")
+                f"caveats that say what it is.",
+            )
         self._save_btn.setText(f"Saved {Path(path).name}")
 
     def done(self, result: int) -> None:
@@ -245,12 +269,11 @@ class AuditionDialog(QDialog):
 
 
 def _esc(text: str) -> str:
-    return (str(text).replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;"))
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 class AuditionNotice(QDialog):
-    """"Auditioning <preset>" — plays at once and closes itself when done.
+    """ "Auditioning <preset>" — plays at once and closes itself when done.
 
     What the report window becomes once the user has opted out of it. It owns
     the player for the same reason the dialog does: a collected ``QBuffer``
@@ -271,12 +294,12 @@ class AuditionNotice(QDialog):
     #: the PLAYER, so the sound does not stop to show the report.
     reportRequested = Signal(object)
 
-    def __init__(self, rendering, name: str, parent=None,
-                 volume: int = 100):
+    def __init__(self, rendering, name: str, parent=None, volume: int = 100):
         super().__init__(parent)
         self._rendering = rendering
         self.setWindowTitle("Audition")
         from .audition_player import AuditionPlayer
+
         self._player = AuditionPlayer(self, volume=volume)
         self._player.finished.connect(self._on_finished)
         self._player.failed.connect(self._on_failed)
@@ -288,8 +311,7 @@ class AuditionNotice(QDialog):
         layout.addWidget(self._label)
         self._sub = QLabel(HEADER)
         self._sub.setWordWrap(True)
-        self._sub.setStyleSheet("color: palette(placeholdertext);"
-                                " font-size: 11px;")
+        self._sub.setStyleSheet("color: palette(placeholdertext);" " font-size: 11px;")
         layout.addWidget(self._sub)
 
         row = QHBoxLayout()
@@ -316,8 +338,9 @@ class AuditionNotice(QDialog):
         # thing on screen, so closing it on a failure would leave the user
         # with a click that did nothing and no reason anywhere.
         self._label.setText("Audition could not play")
-        self._sub.setText(f"{why}\n\nUse Show report to save it as a WAV "
-                          f"and play it yourself.")
+        self._sub.setText(
+            f"{why}\n\nUse Show report to save it as a WAV " f"and play it yourself."
+        )
         self._stop_btn.setEnabled(False)
 
     def _on_stop(self) -> None:
@@ -336,8 +359,10 @@ class AuditionNotice(QDialog):
         player = self._player
         if player is None:
             return None
-        for sig, slot in ((player.finished, self._on_finished),
-                          (player.failed, self._on_failed)):
+        for sig, slot in (
+            (player.finished, self._on_finished),
+            (player.failed, self._on_failed),
+        ):
             try:
                 sig.disconnect(slot)
             except (RuntimeError, TypeError):
@@ -370,7 +395,7 @@ class AuditionNotice(QDialog):
 
 
 class AuditionProgress(QDialog):
-    """"Preparing audition of <preset>" — up immediately, gone when it is.
+    """ "Preparing audition of <preset>" — up immediately, gone when it is.
 
     The window that was missing. Rendering a big multisample takes seconds,
     and until this existed the only sign was a line in the status bar: the
@@ -403,8 +428,9 @@ class AuditionProgress(QDialog):
         layout.addWidget(self._bar)
 
         self._phase = QLabel("Starting…")
-        self._phase.setStyleSheet("color: palette(placeholdertext);"
-                                  " font-size: 11px;")
+        self._phase.setStyleSheet(
+            "color: palette(placeholdertext);" " font-size: 11px;"
+        )
         layout.addWidget(self._phase)
 
         row = QHBoxLayout()

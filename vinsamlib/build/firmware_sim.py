@@ -88,8 +88,7 @@ DEFAULT_INPUT_SHAPE = "disk_image"
 
 
 def required_input_shape(source_format: str) -> str:
-    return _INPUT_SHAPE_BY_SOURCE.get(source_format.upper(),
-                                      DEFAULT_INPUT_SHAPE)
+    return _INPUT_SHAPE_BY_SOURCE.get(source_format.upper(), DEFAULT_INPUT_SHAPE)
 
 
 @dataclass(frozen=True)
@@ -107,18 +106,23 @@ class PathStatus:
 # cannot confirm a path, so we offer none.
 _PROVISIONAL = {
     ("AKAI", "KRZ"): PathStatus(
-        False, "this mpc2emu checkout carries no firmware-simulation "
-               "contract, so no path can be confirmed"),
+        False,
+        "this mpc2emu checkout carries no firmware-simulation "
+        "contract, so no path can be confirmed",
+    ),
     ("AKAI", "E4B"): PathStatus(
-        False, "this mpc2emu checkout carries no firmware-simulation "
-               "contract, so no path can be confirmed"),
+        False,
+        "this mpc2emu checkout carries no firmware-simulation "
+        "contract, so no path can be confirmed",
+    ),
     ("Roland", "E4B"): PathStatus(False, "not started upstream (considered feasible)"),
     ("Roland", "KRZ"): PathStatus(False, "not started upstream (considered feasible)"),
     ("EPS", "KRZ"): PathStatus(
-        False, "not started upstream — the device's write list has not been "
-               "read yet"),
+        False, "not started upstream — the device's write list has not been " "read yet"
+    ),
     ("EPS", "E4B"): PathStatus(
-        False, "blocked upstream — a struct nobody has been able to locate"),
+        False, "blocked upstream — a struct nobody has been able to locate"
+    ),
 }
 
 #: Upstream having a path working is necessary but NOT sufficient: we also
@@ -139,7 +143,7 @@ INVOCABLE_HERE = True
 #: never a way to silence the refusal.
 KNOWN_SCHEMA = 1
 
-_contract: Optional[dict] = None
+_contract: Optional[dict] = None  # noqa: UP045
 _contract_tried = False
 #: Why the contract was refused, if it was -- shown instead of the generic
 #: "no contract" sentence, so a schema bump reads as a version mismatch
@@ -152,7 +156,7 @@ _contract_refusal = ""
 CONTRACT_RELPATH = Path("docs") / "firmware_sim_contract.json"
 
 
-def load_contract(data: Optional[dict]) -> None:
+def load_contract(data: Optional[dict]) -> None:  # noqa: UP045
     """Install mpc2emu's generated contract, replacing the provisional table.
 
     A setter as well as a file read, so tests can install one without a file.
@@ -162,7 +166,7 @@ def load_contract(data: Optional[dict]) -> None:
     _contract_tried = True
 
 
-def _contract_data() -> Optional[dict]:
+def _contract_data() -> Optional[dict]:  # noqa: UP045
     """The contract from the configured mpc2emu checkout, read once.
 
     Failure is silent and falls back to the provisional table, because a
@@ -182,10 +186,11 @@ def _contract_data() -> Optional[dict]:
     _contract_tried = True
     try:
         from ..config import Config
+
         path = Config.load().mpc2emu_path / CONTRACT_RELPATH
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except Exception:
+    except Exception:  # noqa: BLE001
         _contract = None
         return _contract
     # PIN THE SCHEMA. mpc2emu's rule: adding a key keeps the number,
@@ -201,7 +206,8 @@ def _contract_data() -> Optional[dict]:
             f"schema {schema} and VinSamLib was written against "
             f"{KNOWN_SCHEMA}; a higher number means a key was removed or "
             f"re-meant, so nothing here can be trusted to still mean what "
-            f"it says")
+            f"it says"
+        )
         _contract = None
         return _contract
     _contract = data
@@ -236,8 +242,10 @@ def fidelity(source_format: str, target_format: str) -> str:
     modelled = entry.get("modelled_cords")
     total = entry.get("cord_write_sites_in_firmware")
     if modelled and total:
-        parts.append(f"Coverage: {modelled} of {total} modulation cord sites "
-                     f"found in the firmware are reproduced.")
+        parts.append(
+            f"Coverage: {modelled} of {total} modulation cord sites "
+            f"found in the firmware are reproduced."
+        )
     parts.extend(str(c) for c in (entry.get("caveats") or []))
     return " ".join(parts)
 
@@ -245,8 +253,10 @@ def fidelity(source_format: str, target_format: str) -> str:
 #: Jan's wording, carried in the contract's `modes` block so mpc2emu's CLI,
 #: their README and this dialog all say the same two things. Fallback only --
 #: the contract's own strings win.
-_MODE_LABELS = {"firmware": "convert as the firmware would",
-                "best": "convert as good as possible"}
+_MODE_LABELS = {
+    "firmware": "convert as the firmware would",
+    "best": "convert as good as possible",
+}
 
 
 def mode_label(mode: str) -> str:
@@ -298,7 +308,7 @@ def modes_offered(source_format: str, target_format: str) -> list:
 NO_MEASURED_ALTERNATIVE = frozenset({EPS_SOURCE, ROLAND_SOURCE})
 
 
-def target_restriction(source_format: str) -> Optional[dict]:
+def target_restriction(source_format: str) -> Optional[dict]:  # noqa: UP045
     """mpc2emu's `source_target_restriction` for this source, or None.
 
     **Binds EVERY conversion from that source, not just the simulated one.**
@@ -327,7 +337,7 @@ def target_restriction(source_format: str) -> Optional[dict]:
     return rule if _norm(source_format) in sources else None
 
 
-def allowed_targets(source_format: str) -> Optional[list]:
+def allowed_targets(source_format: str) -> Optional[list]:  # noqa: UP045
     """Target formats this source may convert to, or None if unrestricted.
 
     Returned in OUR labels, upper-cased, so a caller can compare against the
@@ -345,11 +355,13 @@ def refuse_target(source_format: str, target_format: str) -> str:
     if allowed is None or target_format.upper() in allowed:
         return ""
     rule = target_restriction(source_format) or {}
-    return (f"{source_format} converts to {', '.join(allowed)} only. "
-            f"{rule.get('why', '')}").strip()
+    return (
+        f"{source_format} converts to {', '.join(allowed)} only. "
+        f"{rule.get('why', '')}"
+    ).strip()
 
 
-def sole_mode(source_format: str, target_format: str) -> Optional[str]:
+def sole_mode(source_format: str, target_format: str) -> Optional[str]:  # noqa: UP045
     """The only mode this path offers, or None when it offers 0 or 2.
 
     A path offering exactly one mode is not a path with a choice withheld:
@@ -389,7 +401,7 @@ def offers_a_choice(source_format: str) -> bool:
     return False
 
 
-def _entry_for_source(source_format: str) -> Optional[dict]:
+def _entry_for_source(source_format: str) -> Optional[dict]:  # noqa: UP045
     """Any contract path with this source, regardless of target."""
     data = _contract_data()
     if not data:
@@ -411,18 +423,21 @@ def target_has_any_simulation(target_format: str) -> bool:
     data = _contract_data()
     if not data:
         return target_format.upper() in ("E4B", "KRZ")
-    return any(_norm(e.get("target")) == _norm(target_format)
-               and e.get("status") == "implemented"
-               for e in data.get("paths", []))
+    return any(
+        _norm(e.get("target")) == _norm(target_format)
+        and e.get("status") == "implemented"
+        for e in data.get("paths", [])
+    )
 
 
-def _entry(source_format: str, target_format: str) -> Optional[dict]:
+def _entry(source_format: str, target_format: str) -> Optional[dict]:  # noqa: UP045
     data = _contract_data()
     if not data:
         return None
     for entry in data.get("paths", []):
-        if (_norm(entry.get("source")) == _norm(source_format)
-                and _norm(entry.get("target")) == _norm(target_format)):
+        if _norm(entry.get("source")) == _norm(source_format) and _norm(
+            entry.get("target")
+        ) == _norm(target_format):
             return entry
     return None
 
@@ -452,43 +467,53 @@ def status(source_format: str, target_format: str) -> PathStatus:
             want = required_input_shape(source_format)
             if shapes is not None and want not in shapes:
                 return PathStatus(
-                    False, f"upstream implements this path for "
-                           f"{', '.join(shapes) or 'another input shape'}, "
-                           f"but VinSamLib hands it a {want}")
+                    False,
+                    f"upstream implements this path for "
+                    f"{', '.join(shapes) or 'another input shape'}, "
+                    f"but VinSamLib hands it a {want}",
+                )
             if not INVOCABLE_HERE:
                 return PathStatus(
-                    False, "implemented upstream, but VinSamLib has no way to "
-                           "ask for it yet")
+                    False,
+                    "implemented upstream, but VinSamLib has no way to "
+                    "ask for it yet",
+                )
             return PathStatus(True, "")
         # Their reason strings are written to be shown as-is, and the
         # generator's own test refuses a non-implemented path with an empty
         # one -- so an empty reason here means the file is not what it
         # claims, and inventing a sentence would paper over that.
-        return PathStatus(False, str(entry.get("reason")
-                                     or entry.get("status") or "unavailable"))
+        return PathStatus(
+            False, str(entry.get("reason") or entry.get("status") or "unavailable")
+        )
     if _entry_for_source(source_format) is not None:
         # The source IS one a sampler imports -- there is simply no
         # simulation for this target. Saying "AKAI is not a format any of
         # these samplers can import" was flatly wrong and rendered verbatim
         # in the dialog on every target change.
         return PathStatus(
-            False, f"there is no firmware simulation that writes "
-                   f"{target_format} from {source_format}")
+            False,
+            f"there is no firmware simulation that writes "
+            f"{target_format} from {source_format}",
+        )
     if _contract_refusal:
         return PathStatus(False, _contract_refusal)
     got = _PROVISIONAL.get((source_format, target_format))
     if got is not None and got.available and not INVOCABLE_HERE:
         return PathStatus(
-            False, "implemented upstream, but VinSamLib has no way to ask "
-                   "for it yet — mpc2emu's flag and generated contract are "
-                   "still to come")
+            False,
+            "implemented upstream, but VinSamLib has no way to ask "
+            "for it yet — mpc2emu's flag and generated contract are "
+            "still to come",
+        )
     if got is None:
         return PathStatus(
-            False, f"{source_format or 'this source'} is not a format any of "
-                   f"these samplers can import, so there is no device "
-                   f"behaviour to match")
-    return PathStatus(got.available,
-                      f"{got.reason} (as of {PROVISIONAL_AS_OF})")
+            False,
+            f"{source_format or 'this source'} is not a format any of "
+            f"these samplers can import, so there is no device "
+            f"behaviour to match",
+        )
+    return PathStatus(got.available, f"{got.reason} (as of {PROVISIONAL_AS_OF})")
 
 
 def _norm(name) -> str:

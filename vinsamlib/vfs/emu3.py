@@ -16,7 +16,7 @@ Other EMU3 content (e.g. the EIII-era `.EFE`/ROM special files) is still
 listed but left untyped.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import struct
 from typing import Optional
@@ -28,11 +28,11 @@ BSIZE = 512
 BSIZE_BITS = 9
 EMU3_MAGIC = b"EMU3"
 EMU3_LAST_CLUSTER = 0x7FFF
-EMU3_ENTRIES_PER_BLOCK = BSIZE // 32   # 16
+EMU3_ENTRIES_PER_BLOCK = BSIZE // 32  # 16
 EMU3_BLOCKS_PER_DIR = 7
-EMU3_FTYPE_STD = 0x81   # regular bank
-EMU3_FTYPE_UPD = 0x83   # regular bank, first file after a deleted one
-EMU3_FTYPE_SYS = 0x80   # special ROM/system file (fixed ids, not a user bank)
+EMU3_FTYPE_STD = 0x81  # regular bank
+EMU3_FTYPE_UPD = 0x83  # regular bank, first file after a deleted one
+EMU3_FTYPE_SYS = 0x80  # special ROM/system file (fixed ids, not a user bank)
 E4B_PROPS = b"\x00E4B0"
 
 
@@ -63,7 +63,9 @@ def _is_filler_pattern(raw: bytes) -> bool:
     return False
 
 
-def _duplicate_blocks(meta: bytearray, block_offsets: list[int], block_size: int = BSIZE) -> set[bytes]:
+def _duplicate_blocks(
+    meta: bytearray, block_offsets: list[int], block_size: int = BSIZE
+) -> set[bytes]:
     """Return the set of `block_size`-byte block contents that occur more
     than once among `block_offsets` (byte offsets into `meta`), ignoring
     an all-zero block -- that's the normal, expected shape for
@@ -78,7 +80,7 @@ def _duplicate_blocks(meta: bytearray, block_offsets: list[int], block_size: int
     once here is untrustworthy in its entirety."""
     counts: dict[bytes, int] = {}
     for off in block_offsets:
-        b = bytes(meta[off:off + block_size])
+        b = bytes(meta[off : off + block_size])
         if b != b"\x00" * block_size:
             counts[b] = counts.get(b, 0) + 1
     return {b for b, c in counts.items() if c > 1}
@@ -97,14 +99,14 @@ class Emu3Volume(WritableVolume):
         # for a table that cannot change between two reads of an unmodified
         # image. Cached on the same terms the geometry above already is, and
         # dropped by every mutation this class performs.
-        self._fat: Optional[tuple] = None
+        self._fat: Optional[tuple] = None  # noqa: UP045
         self._parse_geometry()
 
     def _read_fat(self, f) -> tuple:
         if self._fat is None:
             n_fat = self.fat_blocks * (BSIZE // 2)
             f.seek(self.fat_start * BSIZE)
-            self._fat = struct.unpack("<%dH" % n_fat, f.read(n_fat * 2))
+            self._fat = struct.unpack("<%dH" % n_fat, f.read(n_fat * 2))  # noqa: UP031
         return self._fat
 
     # ── geometry / metadata parsing ─────────────────────────────────────────
@@ -114,7 +116,10 @@ class Emu3Volume(WritableVolume):
             sb = f.read(BSIZE)
         if sb[:4] != EMU3_MAGIC:
             raise Emu3FormatError(f"{self.path}: not an EMU3 filesystem")
-        g = lambda i: struct.unpack_from("<I", sb, i * 4)[0]
+
+        def g(i: int) -> int:
+            return struct.unpack_from("<I", sb, i * 4)[0]
+
         self.root_start, self.root_blocks = g(2), g(3)
         self.dircon_start, self.dircon_blocks = g(4), g(5)
         self.fat_start, self.fat_blocks = g(6), g(7)
@@ -132,14 +137,15 @@ class Emu3Volume(WritableVolume):
         root_entries = self.root_blocks * (BSIZE // 32)
         entries_per_block = BSIZE // 32
         dup_blocks = _duplicate_blocks(
-            meta, [root_off + b * BSIZE for b in range(self.root_blocks)])
+            meta, [root_off + b * BSIZE for b in range(self.root_blocks)]
+        )
         out = []
         for i in range(root_entries):
             block_off = root_off + (i // entries_per_block) * BSIZE
-            if bytes(meta[block_off:block_off + BSIZE]) in dup_blocks:
+            if bytes(meta[block_off : block_off + BSIZE]) in dup_blocks:
                 continue
             eo = root_off + i * 32
-            raw = meta[eo:eo + 32]
+            raw = meta[eo : eo + 32]
             raw_name = raw[:16]
             if raw_name == b"\xff" * 16:
                 # Erased/unused root slot (0xFF fill, dtype also 0xFF, no
@@ -154,12 +160,14 @@ class Emu3Volume(WritableVolume):
             if not nm and meta[eo + 17] == 0:
                 continue
             blocks = [b for b in struct.unpack_from("<7h", meta, eo + 18) if b != -1]
-            out.append({
-                "name": nm.decode("latin-1"),
-                "dtype": meta[eo + 17],
-                "off": eo,
-                "blocks": blocks,
-            })
+            out.append(
+                {
+                    "name": nm.decode("latin-1"),
+                    "dtype": meta[eo + 17],
+                    "off": eo,
+                    "blocks": blocks,
+                }
+            )
         return out
 
     def _bank_entries(self, meta: bytearray, folder: dict) -> list[tuple[int, dict]]:
@@ -168,11 +176,11 @@ class Emu3Volume(WritableVolume):
         out = []
         dup_blocks = _duplicate_blocks(meta, [blk * BSIZE for blk in folder["blocks"]])
         for blk in folder["blocks"]:
-            if bytes(meta[blk * BSIZE:blk * BSIZE + BSIZE]) in dup_blocks:
+            if bytes(meta[blk * BSIZE : blk * BSIZE + BSIZE]) in dup_blocks:
                 continue
             for e in range(EMU3_ENTRIES_PER_BLOCK):
                 eo = blk * BSIZE + e * 32
-                raw = meta[eo:eo + 32]
+                raw = meta[eo : eo + 32]
                 if _is_filler_pattern(raw):
                     # Same blank-disc filler convention as _folders() --
                     # unused dir-content slots can carry it too, not just
@@ -182,19 +190,25 @@ class Emu3Volume(WritableVolume):
                 if not nm:
                     continue
                 start_cluster, n_clusters, blks, brem = struct.unpack_from(
-                    "<HHHH", meta, eo + 18)
+                    "<HHHH", meta, eo + 18
+                )
                 ftype = meta[eo + 26]
-                props = bytes(meta[eo + 27:eo + 32])
-                out.append((eo, {
-                    "name": nm.decode("latin-1"),
-                    "slot": meta[eo + 17],
-                    "start_cluster": start_cluster,
-                    "n_clusters": n_clusters,
-                    "blks": blks,
-                    "brem": brem,
-                    "ftype": ftype,
-                    "props": props,
-                }))
+                props = bytes(meta[eo + 27 : eo + 32])
+                out.append(
+                    (
+                        eo,
+                        {
+                            "name": nm.decode("latin-1"),
+                            "slot": meta[eo + 17],
+                            "start_cluster": start_cluster,
+                            "n_clusters": n_clusters,
+                            "blks": blks,
+                            "brem": brem,
+                            "ftype": ftype,
+                            "props": props,
+                        },
+                    )
+                )
         return out
 
     @staticmethod
@@ -208,7 +222,7 @@ class Emu3Volume(WritableVolume):
 
     # ── Volume interface ────────────────────────────────────────────────────
 
-    def list(self, folder: Optional[Entry] = None) -> list[Entry]:
+    def list(self, folder: Optional[Entry] = None) -> list[Entry]:  # noqa: UP045
         meta = self._read_meta()
         if folder is None:
             return [
@@ -221,8 +235,12 @@ class Emu3Volume(WritableVolume):
         bpc = self.blocks_per_cluster
         with open(self.path, "rb") as f:
             for eo, fields in self._bank_entries(meta, fo):
-                size = self._true_size(fields["n_clusters"], fields["blks"],
-                                         fields["brem"], self.cluster_size)
+                size = self._true_size(
+                    fields["n_clusters"],
+                    fields["blks"],
+                    fields["brem"],
+                    self.cluster_size,
+                )
                 # `props == '\x00E4B0'` is confirmed on some reference discs
                 # (an industrial sound-design library) but all-zero on others
                 # (a synth-and-drums library series) — not a reliable tag. And the
@@ -233,7 +251,10 @@ class Emu3Volume(WritableVolume):
                 # content header rather than trusting either.
                 is_bank = False
                 detected_format = "system"
-                if fields["ftype"] in (EMU3_FTYPE_STD, EMU3_FTYPE_UPD) and fields["start_cluster"]:
+                if (
+                    fields["ftype"] in (EMU3_FTYPE_STD, EMU3_FTYPE_UPD)
+                    and fields["start_cluster"]
+                ):
                     f.seek(data_off + (fields["start_cluster"] - 1) * bpc * BSIZE)
                     head = f.read(16)
                     if head[:4] == b"FORM" and head[8:12] == b"E4B0":
@@ -244,14 +265,18 @@ class Emu3Volume(WritableVolume):
                         detected_format = "EIII"
                     else:
                         detected_format = "unknown"
-                out.append(Entry(
-                    name=fields["name"],
-                    kind=EntryKind.BANK if is_bank else EntryKind.OTHER_FILE,
-                    size=size,
-                    ref={"folder": fo, "entry_offset": eo, **fields},
-                    meta={"format": detected_format,
-                          "props_tag": fields["props"] == E4B_PROPS},
-                ))
+                out.append(
+                    Entry(
+                        name=fields["name"],
+                        kind=EntryKind.BANK if is_bank else EntryKind.OTHER_FILE,
+                        size=size,
+                        ref={"folder": fo, "entry_offset": eo, **fields},
+                        meta={
+                            "format": detected_format,
+                            "props_tag": fields["props"] == E4B_PROPS,
+                        },
+                    )
+                )
         return out
 
     def read(self, entry: Entry) -> bytes:
@@ -305,14 +330,14 @@ class Emu3Volume(WritableVolume):
         """Free the entry's FAT chain and zero its 32-byte dircon slot —
         mirrors the proven 'overwrite' branch of
         writers.iso_builder.emu_hdd_append (iso_builder.py:915-920)."""
-        self._fat = None            # this rewrites the FAT
+        self._fat = None  # this rewrites the FAT
         r = entry.ref
         with open(self.path, "r+b") as f:
             f.seek(0)
             meta = bytearray(f.read(self.data_start * BSIZE))
             fat_off = self.fat_start * BSIZE
             n_fat = self.fat_blocks * (BSIZE // 2)
-            fat = list(struct.unpack_from("<%dH" % n_fat, meta, fat_off))
+            fat = list(struct.unpack_from("<%dH" % n_fat, meta, fat_off))  # noqa: UP031
 
             c = r["start_cluster"]
             seen = set()
@@ -330,9 +355,9 @@ class Emu3Volume(WritableVolume):
                 c = nxt
 
             eo = r["entry_offset"]
-            meta[eo:eo + 32] = b"\x00" * 32
+            meta[eo : eo + 32] = b"\x00" * 32
 
-            struct.pack_into("<%dH" % n_fat, meta, fat_off, *[v & 0xFFFF for v in fat])
+            struct.pack_into("<%dH" % n_fat, meta, fat_off, *[v & 0xFFFF for v in fat])  # noqa: UP031
             f.seek(0)
             f.write(meta)
 
@@ -344,14 +369,20 @@ class Emu3Volume(WritableVolume):
             f.seek(eo)
             f.write(name_bytes)
 
-    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:
+    def append(self, files: list[str], folder: Optional[Entry] = None) -> int:  # noqa: UP045
         """Delegates to mpc2emu's proven allocator rather than
         reimplementing cluster/slot allocation here."""
         # Imported here, not at module scope: vfs is imported by the tree
         # model on startup and build/ pulls in the whole mpc2emu bridge.
         from ..build import calllog
         from ..mpc2emu_bridge import iso_builder
-        self._fat = None            # the allocator rewrites the FAT
+
+        self._fat = None  # the allocator rewrites the FAT
         folder_name = folder.ref["name"].strip() if folder is not None else None
-        return calllog.traced(iso_builder.emu_hdd_append, self.path, files,
-                              folder=folder_name, on_duplicate="add-new")
+        return calllog.traced(
+            iso_builder.emu_hdd_append,
+            self.path,
+            files,
+            folder=folder_name,
+            on_duplicate="add-new",
+        )

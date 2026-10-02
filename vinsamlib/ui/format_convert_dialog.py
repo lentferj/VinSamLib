@@ -41,16 +41,23 @@ have BankPane.add_presets() reject the result afterward, so there's no
 point offering that choice live.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import dataclasses
-from typing import Callable, Optional
+from typing import Callable, Optional  # noqa: UP035
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel,
-                                QRadioButton, QSizePolicy, QVBoxLayout,
-                                QWidget)
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QRadioButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .convert_options_dialog import ConvertOptionsDialog
 from ..build import firmware_sim, foreign_import
@@ -71,7 +78,8 @@ _DISC_READER_WARNING = (
     "make here — this reads the disc as the firmware does. That is a "
     "statement about the READER: the options below still apply, and the "
     "controls this source cannot be acted on by have been left out "
-    "rather than shown and ignored.")
+    "rather than shown and ignored."
+)
 
 _DEVICE_MATCH_WARNING = (
     "Converting as the firmware would: this writes what the sampler's own "
@@ -80,13 +88,15 @@ _DEVICE_MATCH_WARNING = (
     "fidelity than converting as well as possible, including whatever the "
     "device itself discards; its purpose is that the result can be diffed "
     "against a real device import. The options below are this project's own "
-    "processing and are skipped.")
+    "processing and are skipped."
+)
 
 _DEFAULT_WARNING = (
     "Importing goes through mpc2emu's own model, same as any other "
     "conversion here; a few advanced parameters the original program "
     "used may not carry over. Resample/reduce below are optional "
-    "and off by default for either target format.")
+    "and off by default for either target format."
+)
 
 
 class SourceLabel(QLabel):
@@ -113,28 +123,37 @@ class SourceLabel(QLabel):
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
-    def setText(self, text: str) -> None:      # noqa: N802  (Qt casing)
+    def setText(self, text: str) -> None:  # noqa: N802, RUF100
         self._full = text
         self.setToolTip(text)
         self._reelide()
 
-    def resizeEvent(self, event) -> None:      # noqa: N802  (Qt casing)
+    def resizeEvent(self, event) -> None:  # noqa: N802, RUF100
         super().resizeEvent(event)
         self._reelide()
 
     def _reelide(self) -> None:
         metrics = QFontMetrics(self.font())
-        super().setText(metrics.elidedText(self._full, Qt.TextElideMode.ElideMiddle,
-                                            max(0, self.width())))
+        super().setText(
+            metrics.elidedText(
+                self._full, Qt.TextElideMode.ElideMiddle, max(0, self.width())
+            )
+        )
 
 
 class FormatConvertDialog(ConvertOptionsDialog):
-    def __init__(self, parent=None, initial: Optional[ConversionOptions] = None,
-                 title: str = "Import MPC Program", warning_text: Optional[str] = None,
-                 locked_format: Optional[str] = None,
-                 bank_loader: Optional[Callable[[], list]] = None,
-                 source_text: str = "", source_format: str = "",
-                 has_velocity_layers=None):
+    def __init__(
+        self,
+        parent=None,
+        initial: Optional[ConversionOptions] = None,  # noqa: UP045
+        title: str = "Import MPC Program",
+        warning_text: Optional[str] = None,  # noqa: UP045
+        locked_format: Optional[str] = None,  # noqa: UP045
+        bank_loader: Optional[Callable[[], list]] = None,  # noqa: UP045
+        source_text: str = "",
+        source_format: str = "",
+        has_velocity_layers=None,
+    ):
         self._source_format = source_format
         super().__init__(parent, initial=initial, bank_loader=bank_loader)
         self.setWindowTitle(title)
@@ -148,21 +167,20 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # never appeared on them, and the dialog explained nothing about the
         # one path where the question "why is there no choice here?" is
         # actually asked.
-        if source_format in (foreign_import.EPS_FORMAT,
-                             foreign_import.ROLAND_FORMAT):
+        if source_format in (foreign_import.EPS_FORMAT, foreign_import.ROLAND_FORMAT):
             article = "An" if source_format[:1].upper() in "AEIOU" else "A"
             warning_text = _DISC_READER_WARNING.format(
-                article=article, fmt=source_format)
+                article=article, fmt=source_format
+            )
         self._default_warning = warning_text or _DEFAULT_WARNING
         self._warning_label.setText(self._default_warning)
 
         # Built here, inserted after the format row below -- that one also
         # goes in at index 0 and would otherwise end up above this.
-        self._source_label: Optional[SourceLabel] = None
+        self._source_label: Optional[SourceLabel] = None  # noqa: UP045
         if source_text:
             self._source_label = SourceLabel(source_text)
-            self._source_label.setStyleSheet(
-                "font-weight: 600; padding-bottom: 2px;")
+            self._source_label.setStyleSheet("font-weight: 600; padding-bottom: 2px;")
 
         format_row = QWidget()
         row_layout = QHBoxLayout(format_row)
@@ -176,10 +194,11 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # below.
         targets = ["E4B", "KRZ", "EIII"]
         from ..config import Config
+
         try:
             if Config.load().check_akai_write_support()[0]:
                 targets.append("AKAI")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
         # mpc2emu refuses some (source, target) pairs outright -- an Ensoniq
         # or Roland disc writes E4B and KRZ only, in EITHER mode -- so the
@@ -210,7 +229,8 @@ class FormatConvertDialog(ConvertOptionsDialog):
             self._format_box.setToolTip(
                 f"New Bank already contains {locked_format} presets — "
                 f"clear it or send it to Pending first to import as a "
-                f"different format.")
+                f"different format."
+            )
         self.layout().insertWidget(0, format_row)
 
         self._method_row = self._build_method_row(source_format, initial)
@@ -252,8 +272,11 @@ class FormatConvertDialog(ConvertOptionsDialog):
 
     # ── import method ──────────────────────────────────────────────────────
 
-    def _build_method_row(self, source_format: str,
-                          initial: Optional[ConversionOptions]):
+    def _build_method_row(
+        self,
+        source_format: str,
+        initial: Optional[ConversionOptions],  # noqa: UP045
+    ):  # noqa: RUF100, UP045
         """The import-method choice, or None when there is nothing to choose.
 
         **Two different things are called "firmware" here and the row exists
@@ -298,29 +321,32 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # Their wording, read from the contract so that mpc2emu's CLI, their
         # README and this dialog cannot drift into three vocabularies for
         # two things.
-        self._mpc_radio = QRadioButton(
-            firmware_sim.mode_label("best").capitalize())
+        self._mpc_radio = QRadioButton(firmware_sim.mode_label("best").capitalize())
         self._device_radio = QRadioButton(
-            f'{firmware_sim.mode_label("firmware").capitalize()} '
-            f'(experimental)')
+            f'{firmware_sim.mode_label("firmware").capitalize()} ' f'(experimental)'
+        )
         box.addWidget(self._mpc_radio)
         box.addWidget(self._device_radio)
         self._mpc_radio.setToolTip(
             "This project's own conversion, using laws measured on the "
-            "hardware where they exist — which for AKAI is most of them.")
+            "hardware where they exist — which for AKAI is most of them."
+        )
         self._mpc_radio.setChecked(True)
 
         self._device_note = QLabel("")
         self._device_note.setWordWrap(True)
         self._device_note.setStyleSheet(
-            "color: palette(placeholdertext); font-size: 11px; "
-            "margin-left: 20px;")
+            "color: palette(placeholdertext); font-size: 11px; " "margin-left: 20px;"
+        )
         box.addWidget(self._device_note)
 
         self._device_radio.toggled.connect(self._on_method_changed)
         self._refresh_device_arm()
-        if (initial is not None and getattr(initial, "match_device_import", False)
-                and self._device_radio.isEnabled()):
+        if (
+            initial is not None
+            and getattr(initial, "match_device_import", False)
+            and self._device_radio.isEnabled()
+        ):
             self._device_radio.setChecked(True)
         self._on_method_changed()
         return row
@@ -346,8 +372,9 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # user is not being denied anything.
         row = getattr(self, "_method_row", None)
         if row is not None:
-            row.setVisible(len(firmware_sim.modes_offered(
-                self._source_format, target)) > 1)
+            row.setVisible(
+                len(firmware_sim.modes_offered(self._source_format, target)) > 1
+            )
         st = firmware_sim.status(self._source_format, target)
         radio.setEnabled(st.available)
         if st.available:
@@ -356,7 +383,8 @@ class FormatConvertDialog(ConvertOptionsDialog):
             # post-import risk, because it is a reason to choose the other
             # arm -- after the conversion it is too late to be a choice.
             self._device_note.setText(
-                firmware_sim.fidelity(self._source_format, target))
+                firmware_sim.fidelity(self._source_format, target)
+            )
         else:
             self._device_note.setText(f"Unavailable: {st.reason}")
         radio.setToolTip(
@@ -364,7 +392,9 @@ class FormatConvertDialog(ConvertOptionsDialog):
             "byte for byte. Deliberately LOWER fidelity than converting as "
             "well as possible — it exists so the result can be compared "
             "against a real device import, not to sound better."
-            if st.available else st.reason)
+            if st.available
+            else st.reason
+        )
         if not st.available and radio.isChecked():
             self._mpc_radio.setChecked(True)
 
@@ -381,12 +411,15 @@ class FormatConvertDialog(ConvertOptionsDialog):
             return
         on = radio.isChecked()
         self._warning_label.setText(
-            _DEVICE_MATCH_WARNING if on else self._default_warning)
+            _DEVICE_MATCH_WARNING if on else self._default_warning
+        )
         self._scroll.setEnabled(not on)
         self._scroll.setToolTip(
             "Matching the device reproduces its own conversion — these "
             "options would make the result something it would not produce."
-            if on else "")
+            if on
+            else ""
+        )
 
     def _device_match_selected(self) -> bool:
         """Is this conversion to reproduce the device's own import?
@@ -435,7 +468,9 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # before _format_box exists -- fall back to the base answer until it
         # does (the __init__ above re-runs the gate once it has been built).
         box = getattr(self, "_format_box", None)
-        return box.currentText() if box is not None else super()._current_target_format()
+        return (
+            box.currentText() if box is not None else super()._current_target_format()
+        )
 
     def _on_target_format_changed(self, fmt: str) -> None:
         if fmt == "KRZ":
@@ -465,24 +500,37 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # the options this dialog just offered: those paths draw no chooser,
         # so nobody asked for the device's own conversion, and the dialog has
         # deliberately kept its options live for them all along.
-        return dataclasses.replace(super()._to_options(),
-                                    target_format=self._format_box.currentText(),
-                                    match_device_import=self._device_match_selected(),
-                                    firmware_reader_only=self._sole_mode_is_firmware()
-                                    and not self._device_radio_chosen())
+        return dataclasses.replace(
+            super()._to_options(),
+            target_format=self._format_box.currentText(),
+            match_device_import=self._device_match_selected(),
+            firmware_reader_only=self._sole_mode_is_firmware()
+            and not self._device_radio_chosen(),
+        )
 
     @staticmethod
-    def get_import_options(parent=None, initial: Optional[ConversionOptions] = None,
-                            title: str = "Import MPC Program", warning_text: Optional[str] = None,
-                            locked_format: Optional[str] = None,
-                            bank_loader: Optional[Callable[[], list]] = None,
-                            source_text: str = "", source_format: str = "",
-                            has_velocity_layers=None
-                            ) -> Optional[ConversionOptions]:
-        dialog = FormatConvertDialog(parent, initial=initial, title=title, warning_text=warning_text,
-                                  locked_format=locked_format, bank_loader=bank_loader,
-                                  source_text=source_text, source_format=source_format,
-                                  has_velocity_layers=has_velocity_layers)
+    def get_import_options(
+        parent=None,
+        initial: Optional[ConversionOptions] = None,  # noqa: UP045
+        title: str = "Import MPC Program",
+        warning_text: Optional[str] = None,  # noqa: UP045
+        locked_format: Optional[str] = None,  # noqa: UP045
+        bank_loader: Optional[Callable[[], list]] = None,  # noqa: UP045
+        source_text: str = "",
+        source_format: str = "",
+        has_velocity_layers=None,
+    ) -> Optional[ConversionOptions]:  # noqa: UP045
+        dialog = FormatConvertDialog(
+            parent,
+            initial=initial,
+            title=title,
+            warning_text=warning_text,
+            locked_format=locked_format,
+            bank_loader=bank_loader,
+            source_text=source_text,
+            source_format=source_format,
+            has_velocity_layers=has_velocity_layers,
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog._to_options()

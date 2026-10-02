@@ -32,7 +32,7 @@ and none of that is what the hardware displayed when the note was written.
 from __future__ import annotations
 
 import re
-from typing import Iterable, Optional
+from typing import Iterable, Optional  # noqa: F401, UP035
 
 #: `P002`, `002`, `p 12` — the notations that appear in a hand-kept list. The
 #: `P` is optional because the K2000 columns are bare numbers; it is accepted
@@ -73,7 +73,7 @@ def parse_numbers(text: str) -> list[int]:
             fields = line.split()
         matches = [_ENTRY.match(f) for f in fields]
         if not matches or not all(matches):
-            continue          # a heading, a note, anything not purely numbers
+            continue  # a heading, a note, anything not purely numbers
         for m in matches:
             n = int(m.group(1))
             if n not in seen:
@@ -98,7 +98,9 @@ def infer_base(numbers: Iterable[int], fmt: str) -> int:
     return (min(nums) // 100) * 100
 
 
-def resolve(numbers: Iterable[int], base: int, count: int) -> tuple[list[int], list[int]]:
+def resolve(
+    numbers: Iterable[int], base: int, count: int
+) -> tuple[list[int], list[int]]:
     """(positions, unresolved) for `count` presets loaded at `base`.
 
     A number below the base, or past the last preset, cannot be a position in
@@ -118,15 +120,18 @@ def resolve(numbers: Iterable[int], base: int, count: int) -> tuple[list[int], l
     return positions, missing
 
 
-def describe(fmt: str, base: int, positions: list, missing: list,
-             count: int) -> str:
+def describe(fmt: str, base: int, positions: list, missing: list, count: int) -> str:
     """One line for the dialog, naming the reading actually used."""
     where = "from 0" if base == 0 else f"from {base}"
-    got = f"{len(positions)} of {len(positions) + len(missing)} entr" \
-          f"{'y' if len(positions) + len(missing) == 1 else 'ies'}"
+    got = (
+        f"{len(positions)} of {len(positions) + len(missing)} entr"
+        f"{'y' if len(positions) + len(missing) == 1 else 'ies'}"
+    )
     tail = ""
     if missing:
         shown = ", ".join(str(m) for m in missing[:6])
-        tail = (f" — {len(missing)} outside this bank's {count} preset(s): "
-                f"{shown}{' …' if len(missing) > 6 else ''}")
+        tail = (
+            f" — {len(missing)} outside this bank's {count} preset(s): "
+            f"{shown}{' …' if len(missing) > 6 else ''}"
+        )
     return f"Reading as {fmt} preset numbers {where}: {got} matched{tail}"

@@ -92,6 +92,7 @@ class LoopClick:
     """One clicking loop. `step_pct` is the step as a percentage of the local
     peak — the number to show a user, because it is the one that corresponds
     to how loud the tick is."""
+
     sample_name: str
     step: int
     median_movement: float
@@ -103,8 +104,9 @@ class LoopClick:
         return self.step / self.median_movement if self.median_movement else 0.0
 
 
-def _frames(pcm: bytes, first_word: int, count: int,
-            big_endian: bool = True) -> list[int]:
+def _frames(
+    pcm: bytes, first_word: int, count: int, big_endian: bool = True
+) -> list[int]:
     """`count` signed 16-bit frames from `first_word`, clipped to the buffer.
 
     ENDIANNESS IS NOT A DETAIL HERE. KRZ stores PCM big-endian and E4B/EIII
@@ -123,8 +125,13 @@ def _frames(pcm: bytes, first_word: int, count: int,
     return list(struct.unpack_from(f"{'>' if big_endian else '<'}{n}h", pcm, lo))
 
 
-def check_loop(pcm: bytes, loop_start: int, loop_end: int,
-               sample_name: str = "", big_endian: bool = True) -> LoopClick | None:
+def check_loop(
+    pcm: bytes,
+    loop_start: int,
+    loop_end: int,
+    sample_name: str = "",
+    big_endian: bool = True,
+) -> LoopClick | None:
     """Return a LoopClick if this forward loop steps audibly at its wrap.
 
     `loop_start` and `loop_end` are absolute PCM **word** offsets, and
@@ -143,11 +150,12 @@ def check_loop(pcm: bytes, loop_start: int, loop_end: int,
     # How fast is the waveform moving around BOTH boundaries? Using both ends
     # matters: a loop can start in a smooth passage and end in a steep one,
     # and the wrap has to be judged against the material it actually joins.
-    around = (_frames(pcm, max(0, loop_start - WINDOW // 2), WINDOW, big_endian)
-              + _frames(pcm, max(0, loop_end - WINDOW // 2), WINDOW, big_endian))
+    around = _frames(
+        pcm, max(0, loop_start - WINDOW // 2), WINDOW, big_endian
+    ) + _frames(pcm, max(0, loop_end - WINDOW // 2), WINDOW, big_endian)
     if len(around) < 4:
         return None
-    moves = sorted(abs(y - x) for x, y in zip(around, around[1:]))
+    moves = sorted(abs(y - x) for x, y in zip(around, around[1:]))  # noqa: RUF007
     median = moves[len(moves) // 2]
     peak = max((abs(v) for v in around), default=0)
     if peak == 0:
@@ -161,9 +169,13 @@ def check_loop(pcm: bytes, loop_start: int, loop_end: int,
     if not (ratio_ok and level_pct >= STEP_VS_LEVEL):
         return None
 
-    return LoopClick(sample_name=sample_name, step=step,
-                     median_movement=float(median), local_peak=peak,
-                     step_pct=level_pct * 100.0)
+    return LoopClick(
+        sample_name=sample_name,
+        step=step,
+        median_movement=float(median),
+        local_peak=peak,
+        step_pct=level_pct * 100.0,
+    )
 
 
 # ── repairs ──────────────────────────────────────────────────────────────────
@@ -209,8 +221,9 @@ def _slope(pcm: bytes, w: int, big_endian: bool = True) -> int:
     return 0 if len(a) < 2 else a[1] - a[0]
 
 
-def _zero_crossings(pcm: bytes, centre: int, want_rising: bool,
-                    big_endian: bool = True) -> list[int]:
+def _zero_crossings(
+    pcm: bytes, centre: int, want_rising: bool, big_endian: bool = True
+) -> list[int]:
     """Word offsets near `centre` where the waveform crosses zero with the
     requested slope, nearest first."""
     lo = max(0, centre - SEARCH_FRAMES)
@@ -227,8 +240,9 @@ def _zero_crossings(pcm: bytes, centre: int, want_rising: bool,
     return out
 
 
-def snap_to_zero(pcm: bytes, loop_start: int, loop_end: int,
-                 big_endian: bool = True) -> tuple[int, int] | None:
+def snap_to_zero(
+    pcm: bytes, loop_start: int, loop_end: int, big_endian: bool = True
+) -> tuple[int, int] | None:
     """Both points to the nearest same-slope zero crossing. Points only."""
     if loop_end - loop_start < MIN_LOOP_FRAMES:
         return None
@@ -243,8 +257,9 @@ def snap_to_zero(pcm: bytes, loop_start: int, loop_end: int,
     return s, e
 
 
-def nudge_to_match(pcm: bytes, loop_start: int, loop_end: int,
-                   big_endian: bool = True) -> tuple[int, int] | None:
+def nudge_to_match(
+    pcm: bytes, loop_start: int, loop_end: int, big_endian: bool = True
+) -> tuple[int, int] | None:
     """Move the loop END to where the waveform best matches the START.
 
     Scored on level AND slope together, because matching level alone can join
@@ -269,8 +284,13 @@ def nudge_to_match(pcm: bytes, loop_start: int, loop_end: int,
     return (loop_start, best_at) if best_at is not None else None
 
 
-def crossfade(pcm: bytes, loop_start: int, loop_end: int,
-              fade_frames: int = 256, big_endian: bool = True) -> bytes | None:
+def crossfade(
+    pcm: bytes,
+    loop_start: int,
+    loop_end: int,
+    fade_frames: int = 256,
+    big_endian: bool = True,
+) -> bytes | None:
     """Cross-fade INTO the loop end so the wrap is continuous. REWRITES PCM.
 
     The frames approaching `loop_end` are blended toward the frames preceding
@@ -284,17 +304,18 @@ def crossfade(pcm: bytes, loop_start: int, loop_end: int,
     n = min(fade_frames, (loop_end - loop_start) // 2)
     if n < 8:
         return None
-    tail = _frames(pcm, loop_end - n + 1, n, big_endian)          # approaching the wrap
-    head = _frames(pcm, loop_start - n, n, big_endian)            # what precedes the start
+    tail = _frames(pcm, loop_end - n + 1, n, big_endian)  # approaching the wrap
+    head = _frames(pcm, loop_start - n, n, big_endian)  # what precedes the start
     if len(tail) < n or len(head) < n:
         return None
     out = bytearray(pcm)
     for i in range(n):
-        t = (i + 1) / n                               # 0 → 1 across the window
-        v = int(round(tail[i] * (1.0 - t) + head[i] * t))
+        t = (i + 1) / n  # 0 → 1 across the window
+        v = int(round(tail[i] * (1.0 - t) + head[i] * t))  # noqa: RUF046
         v = max(-32768, min(32767, v))
-        struct.pack_into(">h" if big_endian else "<h", out,
-                         (loop_end - n + 1 + i) * 2, v)
+        struct.pack_into(
+            ">h" if big_endian else "<h", out, (loop_end - n + 1 + i) * 2, v
+        )
     return bytes(out)
 
 
@@ -309,9 +330,9 @@ REPAIR_LABELS = {
 }
 
 
-def apply_repair(kind: str, pcm: bytes, loop_start: int, loop_end: int,
-                 big_endian: bool = True
-                 ) -> tuple[bytes | None, int, int] | None:
+def apply_repair(
+    kind: str, pcm: bytes, loop_start: int, loop_end: int, big_endian: bool = True
+) -> tuple[bytes | None, int, int] | None:
     """Run one named repair. Returns (new_pcm_or_None, start, end), or None.
 
     `new_pcm` is None for the two point-moving repairs — the caller then

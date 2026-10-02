@@ -22,7 +22,7 @@ exist".
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional  # noqa: UP035
 
 from .caveats import AuditionReport, Severity
 
@@ -35,9 +35,9 @@ MAX_SOUNDING = 32
 #: budget is the number here; which layers it would DROP is its own choice and
 #: is never simulated (spec §11 stage 5).
 FORMAT_CEILING = {
-    "E4B": 32,    # E4XT
+    "E4B": 32,  # E4XT
     "EIII": 32,
-    "KRZ": 24,    # K2000R
+    "KRZ": 24,  # K2000R
 }
 
 
@@ -47,9 +47,9 @@ def ceiling_for(fmt: str) -> int:
 
 @dataclass(frozen=True)
 class Sounding:
-    voice: object      # mpc2emu VoiceLayer
-    zone: object       # mpc2emu ZoneMapping
-    sample: object     # mpc2emu SampleData
+    voice: object  # mpc2emu VoiceLayer
+    zone: object  # mpc2emu ZoneMapping
+    sample: object  # mpc2emu SampleData
 
 
 def _in_window(zone, note: int, velocity: int) -> bool:
@@ -60,9 +60,14 @@ def _in_window(zone, note: int, velocity: int) -> bool:
     return lo_key <= note <= hi_key and lo_vel <= velocity <= hi_vel
 
 
-def sounding(preset, note: int, velocity: int,
-             bank=None, report: Optional[AuditionReport] = None,
-             max_sounding: int = MAX_SOUNDING) -> List[Sounding]:
+def sounding(
+    preset,
+    note: int,
+    velocity: int,
+    bank=None,
+    report: Optional[AuditionReport] = None,  # noqa: UP045
+    max_sounding: int = MAX_SOUNDING,
+) -> List[Sounding]:  # noqa: UP006
     """Every zone that sounds for ``(note, velocity)``.
 
     ``bank`` is optional only so this can be called on a hand-built preset in
@@ -71,9 +76,9 @@ def sounding(preset, note: int, velocity: int,
     ``max_sounding`` is the source format's own per-note ceiling (see
     ``ceiling_for``); it defaults to the widest of the machines.
     """
-    found: List[Sounding] = []
+    found: List[Sounding] = []  # noqa: UP006
     capped = False
-    missing: List[str] = []
+    missing: List[str] = []  # noqa: UP006
     for voice in getattr(preset, "voices", []) or []:
         # A voice window folded into its zones at parse time (mpc2emu records
         # this as an open item) means there is nothing to check here; the zone
@@ -93,11 +98,13 @@ def sounding(preset, note: int, velocity: int,
             if len(found) > max_sounding:
                 if report is not None:
                     report.note(
-                        Severity.NOT_MODELLED, "voice budget",
+                        Severity.NOT_MODELLED,
+                        "voice budget",
                         f"This preset names more than {max_sounding} layers "
                         f"sounding on one note. Only {max_sounding} are "
                         f"played; the hardware's own voice budget and which "
-                        f"layers it would drop are not modelled.")
+                        f"layers it would drop are not modelled.",
+                    )
                 found = found[:max_sounding]
                 # BREAK, NOT RETURN. Returning here skipped the missing-sample
                 # report below, so a preset that both exceeded the ceiling and
@@ -110,9 +117,11 @@ def sounding(preset, note: int, velocity: int,
     if missing and report is not None:
         shown = ", ".join(missing[:4]) + ("…" if len(missing) > 4 else "")
         report.note(
-            Severity.NOT_MODELLED, "missing samples",
+            Severity.NOT_MODELLED,
+            "missing samples",
             f"{len(missing)} zone(s) on this note name a sample that is not in "
             f"the bank ({shown}), so they contribute no audio. This is normal "
             f"for a floppy-split AKAI library, where a program and its samples "
-            f"live on different volumes.")
+            f"live on different volumes.",
+        )
     return found

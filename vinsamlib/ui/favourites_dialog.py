@@ -13,21 +13,27 @@ and can be wrong. Showing the resolved preset NAMES makes a wrong guess
 obvious at once, in a way an "N of M matched" count never would.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001, RUF100
 
-from typing import Any, Optional
+from typing import Any, Optional  # noqa: F401
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
-                                QListWidget, QPlainTextEdit, QSpinBox,
-                                QVBoxLayout)
+from PySide6.QtCore import Qt  # noqa: F401
+from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QPlainTextEdit,
+    QSpinBox,
+    QVBoxLayout,
+)
 
 from ..build import favourites
 
 
 class FavouritesDialog(QDialog):
-    def __init__(self, bank_label: str, fmt: str, preset_names: list[str],
-                 parent=None):
+    def __init__(self, bank_label: str, fmt: str, preset_names: list[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Favourites from a List")
         self.setMinimumSize(620, 520)
@@ -36,8 +42,9 @@ class FavouritesDialog(QDialog):
         self._positions: list[int] = []
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
-            f"<b>{bank_label}</b> — {len(preset_names)} preset(s), {fmt}"))
+        layout.addWidget(
+            QLabel(f"<b>{bank_label}</b> — {len(preset_names)} preset(s), {fmt}")
+        )
 
         info = QLabel(
             "Paste the preset numbers you noted on the hardware — one per "
@@ -46,7 +53,8 @@ class FavouritesDialog(QDialog):
             "can stay.\n"
             "The numbers are read as positions in this bank, not as stored "
             "ids: on a K2000 you choose the destination bank when you load, "
-            "so what counts is the offset from that load point.")
+            "so what counts is the offset from that load point."
+        )
         info.setWordWrap(True)
         info.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(info)
@@ -81,8 +89,8 @@ class FavouritesDialog(QDialog):
         layout.addWidget(self._preview, 3)
 
         self._buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel)
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)
@@ -98,17 +106,20 @@ class FavouritesDialog(QDialog):
             self._base.setValue(favourites.infer_base(numbers, self._fmt))
             self._base.blockSignals(False)
         base = self._base.value()
-        self._positions, missing = favourites.resolve(
-            numbers, base, len(self._names))
+        self._positions, missing = favourites.resolve(numbers, base, len(self._names))
         self._summary.setText(
-            favourites.describe(self._fmt, base, self._positions, missing,
-                                 len(self._names))
-            if numbers else "Nothing pasted yet.")
+            favourites.describe(
+                self._fmt, base, self._positions, missing, len(self._names)
+            )
+            if numbers
+            else "Nothing pasted yet."
+        )
         self._preview.clear()
         for pos in self._positions:
             self._preview.addItem(f"{base + pos:>4}   {self._names[pos]}")
         self._buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
-            bool(self._positions))
+            bool(self._positions)
+        )
 
     def _on_base_edited(self, _value: int) -> None:
         self._base.setProperty("touched", True)

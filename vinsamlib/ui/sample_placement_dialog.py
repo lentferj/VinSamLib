@@ -21,7 +21,7 @@ VinSamLib enforces, and the same "show, don't block" rule is kept for
 the unplayable case so one bad row can't trap a user in the dialog.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001, RUF100
 
 import functools
 import re
@@ -29,8 +29,17 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QValidator
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QHeaderView,
-                             QLabel, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QDialogButtonBox,
+    QHeaderView,
+    QLabel,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
 
 from .note_naming import midi_to_name, name_to_midi
 from .piano_keyboard import PianoKeyboardWidget
@@ -159,7 +168,7 @@ class NoteSpinBox(QSpinBox):
         return midi if midi is not None else self.value()
 
     #: A note name being typed, before it is finished: "C", "C#", "C#-", "C#-1".
-    _PARTIAL = re.compile(r'^[A-Ga-g]#?-?\d*$')
+    _PARTIAL = re.compile(r"^[A-Ga-g]#?-?\d*$")
 
     def validate(self, text: str, pos: int):
         """Accept note names as they are TYPED.
@@ -195,8 +204,14 @@ class NoteSpinBox(QSpinBox):
 
 
 class SamplePlacementDialog(QDialog):
-    def __init__(self, zones: list[dict], octave_offset: int = 1, parent=None,
-                  show_velocity: bool = False, scope_text: str = ""):
+    def __init__(
+        self,
+        zones: list[dict],
+        octave_offset: int = 1,
+        parent=None,
+        show_velocity: bool = False,
+        scope_text: str = "",
+    ):
         """`zones`: [{"name": str, "lo": int, "root": int, "hi": int}, ...],
         one per sample -- see sampledir_import_dialog.py's caller for how
         these come from an mpc2emu Bank's zones. `octave_offset` is
@@ -241,33 +256,39 @@ class SamplePlacementDialog(QDialog):
         # the mechanics of the table. Jan, 2026-09-28: a good explanation of
         # the consequences, and a stronger emphasis that this is a deviation
         # from the original.
-        text = ("Override each sample's key range and root note. Rows stay "
-                "sorted low to high and reorder automatically if an edit "
-                "changes that order. Overlapping ranges turn light red; a row "
-                "that can never sound (low above high, or a root outside its "
-                "own range) turns a stronger red. Both are warnings only -- OK "
-                "still applies whatever is shown.")
+        text = (
+            "Override each sample's key range and root note. Rows stay "
+            "sorted low to high and reorder automatically if an edit "
+            "changes that order. Overlapping ranges turn light red; a row "
+            "that can never sound (low above high, or a root outside its "
+            "own range) turns a stronger red. Both are warnings only -- OK "
+            "still applies whatever is shown."
+        )
         if show_velocity:
             # Say why a field is grey IN THE DIALOG. A disabled spin box with
             # the reason only in its tooltip reads as a broken feature, and
             # every bank built by the sample-folder import is this case --
             # mpc2emu's writer puts every zone in one voice.
-            text += ("\nVel lo / Vel hi are the velocity window the sample "
-                     "answers to. Overlapping key ranges are normal once "
-                     "samples are separated by velocity — that is what "
-                     "layering is, so the overlap warning stays a warning. "
-                     "Samples currently sharing one window show it as their "
-                     "starting value; giving one its own splits it out on "
-                     "write, leaving the others where they were. A window "
-                     "that can never be satisfied — low above high, or a high "
-                     "of 0, which is note-off — turns red and is applied as "
-                     "typed: that is how a layer is switched off, not a "
-                     "mistake to correct."
-                     "")
+            text += (
+                "\nVel lo / Vel hi are the velocity window the sample "
+                "answers to. Overlapping key ranges are normal once "
+                "samples are separated by velocity — that is what "
+                "layering is, so the overlap warning stays a warning. "
+                "Samples currently sharing one window show it as their "
+                "starting value; giving one its own splits it out on "
+                "write, leaving the others where they were. A window "
+                "that can never be satisfied — low above high, or a high "
+                "of 0, which is note-off — turns red and is applied as "
+                "typed: that is how a layer is switched off, not a "
+                "mistake to correct."
+                ""
+            )
         if scope_text:
-            text = (f"Editing {scope_text}. These edits belong to that "
-                    f"preset alone: another staged preset using the same "
-                    f"sample keeps its own placement.\n" + text)
+            text = (
+                f"Editing {scope_text}. These edits belong to that "
+                f"preset alone: another staged preset using the same "
+                f"sample keeps its own placement.\n" + text
+            )
         info = QLabel(text)
         info.setWordWrap(True)
         info.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
@@ -282,11 +303,13 @@ class SamplePlacementDialog(QDialog):
             "differently from the one you started with, everywhere it is "
             "loaded. Nothing edited here has been confirmed on hardware, and "
             "a velocity change rebuilds the preset's voices. Keep the "
-            "original file.")
+            "original file."
+        )
         deviation.setWordWrap(True)
         deviation.setStyleSheet(
             "color: palette(bright-text); background: palette(highlight); "
-            "font-size: 11px; padding: 6px; border-radius: 3px;")
+            "font-size: 11px; padding: 6px; border-radius: 3px;"
+        )
         layout.addWidget(info)
         layout.addWidget(deviation)
 
@@ -306,16 +329,20 @@ class SamplePlacementDialog(QDialog):
         self._table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.SelectedClicked
-            | QAbstractItemView.EditTrigger.EditKeyPressed)
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
         layout.addWidget(self._table, 1)
 
         self._piano = PianoKeyboardWidget(octave_offset=octave_offset)
         layout.addWidget(self._piano)
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -325,7 +352,7 @@ class SamplePlacementDialog(QDialog):
 
     # -- table (re)construction --------------------------------------------------
 
-    def _rebuild_table(self, focus: Optional[tuple[str, int]] = None) -> None:
+    def _rebuild_table(self, focus: Optional[tuple[str, int]] = None) -> None:  # noqa: UP045
         # Signals off while filling: setItem() emits itemChanged, which would
         # otherwise read half-built rows as user edits.
         self._table.blockSignals(True)
@@ -347,7 +374,8 @@ class SamplePlacementDialog(QDialog):
                 spin = NoteSpinBox(self._octave_offset)
                 spin.setValue(row[key])
                 spin.valueChanged.connect(
-                    functools.partial(self._on_value_changed, row["name"], key))
+                    functools.partial(self._on_value_changed, row["name"], key)
+                )
                 self._table.setCellWidget(r, col, spin)
                 if focus == (row["name"], col):
                     spin.setFocus()
@@ -366,8 +394,9 @@ class SamplePlacementDialog(QDialog):
                     vspin.setEnabled(False)
                     vspin.setToolTip(locked)
                 else:
-                    vspin.valueChanged.connect(functools.partial(
-                        self._on_value_changed, row["name"], key))
+                    vspin.valueChanged.connect(
+                        functools.partial(self._on_value_changed, row["name"], key)
+                    )
                 self._table.setCellWidget(r, col, vspin)
                 if focus == (row["name"], col):
                     vspin.setFocus()
@@ -419,7 +448,9 @@ class SamplePlacementDialog(QDialog):
             if len(name) > 16:
                 trouble.append(f"{len(name)} characters — the field holds 16")
             if name in clashing:
-                trouble.append("another sample has this name — it will be numbered apart")
+                trouble.append(
+                    "another sample has this name — it will be numbered apart"
+                )
             item.setToolTip("; ".join(trouble) if trouble else name)
             font = item.font()
             font.setItalic(bool(trouble))
@@ -427,7 +458,9 @@ class SamplePlacementDialog(QDialog):
 
     def name_overrides(self) -> dict:
         """{original sample name: typed name} for the rows that were edited."""
-        return {row["name"]: row["new_name"] for row in self._rows if row.get("new_name")}
+        return {
+            row["name"]: row["new_name"] for row in self._rows if row.get("new_name")
+        }
 
     def _on_value_changed(self, name: str, key: str, value: int) -> None:
         row = next(r for r in self._rows if r["name"] == name)
@@ -465,13 +498,19 @@ class SamplePlacementDialog(QDialog):
                 if a["lo"] <= b["hi"] and b["lo"] <= a["hi"]:
                     overlapping.add(a["name"])
                     overlapping.add(b["name"])
-        invalid = {row["name"] for row in self._rows
-                   if row["lo"] > row["hi"] or not (row["lo"] <= row["root"] <= row["hi"])}
+        invalid = {
+            row["name"]
+            for row in self._rows
+            if row["lo"] > row["hi"] or not (row["lo"] <= row["root"] <= row["hi"])
+        }
         # A velocity window that can never be satisfied gets the same
         # treatment as an impossible key range: flagged, not corrected.
-        silent_vel = {row["name"] for row in self._rows
-                      if self._show_velocity and _vel_unreachable(
-                          row.get("lo_vel", 0), row.get("hi_vel", 127))}
+        silent_vel = {
+            row["name"]
+            for row in self._rows
+            if self._show_velocity
+            and _vel_unreachable(row.get("lo_vel", 0), row.get("hi_vel", 127))
+        }
         for r, row in enumerate(self._rows):
             if row["name"] in invalid:
                 style = f"background-color: {_INVALID_BG};"
@@ -485,13 +524,18 @@ class SamplePlacementDialog(QDialog):
                     widget.setStyleSheet(style)
             if not self._show_velocity:
                 continue
-            vstyle = (f"background-color: {_INVALID_BG};"
-                      if row["name"] in silent_vel else "")
-            tip = ("This window can never be satisfied, so the sample will "
-                   "not sound. That is a real idiom -- it is how a velocity "
-                   "layer is switched off -- so it is applied as typed rather "
-                   "than corrected. MIDI velocity 0 is note-off, which is why "
-                   "a high of 0 counts too." if row["name"] in silent_vel else "")
+            vstyle = (
+                f"background-color: {_INVALID_BG};" if row["name"] in silent_vel else ""
+            )
+            tip = (
+                "This window can never be satisfied, so the sample will "
+                "not sound. That is a real idiom -- it is how a velocity "
+                "layer is switched off -- so it is applied as typed rather "
+                "than corrected. MIDI velocity 0 is note-off, which is why "
+                "a high of 0 counts too."
+                if row["name"] in silent_vel
+                else ""
+            )
             for col in (4, 5):
                 widget = self._table.cellWidget(r, col)
                 if widget is not None:
@@ -499,10 +543,17 @@ class SamplePlacementDialog(QDialog):
                     widget.setToolTip(tip)
 
     def _refresh_piano(self) -> None:
-        self._piano.set_zones([
-            {"lo": row["lo"], "root": row["root"], "hi": row["hi"], "color": self._colors[row["name"]]}
-            for row in self._rows
-        ])
+        self._piano.set_zones(
+            [
+                {
+                    "lo": row["lo"],
+                    "root": row["root"],
+                    "hi": row["hi"],
+                    "color": self._colors[row["name"]],
+                }
+                for row in self._rows
+            ]
+        )
 
     # -- result --------------------------------------------------------------
 
@@ -513,9 +564,11 @@ class SamplePlacementDialog(QDialog):
         supplied."""
         if not self._show_velocity:
             return {}
-        return {row["name"]: (int(row.get("lo_vel", 0)),
-                              int(row.get("hi_vel", 127)))
-                for row in self._rows if not row.get("vel_locked")}
+        return {
+            row["name"]: (int(row.get("lo_vel", 0)), int(row.get("hi_vel", 127)))
+            for row in self._rows
+            if not row.get("vel_locked")
+        }
 
     def overrides(self) -> dict[str, tuple[int, int, int]]:
         """{sample_name: (lo_key, root_key, hi_key)} for every row, in its

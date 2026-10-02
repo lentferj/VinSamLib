@@ -29,7 +29,7 @@ semantic reader to lean on:
   whichever branch the configured checkout happens to be on.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import struct
 import tempfile
@@ -50,7 +50,7 @@ class ZoneSummary:
     lo_vel: int
     hi_vel: int
     root_key: int
-    loop: str                        # 'none' | 'forward' | 'alternating' | 'forward (release)' | '?'
+    loop: str  # 'none' | 'forward' | 'alternating' | 'forward (release)' | '?'
     sample_rate: int | None = None
     bit_depth: int | None = None
 
@@ -62,13 +62,16 @@ class ZoneStats:
     can carry dozens of zones, and per earlier feedback, the detailed key/
     velocity table for each one is more than a human actually wants at a
     glance."""
-    key_zone_count: int              # distinct (lo_key, hi_key) ranges
-    total_samples: int               # distinct sample names across ALL zones
-    vel_layer_count: int             # distinct (lo_vel, hi_vel) ranges
-    vel_samples_min: int             # fewest distinct samples in any one velocity layer
-    vel_samples_max: int             # most distinct samples in any one velocity layer
-    bit_depths: tuple[int, ...] = ()      # distinct values seen, sorted, empty if unknown
-    sample_rates: tuple[int, ...] = ()    # distinct values seen (Hz), sorted, empty if unknown
+
+    key_zone_count: int  # distinct (lo_key, hi_key) ranges
+    total_samples: int  # distinct sample names across ALL zones
+    vel_layer_count: int  # distinct (lo_vel, hi_vel) ranges
+    vel_samples_min: int  # fewest distinct samples in any one velocity layer
+    vel_samples_max: int  # most distinct samples in any one velocity layer
+    bit_depths: tuple[int, ...] = ()  # distinct values seen, sorted, empty if unknown
+    sample_rates: tuple[
+        int, ...
+    ] = ()  # distinct values seen (Hz), sorted, empty if unknown
 
 
 def zone_stats(zones: list[ZoneSummary]) -> ZoneStats | None:
@@ -94,10 +97,10 @@ def zone_stats(zones: list[ZoneSummary]) -> ZoneStats | None:
 @dataclass
 class PresetSummary:
     name: str
-    format: str                      # 'E4B' | 'KRZ' | 'EIII'
-    voice_count: int                 # voices (E4B/EIII) / keymaps referenced (KRZ)
+    format: str  # 'E4B' | 'KRZ' | 'EIII'
+    voice_count: int  # voices (E4B/EIII) / keymaps referenced (KRZ)
     zones: list[ZoneSummary] = field(default_factory=list)
-    total_sample_bytes: int = 0      # unique samples referenced by this preset's zones
+    total_sample_bytes: int = 0  # unique samples referenced by this preset's zones
     #: What is behind that figure, so a caller can dedupe ACROSS presets --
     #: the Pending queue totals a whole bank's worth, and two presets sharing
     #: a multisample must not pay for it twice.
@@ -108,8 +111,8 @@ class PresetSummary:
     #: keeps its audio in one region addressed by word offsets, so a set of
     #: object ids is all that means anything and the size comes from the
     #: union of their extents -- see krz_audio_bytes.
-    sample_sizes: dict = field(default_factory=dict)   # name -> bytes
-    sample_keys: frozenset = frozenset()               # KRZ object ids
+    sample_sizes: dict = field(default_factory=dict)  # name -> bytes
+    sample_keys: frozenset = frozenset()  # KRZ object ids
     #: AKAI only: {sample name: cents off} for samples whose header declares
     #: a rate the machine cannot produce. mpc2emu's AKAI_SSRATE_UNPLAYABLE
     #: catches this while CONVERTING; this is the same finding for a volume
@@ -133,6 +136,7 @@ class BankSummary:
 
 
 # ── E4B ──────────────────────────────────────────────────────────────────────
+
 
 def summarize_e4b_bank(bank: e4b.E4BFile) -> BankSummary:
     total = len(bank.e4ma_body) + len(bank.emst_body)
@@ -163,7 +167,7 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
     mpc_preset = parsed.presets[0] if parsed.presets else None
     zones: list[ZoneSummary] = []
     voice_count = 0
-    sample_sizes: dict[str, int] = {}   # dedupe -- a preset's zones can share one sample
+    sample_sizes: dict[str, int] = {}  # dedupe -- a preset's zones can share one sample
     if mpc_preset is not None:
         voice_count = len(mpc_preset.voices)
         for voice in mpc_preset.voices:
@@ -180,22 +184,33 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
                 sample = parsed.find_sample(z.sample_name)
                 if sample is not None and z.sample_name not in sample_sizes:
                     sample_sizes[z.sample_name] = len(sample.data)
-                zones.append(ZoneSummary(
-                    sample_name=z.sample_name,
-                    lo_key=z.lo_key, hi_key=z.hi_key,
-                    lo_vel=z.lo_vel, hi_vel=z.hi_vel,
-                    root_key=z.root_key,
-                    loop=_LOOP_NAMES.get(int(sample.loop_type), "?") if sample else "?",
-                    sample_rate=sample.sample_rate if sample else None,
-                    bit_depth=sample.bit_depth if sample else None,
-                ))
-    return PresetSummary(name=preset.name.strip(), format="E4B",
-                          sample_sizes=dict(sample_sizes),
-                          voice_count=voice_count, zones=zones,
-                          total_sample_bytes=sum(sample_sizes.values()))
+                zones.append(
+                    ZoneSummary(
+                        sample_name=z.sample_name,
+                        lo_key=z.lo_key,
+                        hi_key=z.hi_key,
+                        lo_vel=z.lo_vel,
+                        hi_vel=z.hi_vel,
+                        root_key=z.root_key,
+                        loop=_LOOP_NAMES.get(int(sample.loop_type), "?")
+                        if sample
+                        else "?",
+                        sample_rate=sample.sample_rate if sample else None,
+                        bit_depth=sample.bit_depth if sample else None,
+                    )
+                )
+    return PresetSummary(
+        name=preset.name.strip(),
+        format="E4B",
+        sample_sizes=dict(sample_sizes),
+        voice_count=voice_count,
+        zones=zones,
+        total_sample_bytes=sum(sample_sizes.values()),
+    )
 
 
 # ── KRZ ──────────────────────────────────────────────────────────────────────
+
 
 def summarize_krz_bank(bank: krz.KrzFile) -> BankSummary:
     total = len(bank.pcm)
@@ -240,7 +255,7 @@ def krz_audio_bytes(bank: krz.KrzFile, sample_ids) -> int:
             continue
         try:
             start, words = bank.sample_word_extent(samp)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112
             continue
         if words and words > 0:
             spans.append((start, start + words))
@@ -257,6 +272,8 @@ def krz_audio_bytes(bank: krz.KrzFile, sample_ids) -> int:
             cur_end = max(cur_end, end)
     total += cur_end - cur_start
     return min(total * 2, len(bank.pcm))
+
+
 def loop_notes(bank, obj) -> list[str]:
     """Advisory lines about clicking loops, for any of the three formats.
 
@@ -268,15 +285,25 @@ def loop_notes(bank, obj) -> list[str]:
         return krz_loop_notes(bank, obj)
     if isinstance(bank, e4b.E4BFile):
         return _loop_notes_from(
-            [(e4b.sample_pcm(s), lp, s.name.strip(), e4b.PCM_BIG_ENDIAN)
-             for s in _e4b_preset_samples(bank, obj)
-             for lp in e4b.sample_loops(s)])
+            [
+                (e4b.sample_pcm(s), lp, s.name.strip(), e4b.PCM_BIG_ENDIAN)
+                for s in _e4b_preset_samples(bank, obj)
+                for lp in e4b.sample_loops(s)
+            ]
+        )
     if isinstance(bank, eiii.EIIIFile):
         return _loop_notes_from(
-            [(eiii.sample_pcm(s), lp, getattr(s, "name", "").strip(),
-              eiii.PCM_BIG_ENDIAN)
-             for s in _eiii_preset_samples(bank, obj)
-             for lp in eiii.sample_loops(s)])
+            [
+                (
+                    eiii.sample_pcm(s),
+                    lp,
+                    getattr(s, "name", "").strip(),
+                    eiii.PCM_BIG_ENDIAN,
+                )
+                for s in _eiii_preset_samples(bank, obj)
+                for lp in eiii.sample_loops(s)
+            ]
+        )
     return []
 
 
@@ -315,10 +342,12 @@ def _loop_notes_from(items) -> list[str]:
     if worst is None:
         return []
     others = f" (and {n - 1} more)" if n > 1 else ""
-    return [f"Loop clicks: {worst.sample_name!r} steps {worst.step_pct:.0f}% of "
-            f"its local level at the loop point{others} — audible as a tick on "
-            f"every repeat. The loop is as the source authored it; nothing here "
-            f"changes it."]
+    return [
+        f"Loop clicks: {worst.sample_name!r} steps {worst.step_pct:.0f}% of "  # noqa: ISC004
+        f"its local level at the loop point{others} — audible as a tick on "
+        f"every repeat. The loop is as the source authored it; nothing here "
+        f"changes it."
+    ]
 
 
 def krz_loop_notes(bank: krz.KrzFile, prog: krz.KrzObject) -> list[str]:
@@ -355,16 +384,20 @@ def krz_loop_notes(bank: krz.KrzFile, prog: krz.KrzObject) -> list[str]:
     if worst is None:
         return []
     others = f" (and {n - 1} more)" if n > 1 else ""
-    return [f"Loop clicks: {worst.sample_name!r} steps {worst.step_pct:.0f}% of "
-            f"its local level at the loop point{others} — audible as a tick on "
-            f"every repeat. The loop is as the source authored it; nothing here "
-            f"changes it."]
+    return [
+        f"Loop clicks: {worst.sample_name!r} steps {worst.step_pct:.0f}% of "  # noqa: ISC004
+        f"its local level at the loop point{others} — audible as a tick on "
+        f"every repeat. The loop is as the source authored it; nothing here "
+        f"changes it."
+    ]
 
 
 def summarize_krz_program(bank: krz.KrzFile, prog: krz.KrzObject) -> PresetSummary:
-    keymap_ids = list(dict.fromkeys(bank.program_keymap_refs(prog)))  # dedupe, keep order
+    keymap_ids = list(
+        dict.fromkeys(bank.program_keymap_refs(prog))
+    )  # dedupe, keep order
     zones: list[ZoneSummary] = []
-    sample_ids: set[int] = set()   # dedupe -- several keymaps can share a sample
+    sample_ids: set[int] = set()  # dedupe -- several keymaps can share a sample
     for kid in keymap_ids:
         km = bank.keymaps.get(kid)
         if km is not None:
@@ -372,10 +405,14 @@ def summarize_krz_program(bank: krz.KrzFile, prog: krz.KrzObject) -> PresetSumma
             zones.extend(km_zones)
             sample_ids.update(km_sample_ids)
     total_sample_bytes = krz_audio_bytes(bank, sample_ids)
-    return PresetSummary(name=prog.name.strip(), format="KRZ",
-                          sample_keys=frozenset(sample_ids),
-                          voice_count=len(keymap_ids), zones=zones,
-                          total_sample_bytes=total_sample_bytes)
+    return PresetSummary(
+        name=prog.name.strip(),
+        format="KRZ",
+        sample_keys=frozenset(sample_ids),
+        voice_count=len(keymap_ids),
+        zones=zones,
+        total_sample_bytes=total_sample_bytes,
+    )
 
 
 def _keymap_entry_sample_ids(km: krz.KrzObject) -> list[int]:
@@ -417,7 +454,7 @@ def _keymap_bands(km: krz.KrzObject) -> list[tuple[int, int, list[int]]]:
         return [(0, 127, [lay.header_sid] * lay.num_keys)]
     windows = krz.band_velocity_windows(body, lay.num_keys, lay.stride)
     out = []
-    for base in (lay.bands or (lay.table,)):
+    for base in lay.bands or (lay.table,):
         ids = []
         for k in range(lay.num_keys):
             off = base + k * lay.stride + lay.id_off
@@ -429,7 +466,9 @@ def _keymap_bands(km: krz.KrzObject) -> list[tuple[int, int, list[int]]]:
     return out
 
 
-def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSummary], set[int]]:
+def _keymap_zone_runs(
+    bank: krz.KrzFile, km: krz.KrzObject
+) -> tuple[list[ZoneSummary], set[int]]:
     """Collapse a keymap's key->sample entries into runs of consecutive keys
     sharing the same sample id.
 
@@ -440,6 +479,7 @@ def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSu
     genuinely-referenced samples in the same keymap). Those runs are
     dropped rather than shown as `<sample NNNN>` noise — a librarian is
     for finding real, playable content, not surfacing hardware artifacts."""
+
     def key_of(entry: int) -> int:
         # Entry i sounds at key i+12, so entries run past 127 and the tail is
         # clamped rather than shown as a key the keyboard doesn't have.
@@ -454,27 +494,48 @@ def _keymap_zone_runs(bank: krz.KrzFile, km: krz.KrzObject) -> tuple[list[ZoneSu
         for entry, sid in enumerate(sample_by_entry):
             if sid != prev_sid:
                 if prev_sid and prev_sid in bank.samples:
-                    runs.append(_krz_zone(bank, prev_sid, key_of(lo),
-                                          key_of(entry) - 1, lo_vel, hi_vel))
+                    runs.append(
+                        _krz_zone(
+                            bank,
+                            prev_sid,
+                            key_of(lo),
+                            key_of(entry) - 1,
+                            lo_vel,
+                            hi_vel,
+                        )
+                    )
                     sample_ids.add(prev_sid)
                 lo, prev_sid = entry, sid
         if prev_sid and prev_sid in bank.samples:
-            runs.append(_krz_zone(bank, prev_sid, key_of(lo),
-                                  key_of(len(sample_by_entry) - 1),
-                                  lo_vel, hi_vel))
+            runs.append(
+                _krz_zone(
+                    bank,
+                    prev_sid,
+                    key_of(lo),
+                    key_of(len(sample_by_entry) - 1),
+                    lo_vel,
+                    hi_vel,
+                )
+            )
             sample_ids.add(prev_sid)
     return runs, sample_ids
 
 
-def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int,
-               lo_vel: int = 0, hi_vel: int = 127) -> ZoneSummary:
-    samp = bank.samples[sid]   # caller already checked sid is a real sample
+def _krz_zone(
+    bank: krz.KrzFile,
+    sid: int,
+    lo_key: int,
+    hi_key: int,
+    lo_vel: int = 0,
+    hi_vel: int = 127,
+) -> ZoneSummary:
+    samp = bank.samples[sid]  # caller already checked sid is a real sample
     name = samp.name.strip()
     root_key, loop = 60, "?"
     sample_rate, bit_depth = None, None
     b = samp.body()
     if len(b) > krz.SAMPLE_HDR:
-        root_key = b[krz.SAMPLE_HDR]                     # Soundfilehead byte 0
+        root_key = b[krz.SAMPLE_HDR]  # Soundfilehead byte 0
     if len(b) > krz.SAMPLE_HDR + 1:
         # KRZ shares E4B's loop-flag convention (KRZ_FORMAT.md §3.1):
         # bit 0x80 clear = looped, set = one-shot.
@@ -491,12 +552,21 @@ def _krz_zone(bank: krz.KrzFile, sid: int, lo_key: int, hi_key: int,
         # -- no per-sample bit-depth field exists because there's nothing
         # else it could be.
         bit_depth = 16
-    return ZoneSummary(sample_name=name, lo_key=lo_key, hi_key=hi_key,
-                        sample_rate=sample_rate, bit_depth=bit_depth,
-                        lo_vel=lo_vel, hi_vel=hi_vel, root_key=root_key, loop=loop)
+    return ZoneSummary(
+        sample_name=name,
+        lo_key=lo_key,
+        hi_key=hi_key,
+        sample_rate=sample_rate,
+        bit_depth=bit_depth,
+        lo_vel=lo_vel,
+        hi_vel=hi_vel,
+        root_key=root_key,
+        loop=loop,
+    )
 
 
 # ── EIII ─────────────────────────────────────────────────────────────────────
+
 
 def summarize_eiii_bank(bank: eiii.EIIIFile) -> BankSummary:
     # No E4Ma/EMSt-style bank-wide chunk to add in here -- EMPTY_BANK_SIZE
@@ -516,7 +586,9 @@ def summarize_eiii_bank(bank: eiii.EIIIFile) -> BankSummary:
     )
 
 
-def summarize_eiii_preset(bank: eiii.EIIIFile, preset: eiii.EIIIPreset) -> PresetSummary:
+def summarize_eiii_preset(
+    bank: eiii.EIIIFile, preset: eiii.EIIIPreset
+) -> PresetSummary:
     data = eiii.assemble([(bank, preset)])
     tmp_path = None
     try:
@@ -531,7 +603,7 @@ def summarize_eiii_preset(bank: eiii.EIIIFile, preset: eiii.EIIIPreset) -> Prese
     mpc_preset = parsed.presets[0] if parsed.presets else None
     zones: list[ZoneSummary] = []
     voice_count = 0
-    sample_sizes: dict[str, int] = {}   # dedupe -- a preset's zones can share one sample
+    sample_sizes: dict[str, int] = {}  # dedupe -- a preset's zones can share one sample
     if mpc_preset is not None:
         voice_count = len(mpc_preset.voices)
         for voice in mpc_preset.voices:
@@ -541,19 +613,29 @@ def summarize_eiii_preset(bank: eiii.EIIIFile, preset: eiii.EIIIPreset) -> Prese
                 sample = parsed.find_sample(z.sample_name)
                 if sample is not None and z.sample_name not in sample_sizes:
                     sample_sizes[z.sample_name] = len(sample.data)
-                zones.append(ZoneSummary(
-                    sample_name=z.sample_name,
-                    lo_key=z.lo_key, hi_key=z.hi_key,
-                    lo_vel=z.lo_vel, hi_vel=z.hi_vel,
-                    root_key=z.root_key,
-                    loop=_LOOP_NAMES.get(int(sample.loop_type), "?") if sample else "?",
-                    sample_rate=sample.sample_rate if sample else None,
-                    bit_depth=sample.bit_depth if sample else None,
-                ))
-    return PresetSummary(name=preset.name.strip(), format="EIII",
-                          sample_sizes=dict(sample_sizes),
-                          voice_count=voice_count, zones=zones,
-                          total_sample_bytes=sum(sample_sizes.values()))
+                zones.append(
+                    ZoneSummary(
+                        sample_name=z.sample_name,
+                        lo_key=z.lo_key,
+                        hi_key=z.hi_key,
+                        lo_vel=z.lo_vel,
+                        hi_vel=z.hi_vel,
+                        root_key=z.root_key,
+                        loop=_LOOP_NAMES.get(int(sample.loop_type), "?")
+                        if sample
+                        else "?",
+                        sample_rate=sample.sample_rate if sample else None,
+                        bit_depth=sample.bit_depth if sample else None,
+                    )
+                )
+    return PresetSummary(
+        name=preset.name.strip(),
+        format="EIII",
+        sample_sizes=dict(sample_sizes),
+        voice_count=voice_count,
+        zones=zones,
+        total_sample_bytes=sum(sample_sizes.values()),
+    )
 
 
 # ── AKAI ─────────────────────────────────────────────────────────────────────
@@ -562,6 +644,7 @@ def summarize_eiii_preset(bank: eiii.EIIIFile, preset: eiii.EIIIPreset) -> Prese
 # the same reason -- only more so. mpc2emu's AKAI support is on an unmerged
 # branch, so making the Explorer's AKAI rows depend on it would mean they
 # appear or vanish with whichever branch the configured checkout is on.
+
 
 def _clamp_key(k: int) -> int:
     return max(0, min(127, k))
@@ -578,8 +661,9 @@ def summarize_akai_bank(bank: akai.AkaiBank) -> BankSummary:
     )
 
 
-def summarize_akai_program(bank: akai.AkaiBank,
-                            prog: akai.AkaiProgram) -> PresetSummary:
+def summarize_akai_program(
+    bank: akai.AkaiBank, prog: akai.AkaiProgram
+) -> PresetSummary:
     """One AKAI program's zones.
 
     The nesting is the inverse of every other format here: an AKAI *keygroup*
@@ -627,32 +711,41 @@ def summarize_akai_program(bank: akai.AkaiBank,
                 # confusion beside the constant; I still reached for the
                 # wrong one.
                 sample_sizes[z.sample_name] = max(
-                    0, samp.size - akai.AkaiBank.SAMPLE_HEADER_BYTES)
+                    0, samp.size - akai.AkaiBank.SAMPLE_HEADER_BYTES
+                )
                 if samp.rate_is_unplayable:
                     unplayable[z.sample_name] = samp.rate_cents_off
-            zones.append(ZoneSummary(
-                sample_name=z.sample_name,
-                lo_key=lo_key, hi_key=hi_key,
-                lo_vel=_clamp_key(z.lo_vel), hi_vel=_clamp_key(z.hi_vel),
-                # EFFECTIVE, not stored. A sample carrying -1200 cents of
-                # its own tuning sounds an octave from the root byte in its
-                # header, and the pane's job is to say what the sampler will
-                # play. mpc2emu reports the same number by a different route
-                # (it has no coarse-tune field, so the semitones go on the
-                # root), and the two disagreed on 274 of 418 samples until
-                # this line stopped reading the raw byte.
-                root_key=samp.effective_root_key if samp else 60,
-                loop=samp.loop if samp else "?",
-                sample_rate=samp.sample_rate if samp else None,
-                # The format carries 16-bit PCM and no bit-depth field,
-                # because there is nothing else it could be.
-                bit_depth=16 if samp else None,
-            ))
-    return PresetSummary(name=prog.name.strip(), format="AKAI",
-                          sample_sizes=dict(sample_sizes),
-                          unplayable_rates=dict(unplayable),
-                          voice_count=len(prog.keygroups), zones=zones,
-                          total_sample_bytes=sum(sample_sizes.values()))
+            zones.append(
+                ZoneSummary(
+                    sample_name=z.sample_name,
+                    lo_key=lo_key,
+                    hi_key=hi_key,
+                    lo_vel=_clamp_key(z.lo_vel),
+                    hi_vel=_clamp_key(z.hi_vel),
+                    # EFFECTIVE, not stored. A sample carrying -1200 cents of
+                    # its own tuning sounds an octave from the root byte in its
+                    # header, and the pane's job is to say what the sampler will
+                    # play. mpc2emu reports the same number by a different route
+                    # (it has no coarse-tune field, so the semitones go on the
+                    # root), and the two disagreed on 274 of 418 samples until
+                    # this line stopped reading the raw byte.
+                    root_key=samp.effective_root_key if samp else 60,
+                    loop=samp.loop if samp else "?",
+                    sample_rate=samp.sample_rate if samp else None,
+                    # The format carries 16-bit PCM and no bit-depth field,
+                    # because there is nothing else it could be.
+                    bit_depth=16 if samp else None,
+                )
+            )
+    return PresetSummary(
+        name=prog.name.strip(),
+        format="AKAI",
+        sample_sizes=dict(sample_sizes),
+        unplayable_rates=dict(unplayable),
+        voice_count=len(prog.keygroups),
+        zones=zones,
+        total_sample_bytes=sum(sample_sizes.values()),
+    )
 
 
 def audio_bytes_for_keys(bank, fmt: str, keys) -> int:
@@ -673,6 +766,7 @@ def audio_bytes_for_keys(bank, fmt: str, keys) -> int:
 
 
 # ── generic dispatch (what the UI actually calls) ───────────────────────────
+
 
 def summarize_bank(bank) -> BankSummary:
     if isinstance(bank, e4b.E4BFile):
@@ -726,19 +820,25 @@ def _main(argv: list[str]) -> int:
         return 1
 
     bs = summarize_bank(bank)
-    print(f"{path}: {bs.format}, {bs.preset_count} preset(s), "
-          f"{bs.sample_count} sample(s), {bs.total_size:,} bytes")
+    print(
+        f"{path}: {bs.format}, {bs.preset_count} preset(s), "
+        f"{bs.sample_count} sample(s), {bs.total_size:,} bytes"
+    )
 
-    if isinstance(bank, e4b.E4BFile) or isinstance(bank, eiii.EIIIFile):
+    if isinstance(bank, e4b.E4BFile) or isinstance(bank, eiii.EIIIFile):  # noqa: SIM101
         presets = bank.presets
     else:
         presets = list(bank.programs.values())
     for p in presets[:3]:
         ps = summarize_preset(bank, p)
-        print(f"\n  {ps.name!r} — {ps.voice_count} voice(s)/keymap(s), {len(ps.zones)} zone(s)")
+        print(
+            f"\n  {ps.name!r} — {ps.voice_count} voice(s)/keymap(s), {len(ps.zones)} zone(s)"
+        )
         for z in ps.zones[:8]:
-            print(f"    {z.sample_name!r:30s} key {z.lo_key:3d}-{z.hi_key:3d}  "
-                  f"vel {z.lo_vel:3d}-{z.hi_vel:3d}  root {z.root_key:3d}  loop={z.loop}")
+            print(
+                f"    {z.sample_name!r:30s} key {z.lo_key:3d}-{z.hi_key:3d}  "
+                f"vel {z.lo_vel:3d}-{z.hi_vel:3d}  root {z.root_key:3d}  loop={z.loop}"
+            )
         if len(ps.zones) > 8:
             print(f"    … {len(ps.zones) - 8} more zone(s)")
     if len(presets) > 3:
@@ -748,4 +848,5 @@ def _main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     import sys
+
     raise SystemExit(_main(sys.argv))

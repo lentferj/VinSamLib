@@ -16,7 +16,7 @@ import re
 from typing import Optional
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-_NAME_RE = re.compile(r'^\s*([A-Ga-g])(#?)(-?\d+)\s*$')
+_NAME_RE = re.compile(r"^\s*([A-Ga-g])(#?)(-?\d+)\s*$")
 
 
 def midi_to_name(midi: int, octave_offset: int) -> str:
@@ -25,7 +25,7 @@ def midi_to_name(midi: int, octave_offset: int) -> str:
     return f"{NOTE_NAMES[semitone]}{octave}"
 
 
-def name_to_midi(text: str, octave_offset: int) -> Optional[int]:
+def name_to_midi(text: str, octave_offset: int) -> Optional[int]:  # noqa: UP045
     m = _NAME_RE.match(text)
     if not m:
         return None

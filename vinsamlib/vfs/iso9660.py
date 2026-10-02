@@ -26,7 +26,12 @@ class Iso9660FormatError(ValueError):
 
 def _classify(name: str) -> EntryKind:
     from pathlib import Path
-    return EntryKind.BANK if Path(name).suffix.lower() in _BANK_EXTS else EntryKind.OTHER_FILE
+
+    return (
+        EntryKind.BANK
+        if Path(name).suffix.lower() in _BANK_EXTS
+        else EntryKind.OTHER_FILE
+    )
 
 
 class Iso9660Volume(Volume):
@@ -40,7 +45,7 @@ class Iso9660Volume(Volume):
             pvd = f.read(SECTOR)
         if len(pvd) < 190 or pvd[0] != 1 or pvd[1:6] != b"CD001":
             raise Iso9660FormatError(f"{self.path}: not an ISO 9660 image (no PVD)")
-        root_record = pvd[156:156 + 34]
+        root_record = pvd[156 : 156 + 34]
         extent = struct.unpack_from("<I", root_record, 2)[0]
         size = struct.unpack_from("<I", root_record, 10)[0]
         return extent, size
@@ -57,33 +62,48 @@ class Iso9660Volume(Volume):
                 # records never cross a sector boundary; skip to the next one
                 pos = ((pos // SECTOR) + 1) * SECTOR
                 continue
-            rec = data[pos:pos + length]
+            rec = data[pos : pos + length]
             flags = rec[25]
             name_len = rec[32]
-            raw_name = rec[33:33 + name_len]
+            raw_name = rec[33 : 33 + name_len]
             rec_extent = struct.unpack_from("<I", rec, 2)[0]
             rec_size = struct.unpack_from("<I", rec, 10)[0]
             if raw_name not in (b"\x00", b"\x01"):  # skip '.' and '..'
                 name = raw_name.decode("latin-1", "replace").split(";", 1)[0]
-                out.append({
-                    "name": name,
-                    "is_dir": bool(flags & 0x02),
-                    "extent": rec_extent,
-                    "size": rec_size,
-                })
+                out.append(
+                    {
+                        "name": name,
+                        "is_dir": bool(flags & 0x02),
+                        "extent": rec_extent,
+                        "size": rec_size,
+                    }
+                )
             pos += length
         return out
 
-    def list(self, folder: Optional[Entry] = None) -> list[Entry]:
-        extent, size = folder.ref if folder is not None else (self._root_extent, self._root_size)
+    def list(self, folder: Optional[Entry] = None) -> list[Entry]:  # noqa: UP045
+        extent, size = (
+            folder.ref if folder is not None else (self._root_extent, self._root_size)
+        )
         out = []
         for rec in self._read_dir_records(extent, size):
             if rec["is_dir"]:
-                out.append(Entry(name=rec["name"], kind=EntryKind.FOLDER,
-                                  ref=(rec["extent"], rec["size"])))
+                out.append(
+                    Entry(
+                        name=rec["name"],
+                        kind=EntryKind.FOLDER,
+                        ref=(rec["extent"], rec["size"]),
+                    )
+                )
             else:
-                out.append(Entry(name=rec["name"], kind=_classify(rec["name"]),
-                                  size=rec["size"], ref=(rec["extent"], rec["size"])))
+                out.append(
+                    Entry(
+                        name=rec["name"],
+                        kind=_classify(rec["name"]),
+                        size=rec["size"],
+                        ref=(rec["extent"], rec["size"]),
+                    )
+                )
         return out
 
     def read(self, entry: Entry) -> bytes:

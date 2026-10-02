@@ -25,7 +25,7 @@ Stage by stage, and why each is what it is (spec §4.4):
 from __future__ import annotations
 
 import math
-from typing import List, Optional
+from typing import List, Optional  # noqa: UP035
 
 #: Control-rate grid, Hz. 1 ms; the renderer interpolates between points.
 CONTROL_RATE = 1000.0
@@ -80,7 +80,7 @@ def _curve_depth(env, frac: float, span_db: float) -> float:
         return frac * span_db
     try:
         return float(curve.depth_at(frac, span_db))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return frac * span_db
 
 
@@ -98,12 +98,18 @@ def _decay_seconds(env) -> float:
 
 
 def _build_grid(total_s: float) -> tuple[int, float]:
-    n = max(2, int(math.ceil(total_s * CONTROL_RATE)) + 1)
+    n = max(2, int(math.ceil(total_s * CONTROL_RATE)) + 1)  # noqa: RUF046
     return n, 1.0 / CONTROL_RATE
 
 
-def _amp_shape(env, *, hold_s: float, total_s: float,
-               attack_scale: float = 1.0, whole: bool = False) -> List[float]:
+def _amp_shape(
+    env,
+    *,
+    hold_s: float,
+    total_s: float,
+    attack_scale: float = 1.0,
+    whole: bool = False,
+) -> List[float]:  # noqa: UP006
     """Linear gain on the control grid, 0..1 (1.0 == envelope peak)."""
     n, dt = _build_grid(total_s)
     sustain = min(max(float(getattr(env, "sustain", 1.0)), 0.0), 1.0)
@@ -111,7 +117,7 @@ def _amp_shape(env, *, hold_s: float, total_s: float,
     attack = max(0.0, float(getattr(env, "attack", 0.0))) * attack_scale
     decay = _decay_seconds(env)
 
-    values: List[float] = []
+    values: List[float] = []  # noqa: UP006
     for i in range(n):
         t = i * dt
         if t < attack:
@@ -139,7 +145,7 @@ def _amp_shape(env, *, hold_s: float, total_s: float,
     return values
 
 
-def _filter_shape(env, *, hold_s: float, total_s: float) -> List[float]:
+def _filter_shape(env, *, hold_s: float, total_s: float) -> List[float]:  # noqa: UP006
     """The filter envelope, 0..1 -- a *normalised* shape, not dB.
 
     The depth lives in ``voice.filter_env_cents``; this only says where on the
@@ -152,7 +158,7 @@ def _filter_shape(env, *, hold_s: float, total_s: float) -> List[float]:
     decay = _decay_seconds(env)
     release = max(0.0, float(getattr(env, "release", 0.0)))
 
-    values: List[float] = []
+    values: List[float] = []  # noqa: UP006
     for i in range(n):
         t = i * dt
         if t < attack:
@@ -177,8 +183,15 @@ def _filter_shape(env, *, hold_s: float, total_s: float) -> List[float]:
     return values
 
 
-def amp_envelope(env, *, hold_s: float, tail_s: float, rate: int,
-                 attack_scale: float = 1.0, whole: bool = False) -> List[float]:
+def amp_envelope(
+    env,
+    *,
+    hold_s: float,
+    tail_s: float,
+    rate: int,
+    attack_scale: float = 1.0,
+    whole: bool = False,
+) -> List[float]:  # noqa: UP006
     """Linear-gain amp envelope on the control grid.
 
     ``rate`` is accepted for signature symmetry with the audio rate but the
@@ -187,20 +200,24 @@ def amp_envelope(env, *, hold_s: float, tail_s: float, rate: int,
     -- when set, note-off is ignored entirely.
     """
     del rate  # control-rate by construction; kept for the documented API
-    return _amp_shape(env, hold_s=hold_s,
-                      total_s=max(hold_s + tail_s, 1.0 / CONTROL_RATE),
-                      attack_scale=attack_scale, whole=whole)
+    return _amp_shape(
+        env,
+        hold_s=hold_s,
+        total_s=max(hold_s + tail_s, 1.0 / CONTROL_RATE),
+        attack_scale=attack_scale,
+        whole=whole,
+    )
 
 
-def filter_envelope(env, *, hold_s: float, tail_s: float,
-                    rate: int) -> List[float]:
+def filter_envelope(env, *, hold_s: float, tail_s: float, rate: int) -> List[float]:  # noqa: UP006
     """Normalised (0..1) filter envelope on the control grid."""
     del rate
-    return _filter_shape(env, hold_s=hold_s,
-                         total_s=max(hold_s + tail_s, 1.0 / CONTROL_RATE))
+    return _filter_shape(
+        env, hold_s=hold_s, total_s=max(hold_s + tail_s, 1.0 / CONTROL_RATE)
+    )
 
 
-def interpolate(values: List[float], pos: float) -> float:
+def interpolate(values: List[float], pos: float) -> float:  # noqa: UP006
     """Linear interpolation of a control-rate list at fractional index ``pos``.
 
     ``pos`` is in control-grid units (one unit == 1/CONTROL_RATE seconds), so
@@ -218,7 +235,7 @@ def interpolate(values: List[float], pos: float) -> float:
     return values[i] + (values[i + 1] - values[i]) * frac
 
 
-def attack_scale_for(voice, velocity: int) -> Optional[float]:
+def attack_scale_for(voice, velocity: int) -> Optional[float]:  # noqa: UP045
     """Velocity scaling of the attack time, or None when it is not modelled.
 
     ``velocity_to_amp_attack_span``/``_pivot`` make the attack *longer* with
