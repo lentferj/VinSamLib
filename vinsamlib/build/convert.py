@@ -1687,6 +1687,32 @@ def _convert_akai_program(
     name = getattr(program, "name", "") or "?"
     wanted = program.sample_names
     missing = bank.missing_samples(program)
+    # A NAME COLLISION LOOKS LIKE A MISSING SAMPLE, and is not one.
+    #
+    # AKAI names are 12 bytes and a stereo pair is two files differing only by
+    # an `-L`/`-R` suffix, so a base of 13 or more characters puts BOTH halves
+    # in the same 12 bytes. The sampler resolves one name to one file, so
+    # `_add_sample` kept the first and the second is simply not in
+    # `bank.samples` -- which is indistinguishable, from here, from a library
+    # split across discs. Left alone this refused with "names 2 sample(s) that
+    # are not on its own volume", which sends the user looking for a second
+    # floppy that is not the problem.
+    #
+    # Not reachable on this library (8 602 of 8 613 real pairs are exactly 12
+    # characters, measured 2026-10-05), but the refusal is reachable for any
+    # AKAI material, so the reason it gives has to be the true one.
+    collided = [w for w in bank.warnings if "also named" in w]
+    if collided:
+        raise ConvertOpError(
+            f"{name!r} cannot be converted: this volume has "
+            f"{len(collided)} sample name(s) that collide once written to the "
+            f"12-byte AKAI name field, so one file is silently dropped and the "
+            f"rest plays wrong audio rather than no audio. This is not a "
+            f"missing-sample problem and no other volume will fix it — the "
+            f"names are too long for the format as they stand. "
+            f"({collided[0]})"
+        )
+
     if wanted and len(missing) == len(wanted):
         # Not a broken program: an AKAI library is routinely split so that a
         # program sits on one volume and its samples on another. Refused

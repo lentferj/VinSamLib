@@ -1051,6 +1051,21 @@ def _fetch_bank(node: TreeNode) -> list[TreeNode]:
                 f"no program, so there is nothing to import as a preset."
             )
             return []
+        # A PARSER WARNING THAT NOTHING READ, made visible on the row it is
+        # about. AkaiBank collects these and had no consumer anywhere in this
+        # package, so a volume whose sample names collide on disc was listed
+        # as though it were whole. The one that matters: AKAI names are 12
+        # bytes, a stereo pair is two files differing only by an `-L`/`-R`
+        # suffix, so a 13-character base puts BOTH halves in the same 12 bytes
+        # and the sampler resolves one name to one file. The second half is
+        # then dropped and the bank plays half-width -- wrong audio, silently.
+        #
+        # Not reachable on this library: 8 602 of 8 613 real -L/-R pairs are
+        # exactly 12 characters, so none collide (measured 2026-10-05 over 21
+        # discs). It is one character away, which is why this is worth showing
+        # rather than leaving in a list nothing prints.
+        if node.handle.warnings:
+            node.note = "; ".join(node.handle.warnings[:3])
     if node.handle is None:
         data = vol.read(entry)
         if data[:4] == b"FORM" and data[8:12] == b"E4B0":
