@@ -87,6 +87,32 @@ shipped app, not just of test scripts:
   original commercial banks, an SD card's worth of ZuluSCSI images, a
   Gotek floppy set — make a copy you haven't touched with this app.
 
+### The same thing happened again, through a different door
+
+The incident above was fixed with a runtime guard:
+`config.require_real_state_opt_in()` refuses to *open* the real index
+unless the application itself said it meant to. On 2026-10-05 that guard
+was found to have a blind spot, and it cost a real index a second time.
+
+`tests/manual_ui_smoke_search.py` wanted a fresh index so it would
+exercise a real scan, and got one by deleting the file — naming the path
+out by hand (`Path.home()/".local"/"share"/"vinsamlib"/"index.db"`)
+rather than asking `config.user_data_dir()`. Because the path was
+hardcoded, the `XDG_DATA_HOME` isolation the test suite sets up on import
+did not apply to it at all: the test deleted the **real** 8,167-container
+library index on every run, and the next real start then rebuilt the
+whole library from nothing. That rebuild takes minutes, during which
+search legitimately returns nothing — which is how it reached the author
+as "the database is empty every time I start", reported three separate
+times before the hardcoded path was read closely.
+
+The general shape, worth stating because it is not obvious: **a guard
+that fires on opening a file cannot protect against code that deletes
+it.** Isolation has to be honoured by the destructive operation itself.
+Both are now covered — the delete asks `user_data_dir()`, which moves
+with `XDG_DATA_HOME`, and a test fails the build if any test or tool
+names the real index by a hardcoded path at all.
+
 ## Proprietary File Formats
 
 VinSamLib reads and writes file formats that are proprietary to their
