@@ -1215,6 +1215,16 @@ one-sided clipping) either never fired or came down to about 1 dB of
 RMS asymmetry: "a coin-flip dressed up as intelligence". Getting the
 side "wrong" costs a little level; Mix can cost you the audio.
 
+**Test needs a single bank file, so it does not apply to an AKAI
+source** — and says so in words rather than failing. An AKAI "bank" is a
+volume: a program file and the sample files it names, held separately and
+resolved by name, so there is no one file to assemble and parse back.
+That costs nothing here, because **AKAI samples are mono by format**, so
+there is no stereo content in an AKAI source to find and none of these
+three choices can differ on it. Convert an AKAI program exactly as you
+would without testing. A *mixed* selection (say one AKAI program and one
+E4B preset) is measured on the E4B half and skips the AKAI one.
+
 Around that are the independent, collapsible sections below.
 
 #### Trim Silence
