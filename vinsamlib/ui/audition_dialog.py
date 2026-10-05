@@ -49,6 +49,10 @@ class AuditionDialog(QDialog):
     #: owns the menu item that mirrors it -- two places writing it separately
     #: is how a checkbox and a menu tick come to disagree.
     showReportChanged = Signal(bool)
+    #: The user ticked/unticked "Play automatically". Same one-writer rule as
+    #: showReportChanged: the window that owns the setting owns the menu item
+    #: that mirrors it.
+    autoPlayChanged = Signal(bool)
 
     def __init__(
         self,
@@ -56,6 +60,7 @@ class AuditionDialog(QDialog):
         title: str = "Audition",
         parent=None,
         show_report_default: bool = True,
+        auto_play_default: bool = True,
         volume: int = 100,
         player=None,
     ):
@@ -111,6 +116,21 @@ class AuditionDialog(QDialog):
         )
         self._show_again.toggled.connect(self.showReportChanged)
         close_row.addWidget(self._show_again)
+        # Beside the opt-out above, and for the same reason: both are
+        # decisions about what happens NEXT time, made by someone who has just
+        # heard (or failed to hear) this audition, which is the only moment the
+        # question is worth asking. Order is deliberate -- what to PLAY first,
+        # then whether to be shown the paperwork about it.
+        self._auto_play = QCheckBox("Play automatically")
+        self._auto_play.setChecked(bool(auto_play_default))
+        self._auto_play.setToolTip(
+            "On: an audition starts playing as soon as it is ready, and you\n"
+            "can still press Play or Stop at any point.\n"
+            "Off: it waits for you, which is worth it when auditioning a list\n"
+            "of presets and you only want to hear one of them."
+        )
+        self._auto_play.toggled.connect(self.autoPlayChanged)
+        close_row.addWidget(self._auto_play)
         close_row.addStretch(1)
         close = QPushButton("Close")
         close.clicked.connect(self.reject)
@@ -127,6 +147,29 @@ class AuditionDialog(QDialog):
         if not ok:
             self._play_btn.setText("No audio output")
         self._sync_transport()
+
+        # START PLAYING, unless there is a reason not to.
+        #
+        # Waiting for the show is not optional here. The caller
+        # (`main_window._show_audition_report`) does `dialog.show()` AFTER
+        # this constructor returns, and a QAudioSink started on a window that
+        # has never been shown plays into an output device that has not been
+        # activated yet -- on this desktop the first sample came out clipped
+        # and the rest of the note was dropped. Waiting is also what makes
+        # this correct for the "Show report" hand-off, where the player
+        # arrives already RUNNING and must not be restarted.
+        #
+        # `showEvent`, not a `showed` signal: this PySide6 has no `showed` on
+        # QDialog (it arrived in Qt 6.7 and is absent here), and the event
+        # override is the hook that has always existed.
+        self._autoplay_pending = bool(auto_play_default)
+        if self._player is not None and self._player.playing:
+            self._autoplay_pending = False
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._autoplay_pending:
+            self._autoplay_if_wanted()
 
     # -- report -------------------------------------------------------------
 
@@ -190,6 +233,26 @@ class AuditionDialog(QDialog):
                 "playing through an external player — Qt found no audio "
                 "device on this system"
             )
+
+    def _autoplay_if_wanted(self) -> None:
+        """Start playing on the first show, then never again on its own.
+
+        One-shot by construction: `_autoplay_pending` is cleared first, so
+        re-showing a window the user had closed and reopened does not restart
+        audio they had deliberately stopped. The checkbox remains live, so
+        ticking it mid-session affects the NEXT audition rather than this one
+        -- which is the honest reading of a setting about what happens when an
+        audition opens.
+        """
+        if not self._autoplay_pending:
+            return
+        self._autoplay_pending = False
+        if not self._play_btn.isEnabled():
+            # No route: the button already says "No audio output" and the
+            # tooltip carries the reason. Pressing it here would only replace
+            # that with a second, vaguer failure.
+            return
+        self._on_play()
 
     def _on_finished(self) -> None:
         self._sync_transport()

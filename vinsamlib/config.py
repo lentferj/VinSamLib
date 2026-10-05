@@ -205,6 +205,28 @@ class Config:
     #: playback route means no sound, and then the window carries Save as
     #: WAV and is shown regardless of this setting.
     audition_show_report: bool = True
+    #: Whether an audition STARTS PLAYING on its own, the moment the window
+    #: opens.
+    #:
+    #: ON by default, and the reason is that "audition" is a request to hear
+    #: something. Every other "preview"/"play" control in every other program
+    #: starts when you press it; this one rendered for seconds behind a
+    #: progress window, opened a report, and then sat silent until a second
+    #: click -- so the feature people reached for in order to LISTEN required
+    #: a click to listen, and a user who did not notice the Play button
+    #: concluded the audition had failed.
+    #:
+    #: Separate from `audition_show_report` on purpose. That setting is about
+    #: WHICH WINDOW appears; this is about whether sound comes out of it. They
+    #: were fused by accident once -- turning the report off was the only way
+    #: to get playback without a second click, which is why un-ticking "show
+    #: the report" is described in the UI as making an audition "play straight
+    #: away". It does, but as a side effect of hiding the report, and a user
+    #: who wanted a quiet window had to accept silence to get it.
+    #:
+    #: It is honoured on every path, including the cache hit (which skips the
+    #: progress window entirely) and the report opened from the notice window.
+    audition_auto_play: bool = True
     #: Playback level for auditions, 0-100. A PLAYBACK trim, not a render
     #: one: it never reaches the rendered audio, the peak the report quotes,
     #: or the file Save as WAV… writes. Those describe the PRESET, and a
@@ -281,6 +303,21 @@ class Config:
         audition_show_report = bool(
             data.get("audition_show_report", defaults.audition_show_report)
         )
+        # Absent from every config written before this setting existed, which
+        # is the point: `defaults` is True, so an old file gets the new
+        # behaviour rather than silently opting out of it.
+        #
+        # Worth noting WHO writes these files. A VinSamLib that is ALREADY RUNNING
+        # holds the Config in memory and rewrites the whole file from that copy
+        # when it closes, so a session started before a new setting existed will
+        # drop that key on the way out no matter what the file said. Observed
+        # doing exactly that on 2026-10-05. Harmless here (the default is the
+        # wanted behaviour) and unavoidable without a live reload -- but it
+        # means "the setting is not in config.toml" is not evidence that the
+        # setting is off.
+        audition_auto_play = bool(
+            data.get("audition_auto_play", defaults.audition_auto_play)
+        )
         audition_volume = max(
             0, min(100, int(data.get("audition_volume", defaults.audition_volume)))
         )
@@ -310,6 +347,7 @@ class Config:
             loop_click_check=loop_click_check,
             warn_playback_ceiling=warn_playback_ceiling,
             audition_show_report=audition_show_report,
+            audition_auto_play=audition_auto_play,
             audition_volume=audition_volume,
             audition_notes=audition_notes,
             audition_velocity=audition_velocity,
@@ -365,6 +403,7 @@ class Config:
             "warn_playback_ceiling = " f"{str(self.warn_playback_ceiling).lower()}"
         )
         lines.append(f"audition_show_report = {str(self.audition_show_report).lower()}")
+        lines.append(f"audition_auto_play = {str(self.audition_auto_play).lower()}")
         lines.append(f"audition_volume = {int(self.audition_volume)}")
         lines.append(f"audition_notes = {_toml_str(self.audition_notes)}")
         lines.append(f"audition_velocity = {int(self.audition_velocity)}")

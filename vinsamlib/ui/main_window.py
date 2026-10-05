@@ -426,6 +426,24 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._ceiling_warn_action)
 
         view_menu.addSeparator()
+        # Auto-play comes BEFORE the report toggle, and the order is the
+        # argument: what you hear, then whether you are shown the paperwork
+        # about it. Both are audition behaviour and nothing else lives in this
+        # group, so neither is buried among the view options above.
+        self._audition_autoplay_action = QAction(
+            "Play Auditions Automatically", self, checkable=True
+        )
+        self._audition_autoplay_action.setChecked(
+            bool(getattr(self._config, "audition_auto_play", True))
+        )
+        self._audition_autoplay_action.setStatusTip(
+            "On: an audition starts playing as soon as it is ready. Off: it "
+            "waits for you to press Play, which is worth it when auditioning a "
+            "list of presets and only wanting to hear one."
+        )
+        self._audition_autoplay_action.toggled.connect(self._set_audition_auto_play)
+        view_menu.addAction(self._audition_autoplay_action)
+
         self._audition_report_action = QAction(
             "Show Audition Report", self, checkable=True
         )
@@ -856,6 +874,24 @@ class MainWindow(QMainWindow):
         if self._audition_worker is w:
             self._audition_worker = None
 
+    def _set_audition_auto_play(self, on: bool) -> None:
+        """The one writer for auto-play, so the menu tick, the checkbox in the
+        report window and the file cannot drift apart."""
+        on = bool(on)
+        if getattr(self._config, "audition_auto_play", True) == on:
+            return
+        self._config.audition_auto_play = on
+        if self._audition_autoplay_action.isChecked() != on:
+            self._audition_autoplay_action.setChecked(on)
+        self._config.save()
+        self.statusBar().showMessage(
+            "Auditions will play automatically"
+            if on
+            else "Auditions will wait for you to press Play — View ▸ Play "
+            "Auditions Automatically brings it back",
+            6000,
+        )
+
     def _set_audition_show_report(self, on: bool) -> None:
         """The one writer for this setting, so the menu tick, the checkbox in
         the report window and the file cannot drift apart."""
@@ -890,7 +926,19 @@ class MainWindow(QMainWindow):
             # audition. With nothing to play through, the notice would show a
             # name and fall silent, so the full window is shown instead --
             # it holds Save as WAV, which is the only way to hear it then.
-            if check_playback()[0] and self._show_audition_notice(rendering, node):
+            #
+            # Same reasoning for auto-play being OFF: the notice is a
+            # "this is playing right now" window, and it has no Play button,
+            # so honouring the setting there would mean a window that says
+            # "Auditioning <name>…" and then sits silent forever. The report
+            # window has a transport, so it is the one that can be quiet on
+            # purpose. Falling back to it keeps the two settings independent,
+            # which is the whole reason they are separate.
+            if (
+                getattr(self._config, "audition_auto_play", True)
+                and check_playback()[0]
+                and self._show_audition_notice(rendering, node)
+            ):
                 return
         self._show_audition_report(rendering, node)
 
@@ -932,6 +980,7 @@ class MainWindow(QMainWindow):
             title=f"Audition — {node.label}",
             parent=self,
             show_report_default=bool(self._config.audition_show_report),
+            auto_play_default=bool(getattr(self._config, "audition_auto_play", True)),
             volume=int(getattr(self._config, "audition_volume", 100)),
             player=player,
         )
@@ -941,6 +990,7 @@ class MainWindow(QMainWindow):
         self._audition_dialog = dialog
         self._audition_dialogs.append(dialog)
         dialog.showReportChanged.connect(self._set_audition_show_report)
+        dialog.autoPlayChanged.connect(self._set_audition_auto_play)
         dialog.finished.connect(lambda *_, d=dialog: self._forget_audition_dialog(d))
         dialog.show()
 
