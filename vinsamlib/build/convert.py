@@ -495,7 +495,7 @@ def polyphony_risk_lines(risks: list[dict]) -> list[str]:
             else ""
         )
         lines.append(
-            f"\"{r['preset']}\" stacks {r['voices']} voices on {r['key']} at "
+            f'"{r["preset"]}" stacks {r["voices"]} voices on {r["key"]} at '
             f"velocity {r['velocity']}, over the {r['limit']}-voice-per-note "
             f"limit{why} -- the extra layers will be stolen on playback."
         )
@@ -571,6 +571,53 @@ def load_samples_for_test(bank_path: str) -> list:
     return bank.samples
 
 
+#: Source formats whose presets the Test button can preview, and the
+#: extension each assembles to. AKAI is deliberately ABSENT rather than
+#: mapped to something: an AKAI "bank" is a volume -- a program file and the
+#: sample files it names, held as SEPARATE files that resolve by name -- so
+#: there is no single bank FILE to write for mpc2emu to parse back, which is
+#: the whole mechanism below. See `load_sources_samples_for_test`.
+_PREVIEW_ASSEMBLE_FMTS = ("E4B", "KRZ", "EIII")
+_PREVIEW_EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
+
+_NO_STEREO_TO_TEST = (
+    "There is nothing to test here: an AKAI bank is a volume of separate "
+    "program and sample files rather than one bank file, so it cannot be "
+    "assembled and parsed back the way a Test needs -- and AKAI samples are "
+    "mono by format anyway, so there is no stereo content here and no "
+    "cancellation risk to warn about. This does not affect the conversion."
+)
+
+
+def _preview_source_format(bank: Any) -> Optional[str]:  # noqa: UP045
+    """Which previewable format this source's bank really is, or None.
+
+    Dispatched on the BANK OBJECT, not on the caller's `fmt` string, and that
+    is the fix for a mixed selection. main_window.py derives `fmt` from the
+    selected rows and FALLS BACK to "E4B" when they disagree, so a selection
+    of one AKAI and one E4B preset arrived here labelled "E4B" and had
+    e4b.assemble() handed an AkaiBank -- `AttributeError: 'AkaiBank' object
+    has no attribute 'e4ma_body'`, a second crash of the same family as the
+    KeyError, one click away from the first. A row's own type is the truth
+    about where its samples come from; a fallback default is a guess about
+    what to CONVERT TO, which is a different question entirely.
+    """
+    from ..banks import akai as vs_akai
+    from ..banks import e4b as vs_e4b
+    from ..banks import eiii as vs_eiii
+    from ..banks import krz as vs_krz
+
+    if isinstance(bank, vs_e4b.E4BFile):
+        return "E4B"
+    if isinstance(bank, vs_krz.KrzFile):
+        return "KRZ"
+    if isinstance(bank, vs_eiii.EIIIFile):
+        return "EIII"
+    if isinstance(bank, vs_akai.AkaiBank):
+        return None
+    return None
+
+
 def load_sources_samples_for_test(sources: list, fmt: str) -> list:
     """Read-only: assembles the given (bank, preset_obj) pairs the same way
     Build Image / convert_preset() would (banks.e4b/krz/eiii.assemble()),
@@ -578,7 +625,32 @@ def load_sources_samples_for_test(sources: list, fmt: str) -> list:
     throwaway temp file mpc2emu itself requires to parse from is the only
     thing written. Used by the Pending pane's per-bank Convert Options and
     by Explorer's multi-preset "Import via mpc2emu..." to preview stereo
-    content across the whole selection, not just one preset."""
+    content across the whole selection, not just one preset.
+
+    Sources are GROUPED BY THEIR OWN BANK TYPE and each group previewed
+    separately, so one AKAI program among eight E4B presets no longer takes
+    the whole Test down with it -- the previewable ones are still measured,
+    and only the AKAI ones are left out.
+
+    AKAI IS LEFT OUT, and saying so is more useful than failing.
+
+    Every AKAI selection, one preset or eight, used to land on
+    `_ASSEMBLE["AKAI"]` and die with a bare `KeyError: 'AKAI'`, which the
+    dialog reported as "Couldn't preview the samples: 'AKAI'" -- an
+    internal dict lookup dressed up as a user-facing error. Nothing about
+    AKAI was wrong; an AKAI bank simply is not a file.
+
+    So an all-AKAI selection raises a ConvertOpError that explains itself,
+    and a mixed one is measured on the formats that can be. The reason AKAI
+    is skipped is not only that it has no bank file: AKAI SAMPLES ARE MONO
+    BY FORMAT (mpc2emu's akai_s3000_parser builds every SampleData with
+    channels=1, and banks/akai.py holds 16-bit mono PCM with no channel
+    field at all). There is no stereo content in an AKAI source to find and
+    no cancellation risk to warn about, so skipping it cannot understate
+    the risk -- "Keep Stereo" and "Mix" cannot differ on mono input. The
+    conversion itself is unaffected either way: it takes its own route
+    through _convert_akai_program() and never came through here.
+    """
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
     from ..banks import krz as vs_krz
@@ -588,16 +660,27 @@ def load_sources_samples_for_test(sources: list, fmt: str) -> list:
         "KRZ": vs_krz.assemble,
         "EIII": vs_eiii.assemble,
     }
-    _EXT = {"E4B": "e4b", "KRZ": "krz", "EIII": "e3x"}
-    fn = _ASSEMBLE[fmt]
-    data = fn(sources, bank_name="TestPreview") if fmt == "EIII" else fn(sources)
-    # The file exists only to be parsed straight back -- the SampleData
-    # returned carries its own PCM in memory -- so it goes at the end of the
-    # block rather than living until shutdown.
-    with tempdirs.temp_dir(_CONVERT_TEMP_PREFIX) as tmp_dir:
-        tmp_path = tmp_dir / f"preview.{_EXT[fmt]}"
-        tmp_path.write_bytes(data)
-        return load_samples_for_test(str(tmp_path))
+    groups: dict[str, list] = {f: [] for f in _PREVIEW_ASSEMBLE_FMTS}
+    for bank, preset_obj in sources:
+        got = _preview_source_format(bank)
+        if got is not None:
+            groups[got].append((bank, preset_obj))
+    previewable = {f: v for f, v in groups.items() if v}
+    if not previewable:
+        raise ConvertOpError(_NO_STEREO_TO_TEST)
+
+    out: list = []
+    for fmt_i, group in previewable.items():
+        fn = _ASSEMBLE[fmt_i]
+        data = fn(group, bank_name="TestPreview") if fmt_i == "EIII" else fn(group)
+        # The file exists only to be parsed straight back -- the SampleData
+        # returned carries its own PCM in memory -- so it goes at the end of
+        # the block rather than living until shutdown.
+        with tempdirs.temp_dir(_CONVERT_TEMP_PREFIX) as tmp_dir:
+            tmp_path = tmp_dir / f"preview.{_PREVIEW_EXT[fmt_i]}"
+            tmp_path.write_bytes(data)
+            out.extend(load_samples_for_test(str(tmp_path)))
+    return out
 
 
 # ── mpc2emu's structured conversion warnings ────────────────────────────────
@@ -1902,8 +1985,7 @@ def _akai_sibling_hint(bank: Any, missing: list) -> str:
     image = path.rsplit(":", 1)[0] if ":" in path else ""
     if not image or not Path(image).is_file():
         return (
-            "AKAI libraries often keep a program and its samples on "
-            "different volumes."
+            "AKAI libraries often keep a program and its samples on different volumes."
         )
     try:
         from ..vfs.akai import AkaiVolume
@@ -1922,8 +2004,7 @@ def _akai_sibling_hint(bank: Any, missing: list) -> str:
                 holders[folder.name] = hit
     except Exception:  # noqa: BLE001
         return (
-            "AKAI libraries often keep a program and its samples on "
-            "different volumes."
+            "AKAI libraries often keep a program and its samples on different volumes."
         )
     if not holders:
         return (
