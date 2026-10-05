@@ -2284,14 +2284,43 @@ deterministic sample-and-hold, so two renders of one preset are comparable.
 
 ### The report window, the notice, and opting out
 
-By default an audition opens a window carrying the honesty header, the report,
-a **Play / Replay / Stop** transport and **Save as WAV…**. Once you are
-familiar with a format that window is in the way of the thing you came for, so
-it can be switched off — in the window itself, or from **View ▸ Show Audition
-Report**. With it off an audition plays straight away behind a small
-*"Auditioning <preset>"* notice that closes itself when the sound ends.
+An audition **starts playing as soon as it is ready** — that is the default,
+and it is on because *audition* is a request to hear something. Turn it off
+with **View ▸ Play Auditions Automatically**, or with the **Play
+automatically** checkbox in the report window, when you are working through a
+list of presets and only want to hear one of them.
 
-Opting out is a way to skip a window, never a way to lose information:
+The window itself carries the honesty header, the report, a **Play / Replay /
+Stop** transport and **Save as WAV…**. Once you are familiar with a format
+that window is in the way of the thing you came for, so it can be switched off
+— in the window itself, or from **View ▸ Show Audition Report**. With it off an
+audition plays behind a small *"Auditioning <preset>"* notice that closes
+itself when the sound ends.
+
+**The two settings are independent, and were not always.** Until 2026-10-05
+turning the report off was the only way to get playback without a second
+click, because an audition used to render, open its window, and then sit
+silent until you pressed Play. That coupled two unrelated questions — *which
+window appears* and *does sound come out* — and meant a user who wanted a
+quiet window had to accept silence to get it. They are separate now:
+
+| | window shown | sound starts by itself |
+|---|---|---|
+| both on (default) | report | yes |
+| report off | notice | yes |
+| auto-play off | report | **no**, waits for Play |
+| both off | report | no |
+
+Auto-play is honoured on every path, including an audition already rendered
+(cache hit, which skips the progress window) and the report opened from the
+notice — where the running player is **handed over** and never restarted.
+Re-opening a window does not restart audio you deliberately stopped. With no
+playback route, nothing is started: the transport already says **No audio
+output** and pressing it anyway would only replace that reason with a vaguer
+one.
+
+Opting out of the report is a way to skip a window, never a way to lose
+information:
 
 * the notice does not vanish on a failure — a player that cannot open the
   device leaves its reason on screen;
