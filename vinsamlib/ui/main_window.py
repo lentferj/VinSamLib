@@ -2581,12 +2581,92 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         from ..audition import render as _render_mod  # noqa: PLC0415, RUF100
 
+        # THE FIRST SENTENCE NAMED TWO OF THE FOUR FORMATS THIS READS, and
+        # the project has a chronic version of this bug: the README's opening
+        # sentence is about the hardware families, so "four formats" became
+        # shorthand for what VinSamLib handles, when four is only how many it
+        # can WRITE. It reads twelve.
+        #
+        # So the two are now separated and both are counted from the code
+        # rather than typed, because a hardcoded list is a list that goes
+        # stale the moment a format lands -- and this sentence has now been
+        # wrong twice, once per omission.
+        from ..build import foreign_import as _foreign  # noqa: PLC0415, RUF100
+        from ..build import xpm_import as _xpm  # noqa: PLC0415, RUF100
+
+        #: The four hardware families, read by this program's own code. This
+        #: list is a genuine constant of the project -- each name here has a
+        #: `banks/<name>.py` reader behind it -- so it is written out.
+        native = "E-mu E4B, E-mu EIII, Kurzweil KRZ and Akai S1000/S3000"
+
+        #: Everything else that can be READ as a source, grouped by the mpc2emu
+        #: probe that gates it. Derived, so a format added to any of these
+        #: registries appears here without this file being touched.
+        soft = sorted(_foreign.FOREIGN_FORMATS - set(_foreign.IMAGE_CONTENT_FORMATS))
+        mpc = sorted({_xpm.MPC_EXT_FORMAT[e] for e in _xpm.MPC_EXT_FORMAT})
+
+        def _bullet(label: str, check: str | None) -> str:
+            if check is None:
+                return f"  •  {label}"
+            ok, _reason = getattr(self._config, check)()
+            # A capability needing a checkout this machine lacks is still a
+            # capability: listed and marked, not dropped. Knowing it exists and
+            # why the menu is greyed beats not being told it exists.
+            return f"  •  {label}" if ok else f"  •  {label}  (needs mpc2emu)"
+
+        #: COUNTED, NOT TYPED. I wrote "twelve" in this sentence first, from
+        #: arithmetic done in my head, and it was wrong -- it is 15, because
+        #: the two disc formats and the WAV folder were in none of the tallies
+        #: above. A number in prose is a number that goes stale; this one is
+        #: summed from the same registries the bullets are built from, so
+        #: adding a format updates the sentence and the list together.
+        n_formats = 4 + len(mpc) + len(soft) + len(_foreign.IMAGE_CONTENT_FORMATS) + 1
+
+        lines = [
+            (
+                f"Reads and writes bank files for {native} — its own code, no "
+                f"mpc2emu required."
+            ),
+            (
+                "Browses floppy, hard-disk and CD images (EMU3, FAT12/16/32, "
+                "ISO9660) as libraries, and writes real loadable images again."
+            ),
+            (
+                "Builds new banks from any mixture of these, queues several, "
+                "and converts presets between the four hardware formats."
+            ),
+            "",
+            "Reads further formats as import sources, via mpc2emu:",
+            _bullet(
+                "Akai MPC — " + ", ".join(mpc) + " programs and projects",
+                "check_xpm_import_support",
+            ),
+            _bullet(
+                "Soft samplers — " + ", ".join(soft),
+                "check_foreign_import_support",
+            ),
+            _bullet(
+                "Ensoniq EPS and Roland S-7xx discs (experimental)",
+                "check_firmware_import_support",
+            ),
+            _bullet("A folder of loose WAVs", "check_sample_dir_import_support"),
+            _bullet(
+                "Vintage resample / sample-count reduction",
+                "check_conversion_support",
+            ),
+        ]
+
         QMessageBox.about(
             self,
             "About VinSamLib",
-            "VinSamLib — a librarian for E-mu E4B/EIII and Kurzweil KRZ sample banks.\n\n"
-            "Built on mpc2emu's format-writing code, with its own read path "
-            "for EMU3/FAT images and E4B/KRZ/EIII banks.\n\n"
+            "VinSamLib — a librarian and bank builder for vintage sampler "
+            f"content. It reads {n_formats} input formats and writes real, "
+            "loadable E-mu, Kurzweil and Akai banks and disk images.\n\n"
+            + "\n".join(lines)
+            + "\n\nAudition renders a preset's parameters — layers, levels, "
+            "pan, tuning, envelopes, filter — and plays them or writes a WAV. "
+            "It is a model of the preset, not of the sampler, and it says so "
+            "above every audition.\n\n"
             f"Audition renderer: {_render_mod.renderer_description()}.\n"
             f"Events render in parallel: "
             f"{'yes' if _render_mod.parallel_supported() else 'no'} "
