@@ -1298,13 +1298,24 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
     printed a word about it. KRZ and EIII survive the same input, so this is
     not something a caller could have predicted from the options alone.
 
-    **Necessary, not sufficient.** This counts samples, which is what the
+    **Necessary, not sufficient.** This measures audio, which is what the
     E4B chunk misalignment destroys. It cannot see the other half of the
     same upstream fault: the vintage profiles processed a stereo sample as
     one long mono stream, so the samples that DID survive have their
     channels smeared, and a KRZ or EIII bank built the same way kept every
-    sample and every one of them is wrong. No count check can catch that.
+    sample and every one of them is wrong. No byte check can catch that.
     See the README's "Fixed defects" entry.
+
+    The half-frame hint this used to end with has been REMOVED. It named
+    `len(data) % 4 == 2` as the thing to try disabling, and that was wrong
+    twice over: the fault it described was fixed upstream on 2026-08-07
+    (`_pcm_bytes_written`, plus the per-channel split that was its real
+    cause), and switching a vintage profile off does not change a stereo
+    merge anyway -- the fold happens with resampling off too. A hint that
+    sends a user to a setting which cannot affect the outcome is worse than
+    no hint, because it looks like a next step. Diagnosed from the mpc2emu
+    side, 2026-10-05, after this refused 4-of-8 on a bank whose audio was
+    complete.
 
     Deliberately a VERIFICATION and not a correction. A correction for
     someone else's bug has to guess when to stop applying itself, and this
@@ -1315,6 +1326,32 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
 
     Uses VinSamLib's own byte-level readers rather than mpc2emu's, so the
     check is independent of the code that produced the file.
+
+    **KRZ IS COUNTED IN BYTES. THE OBJECT COUNT IS A DIFFERENT QUESTION, AND
+    ON KRZ IT IS THE WRONG ONE.**
+
+    This counted objects for every target and refused a perfectly good AKAI
+    conversion as "came back with 4 of 8 sample(s) after being written ... a
+    fault in the writer". There was no fault. mpc2emu's krz_writer folds an
+    AKAI stereo pair -- two mono files, `FOO -L` and `FOO -R`, one per
+    channel -- into the single two-channel object a K2000 needs, because the
+    machine cannot hold two samples on one key in one layer
+    (docs/RESOLUTION_NOTES.md, KRZSTEREOSPLIT, hardware-confirmed
+    2026-09-20). Eight source samples are SUPPOSED to become four. Measured
+    here on a synthetic pair: 2 objects in, 1 out, every one of 4 000 PCM
+    bytes preserved in one channels=2 sample. The bank was real, loadable and
+    complete, and this threw it away in front of the user.
+
+    So the invariant is AUDIO, measured in bytes, for every target now rather
+    than only where a merge was known to exist -- a check whose bound depends
+    on which writer is underneath it is a check that will be wrong again the
+    next time one of them learns a new fold. The object count is still
+    computed, and a shortfall in BOTH is still a refusal; only a shortfall in
+    bytes alone is not.
+
+    A stereo pair is also why E4B never hit this: there the two halves stay
+    two zones panned hard left and hard right, so nothing is folded and the
+    counts agree. That is a property of the format, not a general truth.
     """
     from ..banks import e4b as vs_e4b
     from ..banks import eiii as vs_eiii
@@ -1323,6 +1360,11 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
     expected = len(bank.samples)
     if not expected:
         return
+    #: Bytes of audio that MUST arrive. 16-bit throughout, so this is frames
+    #: per channel times two -- and a stereo sample contributes its own
+    #: interleaved length, which is exactly what makes the sum invariant under
+    #: a -L/-R fold.
+    expected_bytes = sum(len(getattr(s, "data", b"") or b"") for s in bank.samples)
     try:
         if opts.target_format == "AKAI":
             # A folder, so there are no bytes to read -- and the count that
@@ -1333,35 +1375,83 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
             # machine has ever heard.
             from ..banks import akai as vs_akai
 
-            got = len(vs_akai.parse_dir(str(out_path)).samples)
+            akai_written = vs_akai.parse_dir(str(out_path))
+            got = len(akai_written.samples)
+            got_bytes = sum(len(s.pcm) for s in akai_written.samples.values())
             if got >= expected:
                 return
+            # Same reasoning as the file targets below, applied here first:
+            # an AKAI writer that folds a stereo pair is doing the same
+            # legitimate thing, and a count of objects cannot tell that from
+            # loss. The early return above is the one that was wrong there --
+            # see the note on the file-target branch -- but an AKAI writer that
+            # LOSES a sample loses its object too, so the count is a real
+            # first test here and the bytes are the confirmation.
+            if got_bytes >= expected_bytes * 0.95:
+                return
             raise ConvertOpError(
-                f"The AKAI volume came back with {got} of {expected} "
-                f"sample(s) -- the writer lost audio, so it has not been "
-                f"kept."
+                f"The AKAI volume came back with {got_bytes:,} of "
+                f"{expected_bytes:,} bytes of audio ({got} of {expected} "
+                f"sample objects) -- the writer lost audio, so it has not "
+                f"been kept."
             )
         data = out_path.read_bytes()
         if opts.target_format == "KRZ":
-            got = len(vs_krz.parse_bytes(data, out_path.name).samples)
+            written = vs_krz.parse_bytes(data, out_path.name)
+            #: KRZ OBJECTS CARRY NO PCM FIELD. A KrzObject is the raw physical
+            #: block (banks/krz.py:497), so there is nothing to sum -- the
+            #: audio length comes from the object's extent in WORDS, which is
+            #: exactly what sample_word_extent() exists to answer and is the
+            #: same measure mpc2emu's own `.pcm` reports (16-bit, so words x 2
+            #: is bytes).
+            got_bytes = 2 * sum(
+                written.sample_word_extent(s)[1] for s in written.samples.values()
+            )
         elif opts.target_format == "EIII":
-            got = len(vs_eiii.parse_bytes(data, out_path.name).samples)
+            written = vs_eiii.parse_bytes(data, out_path.name)
         else:
-            got = len(vs_e4b.parse_bytes(data, out_path.name).samples)
+            written = vs_e4b.parse_bytes(data, out_path.name)
+        got = len(written.samples)
+        #: `.values()`, NOT the dict itself. Every one of these readers keys
+        #: its samples by index -- E4BFile.samples, EIIIFile.samples and
+        #: KrzFile.samples are all dict[int, Sample] -- so iterating the
+        #: collection yields ints, and `len(s.pcm)` was measuring an int's
+        #: attribute, which raised, which the handler below swallowed as
+        #: "unreadable for some other reason". Both halves of that are worth
+        #: writing down: a broad except around a verification turns its own
+        #: bugs into silence, and a sum over a dict measures the wrong thing
+        #: without saying so.
+        got_bytes = sum(len(s.pcm) for s in written.samples.values())
     except Exception:  # noqa: BLE001
         # Unreadable for some other reason is a separate problem, and the
         # caller will meet it soon enough; do not mask it as sample loss.
         return
-    if got >= expected:
+    # BOTH figures have to be read, and NEITHER one alone decides.
+    #
+    # An earlier version returned as soon as the object count was satisfied,
+    # on the reasoning that a count shortfall is the only failure worth
+    # catching. That skipped the byte check on every healthy bank -- which is
+    # every bank, since a writer that loses AUDIO usually keeps the object --
+    # so a file carrying a fifth of its samples passed. The two questions are
+    # independent and both are cheap, so both are asked.
+    #
+    # Fewer OBJECTS on its own is not loss: a K2000 folds an AKAI stereo pair
+    # into one two-channel object, so 8 in / 4 out is the merge working. The
+    # byte count is what settles it. 95 % rather than equality because block
+    # padding and the samplers' own alignment round a hair under the source
+    # figure -- the same bound the AKAI convert test uses, and far tighter
+    # than the 2:1 a fold produces.
+    if got_bytes >= expected_bytes * 0.95:
         return
     raise ConvertOpError(
-        f"the converted {opts.target_format} bank came back with {got} of "
-        f"{expected} sample(s) after being written, so it was discarded "
+        f"the converted {opts.target_format} bank came back with "
+        f"{got_bytes:,} of {expected_bytes:,} bytes of audio after being "
+        f"written ({got} of {expected} sample objects), so it was discarded "
         f"rather than handed on. This is a fault in the writer, not in the "
         f"material: the conversion itself completed and the samples were all "
-        f"present in memory. If a vintage resample profile is switched on, "
-        f"try it off -- a resampled stereo sample can end half a frame long, "
-        f"which the E4B writer mis-sizes."
+        f"present in memory. Fewer sample OBJECTS on their own is not loss -- "
+        f"a K2000 folds an AKAI stereo pair into one two-channel object -- "
+        f"which is why this is measured in audio bytes."
     )
 
 

@@ -160,6 +160,19 @@ class E4BSample:
     def size(self) -> int:
         return len(self.body)
 
+    @property
+    def pcm(self) -> bytes:
+        """The audio in this chunk, without its 94-byte header.
+
+        Exists because "how much AUDIO did this bank carry" is a different
+        question from "how many sample objects are in it", and answering the
+        second where the first was meant is a bug that reads as correctness:
+        a K2000-folded AKAI stereo pair halves the object count while keeping
+        every byte, so an object count reports loss on a perfect file. See
+        build/convert.py's _verify_written.
+        """
+        return self.body[PCM_START:]
+
 
 #: Bytes of E3S1 header before the PCM. Every loop/length field in the header
 #: is a BYTE offset from the struct start, so a frame index is

@@ -220,6 +220,15 @@ class EIIISample:
     def size(self) -> int:
         return len(self.body)
 
+    @property
+    def pcm(self) -> bytes:
+        """The audio in this object, without its header.
+
+        The AUDIO question, as distinct from the object count -- see
+        E4BSample.pcm and build/convert.py's _verify_written.
+        """
+        return self.body[92:]
+
 
 @dataclass
 class EIIIFile:
