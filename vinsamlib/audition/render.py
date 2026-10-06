@@ -326,7 +326,9 @@ def _read_block_np(src: "_Source", ch: List[float], pos, looping):  # noqa: UP00
             seam_frac[idx[at_seam]] = rel[at_seam] - (span - 1)
             p[idx[~at_seam]] = ls + rel[~at_seam]
 
-    i = _np.floor(p).astype(_np.int64)  # positions are >= 0, so == int()
+    i = (
+        [math.floor(x) for x in p] if _np is None else _np.floor(p).astype(_np.int64)
+    )  # positions are >= 0, so == int()
     frac = p - i
     inside = (i >= 0) & (i < n - 1) & ~seam
     past = (i >= n - 1) & ~seam
@@ -1022,18 +1024,33 @@ def _render_voice_np(
 
 def _lfo_wave_np(shape: str, phase):
     """`lfo_value` over an array of phases, same arithmetic per shape."""
-    ph = phase - _np.floor(phase)
+    if _np is not None:
+        ph = phase - _np.floor(phase)
+    else:
+        ph = [p - math.floor(p) for p in phase]
     if shape == "square":
-        return _np.where(ph < 0.5, 1.0, -1.0)
+        if _np is not None:
+            return _np.where(ph < 0.5, 1.0, -1.0)
+        return [1.0 if p < 0.5 else -1.0 for p in ph]
     if shape == "sawtooth":
-        return 2.0 * ph - 1.0
+        if _np is not None:
+            return 2.0 * ph - 1.0
+        return [2.0 * p - 1.0 for p in ph]
     if shape == "triangle":
-        return _np.where(ph < 0.5, 4.0 * ph - 1.0, 3.0 - 4.0 * ph)
+        if _np is not None:
+            return _np.where(ph < 0.5, 4.0 * ph - 1.0, 3.0 - 4.0 * ph)
+        return [4.0 * p - 1.0 if p < 0.5 else 3.0 - 4.0 * p for p in ph]
     if shape == "random":
-        step = _np.floor(phase).astype(_np.int64)
-        x = (step * 1103515245 + 12345) & 0x7FFFFFFF
-        return (x / float(0x3FFFFFFF)) - 1.0
-    return _np.sin(2.0 * _np.pi * ph)
+        if _np is not None:
+            step = _np.floor(phase).astype(_np.int64)
+            x = (step * 1103515245 + 12345) & 0x7FFFFFFF
+            return (x / float(0x3FFFFFFF)) - 1.0
+        step = [int(math.floor(p)) for p in phase]
+        x = [(s * 1103515245 + 12345) & 0x7FFFFFFF for s in step]
+        return [(v / float(0x3FFFFFFF)) - 1.0 for v in x]
+    if _np is not None:
+        return _np.sin(2.0 * _np.pi * ph)
+    return [math.sin(2.0 * math.pi * p) for p in ph]
 
 
 # ── rendering events in parallel ─────────────────────────────────────────────
@@ -1354,13 +1371,13 @@ def _finish(out_l: List[float], out_r: List[float], opts) -> tuple[float, bytes]
         return peak, inter.tobytes()
     flat: List[float] = []  # noqa: UP006
     for i in range(len(out_l)):
-        left = _soft_limit(out_l[i] * headroom)  # noqa: F841
-        r = _soft_limit(out_r[i] * headroom)
+        val_l = _soft_limit(out_l[i] * headroom)
+        val_r = _soft_limit(out_r[i] * headroom)
         if opts.channels == 1:
-            flat.append(_soft_limit((l + r) * 0.5))  # noqa: F821
+            flat.append(_soft_limit((val_l + val_r) * 0.5))
         else:
-            flat.append(l)  # noqa: F821
-            flat.append(r)
+            flat.append(val_l)
+            flat.append(val_r)
     return peak, mpc2emu_bridge.resampler._float_to_pcm(flat)
 
 

@@ -37,7 +37,12 @@ def main() -> int:
     # be freed as they are made -- they are freed here. Before this existed,
     # a session that converted fifty banks left fifty bank-sized directories
     # behind until the machine was rebooted.
-    app.aboutToQuit.connect(tempdirs.cleanup_session)
+    #
+    # `cleanup_all_on_exit` and not `cleanup_session`: this also sweeps what
+    # EARLIER killed runs left behind, which a startup-only sweep could not
+    # reach until the next launch after the 12-hour threshold. See
+    # tempdirs.py for the measurement that made it necessary.
+    app.aboutToQuit.connect(tempdirs.cleanup_all_on_exit)
     window = MainWindow(config)
     window.show()
     # AFTER show(): the recovery question is a modal dialog, and asking it
