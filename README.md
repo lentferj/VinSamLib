@@ -229,11 +229,11 @@ applied. Needs mpc2emu for the parsed model; needs no audio device to render.
 cache and what is deliberately not modelled:
 [Audition](#audition--hear-a-preset-before-you-carry-it).**
 
-### The four hardware formats, and what each one needs
+### The six hardware formats, and what each one needs
 
 **Every format here is read by VinSamLib's own code.** Opening a disc,
 listing its banks and expanding one into its presets never involves
-mpc2emu, for any of the four. What each format needs *beyond* that is
+mpc2emu, for any of the six. What each format needs *beyond* that is
 where they differ — and since the differences are not the ones you would
 guess, they are a table rather than a sentence:
 
@@ -243,12 +243,14 @@ guess, they are a table rather than a sentence:
 | **E-mu EIII / ESI-32** | ours | mpc2emu | mpc2emu's empty-bank skeleton | mpc2emu | ✅ 2026-07-28, E4XT |
 | **Kurzweil KRZ** (K2000 series) | ours | ours | ours | mpc2emu | ✅ 2026-09-18, K2000R |
 | **Akai S1000 / S3000** | ours | ours | ours | mpc2emu | ✅ 2026-09-13, S3000XL |
+| **Ensoniq EPS / ASR** | ours | mpc2emu | mpc2emu | — | ❌ no hardware here |
+| **Roland S-7xx** (S-750 / S-760 / S-770) | ours | mpc2emu | mpc2emu | — | ❌ no hardware here |
 
-Converting **between** them — any of the four as the source, any as the
+Converting **between** them — any of the six as the source, any as the
 target — always needs mpc2emu, and is what Explorer's "Import via
 mpc2emu…" does.
 
-Two of the four carry a provenance worth stating, because neither
+Four of the six carry a provenance worth stating, because neither
 format was ever published:
 
 - **Akai S1000/S3000.** An Akai sampler disc — a SCSI/ZuluSCSI hard disk
@@ -266,6 +268,20 @@ format was ever published:
   round-tripping 600 real banks out of the author's own discs. EIII
   content commonly shares an EMU3 disc with E4B content, and both browse
   side by side.
+- **Ensoniq EPS / ASR.** The EPS/ASR disc reader was built by tracing the
+  E-MU EOS 4.7 firmware's own import routine for Ensoniq discs, out of the
+  E4XT ROM. Every instrument, its layer-mask variants, its layers, its
+  samples and their loops are reconstructed from what the firmware
+  *actually reads*. There is no Ensoniq here to measure against, so the
+  only definition of correct is "what the E4XT's own importer writes".
+  See [Ensoniq EPS/ASR and Roland S-7xx sampler discs](#ensoniq-epsasr-and-roland-s-7xx-sampler-discs)
+  for the experimental caveats.
+- **Roland S-7xx.** The Roland reader was built by tracing the Kurzweil
+  K2000 v3.87J firmware's import routine for Roland S-7xx discs, out of
+  the K2000R ROM. Partials, their layers, samples, loops and rates are
+  reconstructed from what the firmware *actually reads*. There is no
+  Roland here either, so the only definition of correct is "what the
+  K2000's own importer writes".
 
 ### Build a new bank by dragging presets together
 
