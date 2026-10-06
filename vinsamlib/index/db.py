@@ -199,14 +199,24 @@ class IndexDB:
     SCHEMA_VERSION = 6
 
     def _migrate(self) -> bool:
-        """Add columns an older file lacks, and empty it if it predates them.
+        """Add columns an older file lacks, and mark old data for rescan.
 
         `CREATE TABLE IF NOT EXISTS` does nothing to a table that already
         exists, so a new column has to be added by hand -- silently, since a
         file created by this version already has it.
 
-        Returns True if the index was emptied (schema bump), so the caller
-        can tell the user their library is being rebuilt.
+        Returns True if the index was marked for full rescan (schema bump),
+        so the caller can tell the user their library is being rebuilt.
+
+        NOTE: Earlier versions did DELETE FROM container here. That silently
+        wiped an 8 000+ container index and the user saw "search returns
+        nothing" for minutes while it rebuilt -- reported three times as
+        "the database is empty every time I start". The fix is to FORCE A
+        RESCAN instead of deleting: set every container's mtime to 0 so
+        needs_rescan() returns True for all of them, the background scanner
+        repopulates audio_bytes and note_short in the background, and search
+        keeps working on the old (structurally current, factually incomplete)
+        rows until they are refreshed.
         """
         for table, column, decl in (
             ("container", "audio_bytes", "INTEGER"),
@@ -218,12 +228,13 @@ class IndexDB:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
         have = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if have < self.SCHEMA_VERSION:
-            # Everything scanned before this version has NULL audio_bytes and
-            # would show no size for the rest of its life, because
-            # needs_rescan() only looks at size and mtime and nothing about
-            # the file changed. Clearing container cascades to item and makes
-            # the next scan repopulate.
-            self._conn.execute("DELETE FROM container")
+            # Force a rescan of EVERY container by zeroing mtime. This is the
+            # key behavioural change from the old DELETE: needs_rescan() checks
+            # size AND mtime, so mtime=0 guarantees a mismatch against any
+            # real file's mtime. The scanner will then repopulate the new
+            # columns (audio_bytes, note_short) incrementally, and the FTS
+            # index stays usable the whole time.
+            self._conn.execute("UPDATE container SET mtime = 0")
             self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
             return True
         return False
