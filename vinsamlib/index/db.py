@@ -256,20 +256,54 @@ class IndexDB:
         self, path: str, kind: str, format: str, size: int, mtime: float
     ) -> int:
         """(Re)register a container and wipe its previous items — the
-        scanner rebuilds them fresh on every rescan rather than diffing."""
-        cur = self._conn.execute(
-            "INSERT INTO container(path, kind, format, size, mtime, scanned_at, error) "
-            "VALUES (?, ?, ?, ?, ?, NULL, NULL) "
-            "ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, format=excluded.format, "
-            "size=excluded.size, mtime=excluded.mtime, scanned_at=NULL, error=NULL",
-            (path, kind, format, size, mtime),
-        )
-        container_id = (
-            cur.lastrowid
-            or self._conn.execute(
-                "SELECT id FROM container WHERE path = ?", (path,)
-            ).fetchone()[0]
-        )
+        scanner rebuilds them fresh on every rescan rather than diffing.
+
+        Returns the container's OWN id, which is the whole contract: every
+        `add_item()` under it hangs off this value, and `search()` joins
+        `container ON container.id = item.container_id` to say which file a
+        hit came from.
+
+        SELECT FIRST, THEN BRANCH — and `lastrowid` is read only on the arm
+        that genuinely inserted. The previous form did
+
+            INSERT … ON CONFLICT(path) DO UPDATE …
+            container_id = cur.lastrowid or SELECT id …
+
+        and `lastrowid` is `sqlite3_last_insert_rowid()`, which an upsert that
+        takes its UPDATE path does NOT change. It therefore held the rowid of
+        the last *real* INSERT on the connection, which is `add_item()` from
+        the previous container — an ITEM id. The `or` fallback never fired,
+        because a stale id is truthy.
+
+        Measured consequence on the real 8 167-container / 99 251-item index:
+        item rowids run far past the container-id range, so the DELETE below
+        hit no rows while `add_item()` raised `FOREIGN KEY constraint
+        failed`. Below that range it was worse — silent. Rescanning
+        `/a.e4b` returned 2 (which was `/b.e4b`), so `/b.e4b`'s items were
+        wiped instead of `/a.e4b`'s, `/a.e4b`'s stale rows survived, and
+        `search()` returned one preset under two different files.
+
+        No test caught it because no test re-registers an already-present
+        container: every fixture is either fresh or deleted, so the
+        ON-CONFLICT arm was never taken.
+        """
+        row = self._conn.execute(
+            "SELECT id FROM container WHERE path = ?", (path,)
+        ).fetchone()
+        if row is None:
+            cur = self._conn.execute(
+                "INSERT INTO container(path, kind, format, size, mtime, "
+                "scanned_at, error) VALUES (?, ?, ?, ?, ?, NULL, NULL)",
+                (path, kind, format, size, mtime),
+            )
+            container_id = cur.lastrowid
+        else:
+            container_id = row[0]
+            self._conn.execute(
+                "UPDATE container SET kind=?, format=?, size=?, mtime=?, "
+                "scanned_at=NULL, error=NULL WHERE id=?",
+                (kind, format, size, mtime, container_id),
+            )
         self._conn.execute("DELETE FROM item WHERE container_id = ?", (container_id,))
         return container_id
 
