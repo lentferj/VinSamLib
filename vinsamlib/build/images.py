@@ -181,14 +181,14 @@ def create_image(
             )
         elif kind == "emu3_hd_emu":
             sz = size_mb or (
-                iso_builder.auto_hda_size_mb(bank_paths, "emu") if bank_paths else 1024
+                hda_builder.auto_hda_size_mb(bank_paths, "emu") if bank_paths else 1024
             )
             _, log = _run_captured(
                 hda_builder.build_hda_emu, output_path, label, bank_paths, sz
             )
         elif kind == "emu3_hd_fat":
             sz = size_mb or (
-                iso_builder.auto_hda_size_mb(bank_paths, "fat") if bank_paths else 1024
+                hda_builder.auto_hda_size_mb(bank_paths, "fat") if bank_paths else 1024
             )
             _, log = _run_captured(
                 hda_builder.build_hda_fat, output_path, sz, label, bank_paths
