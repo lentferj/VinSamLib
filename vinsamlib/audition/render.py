@@ -1080,10 +1080,33 @@ def _lfo_wave_np(shape: str, phase):
 # threaded path already makes, and is why cancel is honest about being "stop
 # caring" rather than "stop computing".
 
-#: Set in the parent immediately before forking; read by the children through
-#: copy-on-write. Never sent anywhere.
+#: Set by the pool's initializer in each child; read by `_render_event_task`
+#: through copy-on-write. Never sent anywhere, and never written by the parent
+#: between the fork and the pool coming up -- see `_render_events_parallel`.
 _FORK_PLANS = None
 _FORK_ARGS = None
+
+
+def _fork_init(plans, args):
+    """Install the parent's snapshot in this child.
+
+    `initargs` is passed directly to the child under fork, so nothing large is
+    pickled and the copy-on-write design is preserved. It replaces writing the
+    two module globals from the PARENT before `ctx.Pool(...)`, which was a race:
+    two auditions really can render at once (this module says so at
+    `render.py:215`, and `ui/main_window.py:_silence_previous_auditions`
+    documents it), and with an unlocked module global a second render's
+    assignment lands in the first render's children. Measured with two banks
+    and a widened assignment->fork window: bank A's children inherited B's
+    plans and rendered B's first three notes into A's bus, silently. Worse,
+    plan COUNT mismatches raise IndexError in the child, and the fallback at
+    `except Exception: return False` then re-renders the whole thing serially
+    -- a silent 3x slowdown on top of the wrong audio.
+    """
+    global _FORK_PLANS, _FORK_ARGS
+    _FORK_PLANS = plans
+    _FORK_ARGS = args
+
 
 #: Below this many output frames, forking costs more than it saves.
 PARALLEL_MIN_FRAMES = 3 * 44100
@@ -1108,7 +1131,10 @@ def _render_event_task(index: int):
     so a different merge order would be a different report.
     """
     voices, _span = _FORK_PLANS[index]
-    total, mix_np = _FORK_ARGS
+    # This child's OWN room, not the length of the whole audition. See
+    # `_render_events_parallel`: the whole bus used to be handed here, so every
+    # child allocated and pickled back the bus rather than its own event.
+    total, mix_np = _FORK_ARGS[0][index], _FORK_ARGS[1]
     sub = AuditionReport()
     acc_l, acc_r = None, None
     for note, sounds, o in voices:
@@ -1313,30 +1339,48 @@ def _render_events_parallel(
     the report are the same whatever order the children finish in -- float
     addition is not associative, and an audition that differed run to run
     would be useless for the comparison it exists to support.
+
+    EACH CHILD ALLOCATES ONLY ITS OWN EVENT. `total_frames` here is the length
+    of the WHOLE audition, which used to be handed to every child as the size
+    of the buffer it accumulates into -- so N children each allocated
+    `2 x total x 8` bytes, each was pickled back through a pipe, and the parent
+    held all N of them at once. Measured on 24 events over a 90 s bus with 4
+    workers: **1.52 GB allocated, peak child RSS 1590 MB, against the 52 MB the
+    events actually need** -- a 30x blow-up scaling as O(events x bus length),
+    and an OOM risk on a long note list. When the pool then failed, the
+    fallback below silently re-rendered the whole thing serially.
+
+    `spans[i]` is exactly the room event *i* occupies, and it was already
+    computed on the next line and discarded (`# noqa: F841`). Passing it costs
+    nothing: `_mix_into` already trims short buffers
+    (`n = min(len(left), total - start)`), so nothing downstream changes.
     """
-    global _FORK_PLANS, _FORK_ARGS
     try:
         import multiprocessing
 
         ctx = multiprocessing.get_context("fork")
     except Exception:  # pragma: no cover - platform dependent  # noqa: BLE001
         return False
-    spans = [min(total_frames - s, total_frames) for s in offsets]  # noqa: F841
-    _FORK_PLANS = plans
-    _FORK_ARGS = (total_frames, use_np)
+    spans = [min(total_frames - s, total_frames) for s in offsets]
     workers = min(len(plans), (os.cpu_count() or 2))
     try:
         # Context-managed: the pool is gone when this block ends, whether it
         # returned, raised, or the caller stopped caring about the result.
-        with ctx.Pool(processes=workers) as pool:
+        #
+        # `initializer`/`initargs` rather than writing the two module globals
+        # from this thread before forking: see `_fork_init`. The parent never
+        # touches them at all now, so a concurrent audition cannot land in this
+        # pool's children.
+        with ctx.Pool(
+            processes=workers,
+            initializer=_fork_init,
+            initargs=(plans, (spans, use_np)),
+        ) as pool:
             results = pool.map(_render_event_task, range(len(plans)))
     except Exception:  # noqa: BLE001
         # A child that dies takes the audition with it otherwise. Falling back
         # to the serial path costs time and nothing else.
         return False
-    finally:
-        _FORK_PLANS = None
-        _FORK_ARGS = None
     for n_ev, ((left, right, caveats), start) in enumerate(zip(results, offsets), 1):
         say(
             45 + 50 * (n_ev - 1) / max(len(plans), 1),
