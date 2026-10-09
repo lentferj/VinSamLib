@@ -588,10 +588,22 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> E4BFile:
     midi_prog_by_idx: dict[int, int] = {}
     if data[12:16] == TOC_TAG:
         toc_chunk_size = struct.unpack_from(">I", data, 16)[0]
+        # CLAMP TO THE FILE. `toc_chunk_size` comes straight out of the header,
+        # so a truncated or lying value makes `toc_body` short while the loop
+        # still runs `toc_chunk_size // 32` times -- the final partial entry
+        # can still match PRES_TAG (it only needs 4 bytes) and then
+        # `entry[31]` raises IndexError, or `unpack_from(..., 12)` raises
+        # struct.error on a 4..13-byte entry. Measured: a bank truncated to
+        # FORM header + TOC1 header + 16 bytes of entry crashed with
+        # `IndexError: index out of range`, and the scanner's
+        # `except Exception: return ("E4B", None)` dropped the bank with no
+        # diagnostic -- never reaching the graceful "runs past the end of the
+        # file" warning `_walk_chunks_physical` would have produced.
         toc_body = data[20 : 20 + toc_chunk_size]
-        for i in range(toc_chunk_size // 32):
+        toc_end = min(20 + toc_chunk_size, len(data))
+        for i in range(max(0, (toc_end - 20) // 32)):
             entry = toc_body[i * 32 : i * 32 + 32]
-            if entry[0:4] == PRES_TAG:
+            if len(entry) == 32 and entry[0:4] == PRES_TAG:
                 idx = struct.unpack_from(">H", entry, 12)[0]
                 midi_prog_by_idx[idx] = entry[31]
 
@@ -666,7 +678,15 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> E4BFile:
     # get re-created on assembly, not that the bank is unusable.
     emst_body = b""
     emst_pos = data.rfind(EMST_TAG)
-    if emst_pos < 20 + toc_chunk_size:
+    # BOUND THE TAG, not just the offset. `rfind` searches the whole buffer, so
+    # a 4-byte `EMSt` sitting in trailing image padding lands anywhere in the
+    # tail and passes the offset test below -- and then the size read runs off
+    # the end. Measured: a valid bank with b"EMSt" appended raised
+    # `struct.error: unpack_from requires a buffer of at least 28 bytes`, and
+    # the scanner's `except Exception: return ("E4B", None)` turned that into a
+    # bank that silently vanished from the index -- the exact population this
+    # paragraph says it tolerates.
+    if emst_pos < 20 + toc_chunk_size or emst_pos < 0 or emst_pos + 8 > len(data):
         warnings.append("no EMSt (master setup) chunk found")
     else:
         emst_size = struct.unpack_from(">I", data, emst_pos + 4)[0]
