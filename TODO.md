@@ -6,6 +6,50 @@ know. Resolution strategies live next to the code that needs them.
 
 ---
 
+# External code review — 2026-10-09 (whole repo, ~38k LOC)
+
+**Status: findings only, no code changed in this pass.** Full record, with
+every reproduction and the evidence for each refutation, in
+[`docs/CODE_REVIEW_2026-10-09.md`](docs/CODE_REVIEW_2026-10-09.md).
+
+Four parallel deep-dives over `vfs/`+`index/`, `banks/`, `audition/`, `build/`
+and `ui/`, then every high-severity item re-verified first-hand before it was
+written down. **1 critical, 4 high, 23 medium, and 5 claims refuted** where the
+deep-dive's reading did not survive a run.
+
+Ordered by risk. The first is the only one that can silently mis-serve a user
+today, and it is about to get worse:
+
+- **C1 `index/db.py:267`** — `begin_container()` returns a stale **item** rowid
+  after an upsert, so a rescan wipes the *wrong* container's items and leaves
+  the right one's stale rows behind. Proven: `begin_container('/a.e4b')`
+  returned 2, and `search('P')` then returned the same preset under two
+  different files. `20cbc8d`'s `mtime = 0` migration makes every container
+  take the conflict path, so this is now on the ordinary post-bump start.
+  **No test in the suite re-registers an existing container** — that is why it
+  shipped.
+- **H4 `build/images.py:184`/`:191`** — `iso_builder.auto_hda_size_mb` does not
+  exist; it lives in `hda_builder`. EMU3 hard-disk creation with "auto" size
+  raises on the spin box's default state.
+- **H2 `banks/e4b.py:667`** — a 4-byte trailing `EMSt` takes an unguarded
+  `unpack_from` past EOF, and the scanner's `except Exception` turns that into
+  a bank that silently vanishes from the index.
+- **H3 `audition/envelope.py:250`** — velocity→attack is signed backwards
+  against mpc2emu's own measured table: hard notes get a *longer* attack.
+- **H1 `ui/workers.py:70`** — every `Worker` that has ever run is retained for
+  the process lifetime, and the 16 completion lambdas pin their owning pane
+  with it. **The one-line `deleteLater` fix does not work** — tested. Needs a
+  redesign of the shared worker idiom.
+
+The refutations matter as much as the findings: "the scanner is missing
+`size_suffixes`" is a deliberate documented default; "the filter's −3 dB point
+is wrong" is arithmetic agreeing with a Butterworth cascade to three digits;
+and there is no subprocess surface anywhere in `build/`, because mpc2emu is
+imported in-process — which is what makes the `redirect_stdout` and
+`SYNC_BPM` races (M15, M16) the real hazard in that area.
+
+---
+
 # External code review — GLM-5.3-Flash (2026-09-20)
 
 **Status (2026-09-20, later the same day): every finding verified against
