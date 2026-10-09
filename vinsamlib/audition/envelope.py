@@ -238,10 +238,21 @@ def interpolate(values: List[float], pos: float) -> float:  # noqa: UP006
 def attack_scale_for(voice, velocity: int) -> Optional[float]:  # noqa: UP045
     """Velocity scaling of the attack time, or None when it is not modelled.
 
-    ``velocity_to_amp_attack_span``/``_pivot`` make the attack *longer* with
-    velocity on some formats. The model carries the span and pivot but no
-    direction law measured on these machines, so this is a plain linear
-    interpolation and the caller caveats it when it is not 1.0.
+    ``velocity_to_amp_attack_span`` is ``t(velocity 1) / t(velocity 127)``.
+    mpc2emu states the unit at `models/common.py:6254` and backs it with a
+    measured table (`:6280`, s3ked §47):
+
+        V_ATT1   vel 1     vel 64    vel 127     span = t1/t127
+          -50    2.955     0.555     0.010          295.5
+          -25    2.955     0.545     0.025          118.2
+
+    so **velocity 127 gets the SHORTEST attack and velocity 1 the LONGEST**,
+    and the authored time applies at the pivot (64 on the AKAI, 127 for the
+    E4XT's `Vel<`). Greater than 1 is the common case by a wide margin.
+
+    Still an interpolation -- no per-format SHAPE between the two endpoints is
+    measured -- but the endpoints, the pivot and the direction are now the
+    ones the unit names, and the caller caveats it when the result is not 1.0.
     """
     span = getattr(voice, "velocity_to_amp_attack_span", None)
     if span is None:
@@ -249,5 +260,34 @@ def attack_scale_for(voice, velocity: int) -> Optional[float]:  # noqa: UP045
     pivot = getattr(voice, "velocity_to_amp_attack_pivot", None)
     if pivot is None:
         pivot = 64
-    scale = 1.0 + float(span) * (velocity - int(pivot)) / 126.0
-    return max(0.0, scale)
+    span = float(span)
+    pivot = int(pivot)
+    if span <= 0.0:
+        return None
+    if span == 1.0:
+        return 1.0  # neutral at every velocity; skip the algebra
+
+    # Linear in the attack TIME (not in log time), anchored at both ends:
+    #   scale(v) = 1 + m * (v - pivot)
+    # so the authored time applies AT the pivot, and the two ends satisfy the
+    # unit's own definition -- scale(1) / scale(127) == span:
+    #   1 + m*u = span * (1 + m*w),   u = 1 - pivot, w = 127 - pivot
+    #   =>  m = (span - 1) / (u - span*w)
+    #
+    # The previous form, `1.0 + span * (velocity - pivot) / 126.0`, had the
+    # sign backwards AND did not pass through the pivot: at span 2.0 it gave
+    # scale(64) = 2.0 (not 1.0), scale(127) = 2.5 (faster-note-slower) and
+    # scale(1) = 1.5. Since ~96% of the AKAI corpus keygroups that set this
+    # make hard notes FASTER, that was wrong on nearly every voice carrying
+    # the field, by up to the full span.
+    u = 1 - pivot
+    w = 127 - pivot
+    denom = u - span * w
+    if abs(denom) < 1e-12:
+        # Only reachable for a pivot outside 1..127 by a wide margin, where
+        # the two velocities named by the unit are on the same side of the
+        # anchor and no line can join them. Fall back to the pivot's own
+        # side rather than guessing a slope.
+        return 1.0
+    m = (span - 1.0) / denom
+    return max(0.0, 1.0 + m * (velocity - pivot))

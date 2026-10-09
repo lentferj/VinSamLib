@@ -684,16 +684,22 @@ def render_voice(
             report.note(
                 Severity.UNMEASURED,
                 "velocity → amp attack",
-                "The attack time was scaled by velocity, but no direction law "
-                "for that has been measured on these machines; it is a plain "
-                "linear interpolation.",
+                "The attack time was scaled by velocity, but no SHAPE between "
+                "the pivot and either end has been measured on these "
+                "machines; it is a plain linear interpolation.",
             )
         amp = env_mod.amp_envelope(
             amp_env,
             hold_s=opts.hold_seconds,
             tail_s=max(seconds - opts.hold_seconds, 0.0),
             rate=opts.render_rate,
-            attack_scale=attack_scale if attack_scale else 1.0,
+            # `is not None`, NOT truthiness: a scale of exactly 0.0 means
+            # "the attack takes zero seconds" and is a legitimate answer
+            # from attack_scale_for (it is the clamped floor). The old
+            # `if attack_scale` silently substituted the authored time
+            # instead, so some velocities got the model's value and others
+            # got a different one for no stated reason.
+            attack_scale=attack_scale if attack_scale is not None else 1.0,
             whole=whole,
         )
     else:
