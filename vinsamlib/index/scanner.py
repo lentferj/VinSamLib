@@ -109,8 +109,34 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
 
 
 def _scan_directory(
-    path: Path, db: IndexDB, progress: ProgressCB, seen_paths: set
-) -> None:  # noqa: C901, RUF100
+    path: Path,
+    db: IndexDB,
+    progress: ProgressCB,
+    seen_paths: set,
+    _visited_dirs: Optional[set] = None,
+) -> None:  # noqa: C901, RUF100, PLR0913
+    # A SYMLINK CYCLE. `LocalDirVolume.list()` uses `child.is_dir()`, which
+    # FOLLOWS symlinks, so `/lib -> /lib/sub/loop -> /lib` recurses forever and
+    # raises RecursionError out of `scan()` -- which catches nothing, so the
+    # whole library scan dies rather than that one folder. Proven at
+    # `sys.setrecursionlimit(80)`.
+    #
+    # Fixed by tracking the REAL paths visited, not by refusing to follow
+    # symlinks: `ui/models.py:490` does take the latter route for the tree
+    # (`is_dir(follow_symlinks=False)`, so a symlinked tree is simply never
+    # descended), but that would hide a genuinely symlinked sample folder
+    # from search while the tree still shows it -- the two subsystems would
+    # disagree about what is in the library, which is worse than the loop.
+    # What must not happen is visiting one real directory twice.
+    if _visited_dirs is None:
+        _visited_dirs = set()
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return
+    if real in _visited_dirs:
+        return
+    _visited_dirs.add(real)
     try:
         vol = LocalDirVolume(str(path))
         entries = vol.list()
@@ -130,7 +156,7 @@ def _scan_directory(
 
     for e in entries:
         if e.kind == EntryKind.DIRECTORY:
-            _scan_directory(Path(e.ref), db, progress, seen_paths)
+            _scan_directory(Path(e.ref), db, progress, seen_paths, _visited_dirs)
         elif e.kind == EntryKind.BANK:
             _scan_bank_container(e.ref, e.size, db, progress, seen_paths)
         elif e.kind == EntryKind.OTHER_FILE and e.meta.get("is_image"):
