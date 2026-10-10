@@ -35,6 +35,11 @@ CONTROL_RATE = 1000.0
 #: a four-note audition a 40-second wait.
 AUDITION_MAX_TAIL = 8.0
 
+#: Control-grid points of fade at the end of a ``plays_whole_sample`` voice.
+#: 12 ms: long enough to take the step out, short enough to sit inside the
+#: 50 ms `_voice_seconds` already budgets past the end of such a voice.
+WHOLE_TAIL_FRAMES = 12
+
 #: Where "silence" is taken to be on the duration formats. The two samplers
 #: disagree by 37 dB (60.07 against 97.82) and *neither figure was measured*
 #: (models/common.py:4490). This is only used by the seconds branch, which is
@@ -135,6 +140,13 @@ def _amp_shape(
     abs_rate = abs(float(rate)) if rate else 0.0
     release = max(0.0, float(getattr(env, "release", 0.0)))
     log = math.log10
+    # A one-shot voice runs its sample out and then simply STOPS, at whatever
+    # amplitude the sample happens to end on. A drum one-shot ending on a
+    # non-zero crossing is a click the same size as a loop seam, and it sits at
+    # the end of every one of them. Raised cosine rather than a straight line
+    # so the fade starts with zero slope as well as zero change in value.
+    fade_from = n - WHOLE_TAIL_FRAMES if whole else n
+    fade_span = float(WHOLE_TAIL_FRAMES - 1)
     values: List[float] = []  # noqa: UP006
     append = values.append
     for i in range(n):
@@ -170,6 +182,9 @@ def _amp_shape(
                     except Exception:  # noqa: BLE001
                         below = frac * SILENCE_DB
                 g *= to_gain(-below)
+        if i >= fade_from:
+            u = (i - fade_from) / fade_span
+            g *= 0.5 * (1.0 + math.cos(math.pi * u))
         append(g)
     return values
 

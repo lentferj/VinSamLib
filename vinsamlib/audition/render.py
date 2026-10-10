@@ -326,15 +326,24 @@ def _read(src: _Source, ch: List[float], pos: float, looping: bool) -> float:  #
     # inside its own loop -- audible on everything with a pluck or a hit, and
     # exactly the class of defect this feature exists to catch. Found by an
     # external review 2026-09-21 and reproduced on a ramp before fixing.
-    if looping and src.loop_end > src.loop_start and pos > src.loop_end:
-        ls, le = src.loop_start, src.loop_end
+    ls, le = src.loop_start, src.loop_end
+    rel = -1.0
+    if looping and le > ls:
         span = le - ls + 1
-        rel = (pos - ls) % span
-        if rel >= (span - 1):
-            # At the wrap: blend loop_end -> loop_start, the forward-loop seam.
-            frac = rel - (span - 1)
-            return ch[le] * (1.0 - frac) + ch[ls] * frac
-        pos = ls + rel
+        if pos > le:
+            rel = (pos - ls) % span
+        elif pos >= ls:
+            # Inside the loop already. The seam blend below has to be
+            # reachable from here as well as after the wrap, or a position
+            # step large enough to jump over the blend region would restore
+            # the hard seam it exists to remove.
+            rel = pos - ls
+        if rel >= 0.0:
+            xf = _loop_xfade_width(span)
+            if rel >= span - xf:
+                return _seam_blend(ch, ls, le, xf, rel - (span - xf))
+            if pos > le:
+                pos = ls + rel
     i = int(pos)
     if i >= n - 1:
         return 0.0 if not looping else ch[n - 1]
@@ -342,6 +351,86 @@ def _read(src: _Source, ch: List[float], pos: float, looping: bool) -> float:  #
         return 0.0
     frac = pos - i
     return ch[i] + (ch[i + 1] - ch[i]) * frac
+
+
+#: Frames of equal-power crossfade at a forward-loop seam. Chosen inside the
+#: 16-32 band the review names: long enough that the seam's slope is divided by
+#: roughly this factor instead of being concentrated in one frame, short enough
+#: that a loop only a few hundred frames long is not mostly crossfade.
+LOOP_XFADE_FRAMES = 24
+
+_HALF_PI = math.pi / 2.0
+
+
+def _loop_xfade_width(span: int) -> int:
+    """How much of a loop of ``span`` frames may be spent crossfading.
+
+    0 for a loop too short for it to mean anything -- below 8 frames the seam
+    and the loop are the same thing -- and otherwise a quarter of the loop at
+    most, so a 100-frame loop gets a 24-frame blend and a 3000-frame one the
+    full 24.
+    """
+    if span < 8:
+        return 0
+    return min(LOOP_XFADE_FRAMES, span // 4)
+
+
+def _interp(ch: List[float], p: float) -> float:  # noqa: UP006
+    """Linear interpolation at ``p``, holding the last frame past the end."""
+    last = len(ch) - 1
+    if last < 1:
+        return ch[0] if ch else 0.0
+    i = int(p)
+    if i >= last:
+        return ch[last]
+    if i < 0:
+        i = 0
+    return ch[i] + (ch[i + 1] - ch[i]) * (p - i)
+
+
+def _seam_blend(
+    ch: List[float],
+    ls: int,
+    le: int,
+    xf: int,
+    k: float,  # noqa: UP006
+) -> float:
+    """Equal-power crossfade across a forward loop's seam, over ``xf`` frames.
+
+    The old blend was ONE frame: ``ch[le] * (1 - frac) + ch[ls] * frac``. That
+    is value-continuous, which is why nothing noticed it, but it puts the whole
+    seam step ``|ch[le] - ch[ls]|`` into a single frame's slope -- one tick per
+    loop period, which is exactly the defect this feature exists to hear.
+
+    WHY THE HEAD RUNS BACKWARD. A crossfade has to be C0-continuous at BOTH
+    ends, because a residual step at either end is a click of the same size as
+    the one being removed. The tail is the loop's LAST ``xf`` frames, read
+    forward from ``le - xf + 1``; the frame before the blend is ``le - xf``, so
+    the tail enters continuously. The head has to leave the blend at ``ch[ls]``,
+    because the natural read resumes at ``ls`` the moment the position wraps --
+    so it must arrive there, and it starts from the far side of the loop's own
+    first ``xf`` frames. Read forward it would leave at ``ch[ls + xf]`` and
+    step down to ``ch[ls]``; read backward it runs ``ls + xf - 1 -> ls`` and
+    meets the wrap exactly.
+
+    That is the only arrangement that works, and the reason is arithmetic
+    rather than taste: a crossfade overlaps two segments, so it covers ``2*xf``
+    source frames in ``xf`` frames of time. A loop of ``span`` frames must still
+    advance ``span`` source frames per ``span`` frames of output, so the blend
+    cannot consume NEW material -- it can only re-read material the loop has
+    already played. The head qualifies; the loop's own start does.
+
+    THE COST OF THE BACKWARD HEAD is a ``xf``-frame reversed copy of the loop's
+    opening, faded in under the tail, once per loop period. Measured against
+    the alternative -- a residual step of ``|ch[ls + xf - 1] - ch[ls]|``, which
+    on a 1 kHz tone at 44.1 kHz is over 1.4 of full scale -- it is the better
+    trade, and the fade-in means the reversed motion is only audible where the
+    tail is already quiet.
+    """
+    u = k / xf
+    tail = _interp(ch, min(le - xf + 1 + k, float(le)))
+    head = _interp(ch, float(ls + xf - 1) - k)
+    return tail * math.cos(u * _HALF_PI) + head * math.sin(u * _HALF_PI)
 
 
 def _read_block(src: "_Source", ch_idx: int, pos, looping):  # noqa: UP006, UP037
@@ -381,17 +470,23 @@ def _read_block(src: "_Source", ch_idx: int, pos, looping):  # noqa: UP006, UP03
     ls, le = src.loop_start, src.loop_end
     p = pos.copy()
     seam = _np.zeros(pos.shape, dtype=bool)
-    seam_frac = _np.zeros(pos.shape, dtype="float64")
+    seam_k = _np.zeros(pos.shape, dtype="float64")
+    xf = 0
     if le > ls:
         span = le - ls + 1
+        xf = _loop_xfade_width(span)
         fold = looping & (pos > le)
+        # `rel` is the position within the loop cycle, or -1 before the loop
+        # reaches it. Computed for every position and not only the folded ones,
+        # because the seam blend has to be reachable from below the wrap as
+        # well -- see `_read`.
+        rel = _np.where(pos >= ls, pos - ls, -1.0)
         if fold.any():
-            rel = _np.mod(pos[fold] - ls, span)
-            at_seam = rel >= (span - 1)
-            idx = _np.flatnonzero(fold)
-            seam[idx[at_seam]] = True
-            seam_frac[idx[at_seam]] = rel[at_seam] - (span - 1)
-            p[idx[~at_seam]] = ls + rel[~at_seam]
+            rel = _np.where(fold, _np.mod(pos - ls, span), rel)
+        p = _np.where(fold, ls + rel, pos)
+        if xf:
+            seam = looping & (rel >= span - xf)
+            seam_k = rel - (span - xf)
 
     i = _np.floor(p).astype(_np.int64)  # positions are >= 0, so == int()
     frac = p - i
@@ -406,9 +501,32 @@ def _read_block(src: "_Source", ch_idx: int, pos, looping):  # noqa: UP006, UP03
     if past.any():
         out[past] = _np.where(looping[past], data[n - 1], 0.0)
     if seam.any():
-        f = seam_frac[seam]
-        out[seam] = data[le] * (1.0 - f) + data[ls] * f
+        k = seam_k[seam]
+        theta = k * (_HALF_PI / xf)
+        tail = _interp_np(data, _np.minimum(le - xf + 1 + k, float(le)))
+        head = _interp_np(data, float(ls + xf - 1) - k)
+        out[seam] = tail * _np.cos(theta) + head * _np.sin(theta)
     return out
+
+
+def _interp_np(data, q):
+    """``_interp`` over an array: linear, and the last frame past the end.
+
+    A transcription, index for index: `_interp` returns `ch[last]` outright
+    where the integer part has reached the end, and this does the same rather
+    than interpolating to it, because `a + (b - a) * 1.0` is not always exactly
+    `b` and `manual_audition_numpy_tolerance` measures the difference.
+    """
+    q = _np.asarray(q, dtype="float64")
+    last = data.size - 1
+    if last < 1:
+        return _np.full(q.shape, float(data[0]) if data.size else 0.0)
+    i = _np.floor(q).astype(_np.int64)
+    i = _np.maximum(i, 0)
+    at_end = i >= last
+    i = _np.where(at_end, last - 1, i)
+    val = data[i] + (data[i + 1] - data[i]) * (q - i)
+    return _np.where(at_end, data[last], val)
 
 
 def _env_block_np(values: List[float], t):  # noqa: UP006
@@ -642,6 +760,22 @@ def _lfo_caveats(voice, terms, report) -> None:
 # ── the per-voice render ─────────────────────────────────────────────────────
 
 
+def _sample_play_seconds(sample, ratio: float, render_rate: int) -> float:
+    """How long it takes to run ``sample`` out at pitch ratio ``ratio``.
+
+    Factored out of `_voice_seconds` because the one-shot fade needs the same
+    number: a whole-sample voice stops where the SAMPLE stops, so that is the
+    instant its level has to have reached zero by.
+    """
+    return (
+        len(sample.data)
+        / 2
+        / max(getattr(sample, "channels", 1), 1)
+        / ratio
+        / render_rate
+    )
+
+
 def _voice_seconds(
     snd: voice_mod.Sounding,
     opts,
@@ -662,18 +796,23 @@ def _voice_seconds(
     if ratio is None:
         ratio = _pitch_ratio(voice, zone, sample, opts)
     if whole and ratio > 0.0:
-        play_s = (
-            len(sample.data)
-            / 2
-            / max(getattr(sample, "channels", 1), 1)
-            / ratio
-            / opts.render_rate
+        return (
+            max(
+                opts.hold_seconds,
+                _sample_play_seconds(sample, ratio, opts.render_rate),
+            )
+            + WHOLE_SAMPLE_ROOM_S
         )
-        return max(opts.hold_seconds, play_s) + 0.05
     tail = 0.0
     if amp_env is not None:
         tail = min(env_mod.release_seconds(amp_env), env_mod.AUDITION_MAX_TAIL)
     return opts.hold_seconds + tail
+
+
+#: Room kept past the end of a one-shot's sample, in seconds. The sample stops
+#: and the voice keeps rendering briefly, so the level has time to reach zero
+#: instead of stepping there.
+WHOLE_SAMPLE_ROOM_S = 0.05
 
 
 def _pitch_ratio(voice, zone, sample, opts) -> float:
@@ -768,10 +907,23 @@ def render_voice(
                 "the pivot and either end has been measured on these "
                 "machines; it is a plain linear interpolation.",
             )
+        # A whole-sample voice's grid ends where the SAMPLE ends, not where the
+        # rendered buffer does: `_voice_seconds` keeps WHOLE_SAMPLE_ROOM_S past
+        # it, and the read is already returning silence there. Without this the
+        # fade at the tail of the grid would land in material nobody can hear
+        # and the one-frame truncation at `play_s` would stand.
+        if whole:
+            tail_s = max(
+                _sample_play_seconds(sample, ratio, opts.render_rate)
+                - opts.hold_seconds,
+                0.0,
+            )
+        else:
+            tail_s = max(seconds - opts.hold_seconds, 0.0)
         amp = env_mod.amp_envelope(
             amp_env,
             hold_s=opts.hold_seconds,
-            tail_s=max(seconds - opts.hold_seconds, 0.0),
+            tail_s=tail_s,
             rate=opts.render_rate,
             # `is not None`, NOT truthiness: a scale of exactly 0.0 means
             # "the attack takes zero seconds" and is a legitimate answer
