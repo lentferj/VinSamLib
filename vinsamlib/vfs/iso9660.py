@@ -62,9 +62,34 @@ class Iso9660Volume(Volume):
                 # records never cross a sector boundary; skip to the next one
                 pos = ((pos // SECTOR) + 1) * SECTOR
                 continue
+            if length < 33 or pos + length > len(data):
+                # NOT A DIRECTORY RECORD, and the walk cannot continue past
+                # it. Every record carries the same 33 fixed fields, so a
+                # length below that means the length byte is not one; and a
+                # record claiming to run past the end of the extent we were
+                # handed means the extent is too small for its own records.
+                #
+                # Either way the alternative is to keep going with a record
+                # whose fields are whatever happened to be on disc. A 0xFF
+                # length byte over a zero-filled extent reads back as
+                # extent 0, size 0, name "" -- a phantom entry that is
+                # indistinguishable from an empty directory, and a
+                # corrupted extent must not be. Stopping here is the
+                # conservative answer: what was listed before this record
+                # is still correct, and nothing is invented about what
+                # follows, because `pos += length` on a corrupt length
+                # lands somewhere arbitrary.
+                break
             rec = data[pos : pos + length]
             flags = rec[25]
             name_len = rec[32]
+            if not name_len:
+                # A record with no name at all. The "." and ".." entries
+                # each carry one byte, and a real file carries at least
+                # one character, so zero means the fixed fields are not
+                # the fixed fields -- the same phantom, reached by a
+                # different route.
+                break
             raw_name = rec[33 : 33 + name_len]
             rec_extent = struct.unpack_from("<I", rec, 2)[0]
             rec_size = struct.unpack_from("<I", rec, 10)[0]
