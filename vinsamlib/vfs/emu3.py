@@ -35,6 +35,20 @@ EMU3_FTYPE_UPD = 0x83  # regular bank, first file after a deleted one
 EMU3_FTYPE_SYS = 0x80  # special ROM/system file (fixed ids, not a user bank)
 E4B_PROPS = b"\x00E4B0"
 
+#: Bytes of an entry's own data that identify its bank format. `list()` reads
+#: exactly this much per entry, and never more.
+_SNIFF_BYTES = 16
+
+#: How many bytes ONE read may cover when it is serving several entries at
+#: once. See `Emu3Volume._sniff_heads` for why this exists at all.
+_SNIFF_CHUNK = 1 << 22  # 4 MiB
+
+#: How many bytes one `list()` may spend sniffing in TOTAL. Past this the
+#: entries go back to one 16-byte read each -- the whole point of the caps is
+#: that answering a sixteen-byte question must never cost a proportion of the
+#: disk.
+_SNIFF_BUDGET = 1 << 25  # 32 MiB
+
 
 def _plausible_size_fields(
     n_clusters: int, blks: int, brem: int, blocks_per_cluster: int
@@ -267,6 +281,79 @@ class Emu3Volume(WritableVolume):
 
     # ── Volume interface ────────────────────────────────────────────────────
 
+    def _sniff_heads(self, f, clusters: list[int], data_off: int) -> dict[int, bytes]:
+        """First ``_SNIFF_BYTES`` of every cluster in ``clusters``.
+
+        ONE SEEK AND ONE READ PER BATCH, not one per entry.
+
+        ``list()`` used to issue a seek() + a read(16) for every bank entry
+        it wanted a content header from -- 31 seeks and 32 reads for the
+        31-bank EMU3 hard disk this project's own ``build_emu_hdd``
+        produces, one 16-byte read per entry from offsets a whole cluster
+        apart. The same shape cost 1.53 M reads and 8.6 s across a whole
+        library index (``vfs/fatvol.py:227``), which is why ``read()``
+        already coalesces the runs it walks into one seek+read each and why
+        ``vfs/akai.py:_coalesce`` exists.
+
+        A batch is as many clusters as fit inside ``_SNIFF_CHUNK`` bytes of
+        the batch's first cluster. Entries written in one pass take
+        consecutive start clusters -- that is the case that coalesces, and
+        it is the normal one -- so a folder's whole bank list becomes a
+        handful of reads. A folder whose banks are scattered across the disk
+        forms a batch per cluster and keeps exactly the syscall count it had
+        before; nothing is slower, and nothing changes about which bytes are
+        read for which cluster.
+
+        THE CAPS ARE THE POINT, not an afterthought. Those 16 useful bytes
+        sit a whole cluster apart, so serving N entries from one read means
+        reading the span between the first and the last -- 1 MiB of bank data
+        per entry on a 1 GB disk. ``_SNIFF_CHUNK`` bounds any single read,
+        ``_SNIFF_BUDGET`` bounds what one listing may spend, and past the
+        budget every entry goes back to its own 16-byte read. Reading a
+        gigabyte to answer a sixteen-byte question is not a win however few
+        syscalls it costs.
+        """
+        heads: dict[int, bytes] = {}
+        stride = self.cluster_size
+        bpc = self.blocks_per_cluster
+        spent = 0
+        batch: list[int] = []
+        base = 0  # byte offset of batch[0]
+
+        def flush() -> None:
+            nonlocal batch, spent
+            if not batch:
+                return
+            want = (batch[-1] - batch[0]) * stride + _SNIFF_BYTES
+            f.seek(base)
+            buf = f.read(want)
+            if len(buf) < want:
+                # A truncated image ends a read early. Zero-fill rather
+                # than shift, exactly as fatvol._read_chain does: a short
+                # read must not move a later entry's header.
+                buf = buf.ljust(want, b"\x00")
+            for c in batch:
+                # The position in the BATCH is not the byte offset: cluster
+                # c sits (c - batch[0]) clusters in, which is the same thing
+                # only when every cluster in the run is consecutive. The
+                # scattered case is exactly where those two part company.
+                rel = (c - batch[0]) * stride
+                heads[c] = buf[rel : rel + _SNIFF_BYTES]
+            spent += want
+            batch = []
+
+        for c in clusters:
+            off = data_off + (c - 1) * bpc * BSIZE
+            span = off - base + _SNIFF_BYTES if batch else _SNIFF_BYTES
+            if batch and span <= _SNIFF_CHUNK and spent + span <= _SNIFF_BUDGET:
+                batch.append(c)
+                continue
+            flush()
+            batch = [c]
+            base = off
+        flush()
+        return heads
+
     def list(self, folder: Optional[Entry] = None) -> list[Entry]:  # noqa: UP045
         meta = self._read_meta()
         if folder is None:
@@ -277,9 +364,22 @@ class Emu3Volume(WritableVolume):
         fo = folder.ref
         out = []
         data_off = self.data_start * BSIZE
-        bpc = self.blocks_per_cluster
+        entries = self._bank_entries(meta, fo)
         with open(self.path, "rb") as f:
-            for eo, fields in self._bank_entries(meta, fo):
+            # Every entry that wants a content header, fetched in batches
+            # rather than one 16-byte read each -- see _sniff_heads. The set
+            # is deduplicated: several slots can name the same start
+            # cluster, and there is no reason to read it twice.
+            wanted = sorted(
+                {
+                    fields["start_cluster"]
+                    for _eo, fields in entries
+                    if fields["ftype"] in (EMU3_FTYPE_STD, EMU3_FTYPE_UPD)
+                    and fields["start_cluster"]
+                }
+            )
+            heads = self._sniff_heads(f, wanted, data_off) if wanted else {}
+            for eo, fields in entries:
                 size = self._true_size(
                     fields["n_clusters"],
                     fields["blks"],
@@ -300,8 +400,7 @@ class Emu3Volume(WritableVolume):
                     fields["ftype"] in (EMU3_FTYPE_STD, EMU3_FTYPE_UPD)
                     and fields["start_cluster"]
                 ):
-                    f.seek(data_off + (fields["start_cluster"] - 1) * bpc * BSIZE)
-                    head = f.read(16)
+                    head = heads[fields["start_cluster"]]
                     if head[:4] == b"FORM" and head[8:12] == b"E4B0":
                         is_bank = True
                         detected_format = "E4B"
