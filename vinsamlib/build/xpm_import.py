@@ -37,6 +37,7 @@ import gzip
 import json
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -409,6 +410,11 @@ class ProjectSummary:
 #: Absence, told apart from a legitimate `None`. See parse_mpc.
 _MISSING = object()
 
+#: Serialises the SYNC_BPM fallback below, which is the only place a
+#: process-global in mpc2emu is still written. Never taken on a checkout with
+#: the `sync_bpm` parameter, so it costs nothing on the supported path.
+_SYNC_BPM_LOCK = threading.Lock()
+
 
 def parse_mpc(
     path: str,
@@ -449,13 +455,26 @@ def parse_mpc(
     # no mutation, no restore, nothing to leak into the next import, and
     # nothing to go silently wrong if the global is ever renamed.
     #
-    # The old path stays for a checkout that predates it, and it keeps the
-    # sentinel: `prev is not None` was the original bug -- absence read as a
-    # legitimate value, so a user's tempo was dropped without a word.
-    if lfo_sync_bpm is not None and "sync_bpm" in names:
-        kw["sync_bpm"] = float(lfo_sync_bpm)
+    # UNCONDITIONALLY, now -- not only when a tempo was asked for. Passing
+    # `sync_bpm=None` is a documented no-op upstream, and asking only on the
+    # tempo path left the global in play on every other parse, where two
+    # concurrent imports still raced: the `finally` restored the SAVED value
+    # rather than the value the other thread installed, so each got the
+    # other's tempo and neither got its own, and afterwards SYNC_BPM sat at
+    # whatever the last thread saved rather than at mpc2emu's own 120.0
+    # default -- exactly the leak the `finally` was written to prevent.
+    # Measured (code review 2026-10-09, M16) with A asking 90 and B 128:
+    # A's parse read 120.0, B's read 90.0, SYNC_BPM after both = 128.0.
+    if "sync_bpm" in names:
+        kw["sync_bpm"] = None if lfo_sync_bpm is None else float(lfo_sync_bpm)
         return _run_captured(xpm_parser.parse_xpm, path, wav_dir, **kw)
 
+    # OLDER CHECKOUT ONLY. No parameter, so the module global is the only
+    # route -- and it is held under a lock for the whole parse, because a
+    # save/restore pair around a process-wide variable cannot be made
+    # thread-safe any other way. That serialises XPM imports on such a
+    # checkout, which is the correct price for being right about a tempo:
+    # a checkout with the parameter never reaches here.
     prev = getattr(xpm_parser, "SYNC_BPM", _MISSING)
     if lfo_sync_bpm is not None and prev is _MISSING:
         raise ValueError(
@@ -464,13 +483,14 @@ def parse_mpc(
             "global in its XPM reader) -- update mpc2emu, or turn the tempo "
             "option off to accept its own assumption of 120 BPM."
         )
-    try:
-        if lfo_sync_bpm is not None:
-            xpm_parser.SYNC_BPM = float(lfo_sync_bpm)
-        return _run_captured(xpm_parser.parse_xpm, path, wav_dir, **kw)
-    finally:
-        if prev is not _MISSING:
-            xpm_parser.SYNC_BPM = prev
+    with _SYNC_BPM_LOCK:
+        try:
+            if lfo_sync_bpm is not None:
+                xpm_parser.SYNC_BPM = float(lfo_sync_bpm)
+            return _run_captured(xpm_parser.parse_xpm, path, wav_dir, **kw)
+        finally:
+            if prev is not _MISSING:
+                xpm_parser.SYNC_BPM = prev
 
 
 def _preset_samples(bank, preset) -> list:
