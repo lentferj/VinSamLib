@@ -104,6 +104,22 @@ whose path matches. No test in the suite re-registers an existing container
 today — verified by grep: `needs_rescan|begin_container|_migrate` appear in
 zero files under `tests/`. That is why this shipped.
 
+**FIXED on `fix/code-review-2026-10-09`** (`273412d`). Regression test at
+`tests/manual_index_begin_container.py` (untracked — `tests/` is gitignored by
+decision, and this line is the tracked record of it). Verified both ways:
+**8 of 9 checks fail on the old code**, 9 of 9 pass on the new. `lastrowid`
+is now read only on the arm that genuinely inserted; written as
+SELECT-then-branch rather than `... RETURNING id` (SQLite ≥ 3.35) so the fix
+does not depend on the host's SQLite.
+
+**FIXED on `fix/code-review-2026-10-09`.** Regression test at
+`tests/manual_index_begin_container.py` (untracked — `tests/` is gitignored by
+decision, and this line is the tracked record of it). Verified both ways:
+**8 of 9 checks fail on the old code**, 9 of 9 pass on the new. `lastrowid`
+is now read only on the arm that genuinely inserted; written as
+SELECT-then-branch rather than `... RETURNING id` (SQLite ≥ 3.35) so the fix
+does not depend on the host's SQLite.
+
 ---
 
 ## HIGH
