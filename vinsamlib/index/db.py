@@ -25,11 +25,17 @@ Two tables:
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+#: The search path's own logger. This module is not a UI layer and has no
+#: status bar to report to, but it must not swallow a real SQL error either
+#: -- see the `except OperationalError` in `search()`/`count()`, which used to.
+_LOG = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS container (
@@ -539,6 +545,11 @@ class IndexDB:
         if not query:
             return []
         fts_query = _fts_query(query)
+        if not fts_query:
+            # No indexable token in the text (a search of `"` or `&`).
+            # Running the raw keystroke as a MATCH is what used to happen,
+            # and SQLite rejected it; see `_fts_query`.
+            return []
         where, params = self._where(fts_query, formats)
         sql = (
             "SELECT item.id, item.kind, item.name, item.format, container.path, "
@@ -555,6 +566,17 @@ class IndexDB:
             # A background scan's writer connection briefly held the file
             # (WAL keeps this rare — see __init__) — better to show no
             # results for one keystroke than to crash the search box.
+            #
+            # BUT THE ERROR IS SAID. This was a bare `return []`, and that
+            # silence is what let `_fts_query()` handing back the raw text
+            # for a query of `"` or `&` hide behind "No matches" for a week.
+            # The statement is logged, not the keystroke alone, because the
+            # statement is the part that is actionable.
+            _LOG.warning(
+                "index search failed and returned no hits (%s)",
+                sql,
+                exc_info=True,
+            )
             return []
         out = []
         for (
@@ -599,7 +621,11 @@ class IndexDB:
         query = query.strip()
         if not query:
             return 0
-        where, params = self._where(_fts_query(query), formats)
+        fts_query = _fts_query(query)
+        if not fts_query:
+            # No indexable token -- see `search()` and `_fts_query()`.
+            return 0
+        where, params = self._where(fts_query, formats)
         sql = (
             "SELECT COUNT(*) FROM item_fts JOIN item ON item.id = item_fts.rowid"  # noqa: RUF100, S608
             + where
@@ -607,6 +633,8 @@ class IndexDB:
         try:
             return int(self._conn.execute(sql, params).fetchone()[0])
         except sqlite3.OperationalError:
+            # Same rule as `search()`: say it, do not eat it.
+            _LOG.warning("index count failed and returned 0 (%s)", sql, exc_info=True)
             return 0
 
     def search_page(
@@ -649,7 +677,16 @@ def _fts_query(user_text: str) -> str:
     FTS5 gets to a plain "substring-ish" search box without full trigram
     indexing. Quotes any token containing characters FTS5's default
     tokenizer would otherwise choke on (': ', '-', etc., common in real
-    sample names like "kit:Beatnik'sKit")."""
+    sample names like "kit:Beatnik'sKit").
+
+    THE RESULT IS ALWAYS A VALID FTS5 EXPRESSION, OR EMPTY. It used to end
+    `return ... if parts else user_text`, so a search of nothing but
+    punctuation -- `"`, `&`, `-` -- handed back the raw keystroke, which is
+    not an expression FTS5 accepts. SQLite raised OperationalError,
+    `search()`'s `except` swallowed it, and the box said "No matches" with
+    nothing anywhere saying why. An empty string is the honest answer for
+    "there is no indexable token in this text", and `search`/`count` turn it
+    into no hits without running any SQL at all."""
     parts = []
     for t in user_text.split():
         # A token with no letter or digit in it tokenizes to NOTHING, and an
@@ -663,4 +700,4 @@ def _fts_query(user_text: str) -> str:
             continue
         safe = t.replace('"', '""')
         parts.append(f'"{safe}"*')
-    return " AND ".join(parts) if parts else user_text
+    return " AND ".join(parts)
