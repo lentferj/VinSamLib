@@ -548,10 +548,24 @@ def _rebuild_emu3_with_extra_banks(
 
         rebuilt = Path(tmp_path).with_name(Path(tmp_path).name + ".rebuild")
         rebuilt.unlink(missing_ok=True)
-        _, log = _run_captured(
-            iso_builder.build_iso, combined, str(rebuilt), "EMU_BANK"
-        )
-        os.replace(rebuilt, tmp_path)  # same directory as tmp_path -> atomic
+        try:
+            _, log = _run_captured(
+                iso_builder.build_iso, combined, str(rebuilt), "EMU_BANK"
+            )
+            os.replace(rebuilt, tmp_path)  # same directory as tmp_path -> atomic
+        finally:
+            # `build_iso` writes its target INCREMENTALLY, so a failure
+            # part-way through leaves a partial `.rebuild` on disk -- and the
+            # directory it lands in is the USER's, not a temp dir: `tmp_path`
+            # is `_mutate_in_place`'s staging copy, which sits beside their
+            # own disc image. `_mutate_in_place` unlinks only its own
+            # `.vinsamlib-tmp` copy, so nothing else would. Reproduced during
+            # the review: `dir after: ['mydisc.img',
+            # 'mydisc.img.vinsamlib-tmp.rebuild']`. The finally rather than an
+            # `except`, because the partial is wrong whichever way out is
+            # taken -- and it is a no-op on success, the replace having
+            # already moved the file onto `tmp_path`.
+            rebuilt.unlink(missing_ok=True)
         return added, log
     finally:
         shutil.rmtree(export_dir, ignore_errors=True)
