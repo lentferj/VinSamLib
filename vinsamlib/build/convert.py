@@ -1398,12 +1398,47 @@ def _apply_and_write_pipeline(
                     "Update mpc2emu, or turn the option off to write a volume "
                     "for a machine without the board."
                 )
+        # WRITE THE FILES ONE AT A TIME, AND REMOVE THE PARTIALS IF ONE FAILS.
+        #
+        # The volume is a DIRECTORY of loose files, so unlike the three
+        # single-file targets there is no writer to leave a truncated file
+        # behind -- there is a loop, and a failure anywhere in it (a full
+        # disk, an unwritable name) used to leave every file written so far
+        # sitting in a SESSION temp dir. Those are removed only at
+        # application exit, so a half-written volume survived the whole
+        # session; `_verify_written` never ran, because the exception left
+        # the function before it. Compounding M20 rather than risking user
+        # data, but a partial AKAI volume is exactly the kind of thing a
+        # later sweep could pick up and hand onward.
+        #
+        # Unlinking the partials is chosen over staging into a sibling
+        # directory and moving on success, because the move would write
+        # every byte of the volume twice for a failure that is rare, and the
+        # unlinking costs nothing on the ordinary path -- one list and one
+        # loop that only runs when something has already gone wrong.
         out_path.mkdir(parents=True, exist_ok=True)
-        _files = _run_captured(
-            akai_writer.build_akai_volume, bank, out_stem, **_akai_kw
-        )
-        for _fn, _data in _files:
-            (out_path / _fn).write_bytes(_data)
+        written: list[Path] = []
+        try:
+            _files = _run_captured(
+                akai_writer.build_akai_volume, bank, out_stem, **_akai_kw
+            )
+            for _fn, _data in _files:
+                target = out_path / _fn
+                target.write_bytes(_data)
+                written.append(target)
+        except BaseException:
+            # `BaseException`, not `Exception`: the failure half of this
+            # handler is a cancellation as often as a disk error, and a
+            # worker cancelled mid-write leaves the same debris.
+            for part in written:
+                part.unlink(missing_ok=True)
+            # And the directory itself, when nothing else is in it. It was
+            # made two lines ago and holds nothing now; leaving it registered
+            # in the session list would be the same leak wearing a
+            # different shape.
+            with contextlib.suppress(OSError):
+                out_path.rmdir()
+            raise
     elif opts.target_format == "KRZ":
         out_path = tmp_dir / f"{out_stem}.krz"
         _run_captured(
