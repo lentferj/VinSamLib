@@ -295,14 +295,14 @@ class Emu3Volume(WritableVolume):
         already coalesces the runs it walks into one seek+read each and why
         ``vfs/akai.py:_coalesce`` exists.
 
-        A batch is as many clusters as fit inside ``_SNIFF_CHUNK`` bytes of
-        the batch's first cluster. Entries written in one pass take
-        consecutive start clusters -- that is the case that coalesces, and
-        it is the normal one -- so a folder's whole bank list becomes a
-        handful of reads. A folder whose banks are scattered across the disk
-        forms a batch per cluster and keeps exactly the syscall count it had
-        before; nothing is slower, and nothing changes about which bytes are
-        read for which cluster.
+        A batch is as many start clusters as fit inside ``_SNIFF_CHUNK``
+        bytes of the batch's first cluster. Entries written in one pass
+        take consecutive start clusters -- that is the case that coalesces,
+        and it is the normal one -- so a folder's whole bank list becomes a
+        handful of reads. Clusters further apart than ``_SNIFF_CHUNK`` form
+        a batch per cluster and keep exactly the syscall count they had
+        before; nothing is slower, and nothing changes about which bytes
+        are read for which cluster.
 
         THE CAPS ARE THE POINT, not an afterthought. Those 16 useful bytes
         sit a whole cluster apart, so serving N entries from one read means
