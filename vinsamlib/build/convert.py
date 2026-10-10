@@ -1914,7 +1914,64 @@ def convert_preset(
     tmp_dir = tempdirs.session_temp_dir(_CONVERT_TEMP_PREFIX)
     stem = _sanitize_stem(getattr(preset_obj, "name", "") or "")
     if isinstance(bank, vs_akai.AkaiBank):
-        return _convert_akai_program(bank, preset_obj, opts, tmp_dir, risks_out)
+        # THE STAGING DIRECTORY IS RECLAIMED HERE, around the whole call and
+        # not inside `_convert_akai_program`, and the placement is the whole
+        # finding.
+        #
+        # `session_temp_dir()` registers a directory that is removed only at
+        # application exit. The E4B/KRZ/EIII branch below hands this one to
+        # `apply_conversion()` and then `tempdirs.forget()`s it the moment the
+        # intermediate has been consumed -- so they leave exactly one
+        # directory per conversion: the result. The AKAI branch never did.
+        # `_convert_akai_program` wrote a whole one-program volume into it (a
+        # `samples` subdirectory holding every sample the program references,
+        # plus the `.P3`) and left it registered for the rest of the session.
+        # `tempdirs.forget()` was called from exactly ONE place in the whole
+        # codebase, and it was the branch below.
+        #
+        # Measured on this branch, ten conversions of one 8-sample program of
+        # 5 s at 44.1 kHz (3.5 MB of audio), the same material entering as an
+        # AKAI volume and as a real E4B through this same entry point:
+        #
+        #     AKAI source: 20 session dirs, 70.61 MB retained
+        #     E4B  source: 10 session dirs, 35.31 MB retained
+        #
+        # The 70.61 MB is 35.31 MB of RESULTS plus 35.31 MB of staged volumes
+        # -- one full extra copy of the program's audio per conversion, held
+        # until quit, which is the cleanest way to state the finding. The
+        # review's own run of the same experiment (M20, on smaller fixtures)
+        # reported "30 session dirs / 15.8 MB" against the E4B path's "10 dirs
+        # / 1.6 MB": the directory counts differ because of how many
+        # registrations its fixture produced, and the RATIO -- AKAI retaining
+        # one full extra copy of the audio per conversion -- is the same.
+        # Either way a session of forty 8-sample drum kits holds ~1.7 GB in
+        # /tmp until quit, and a session temp dir is exactly the failure mode
+        # `tempdirs.py`'s module docstring was written to end.
+        #
+        # It is safe because mpc2emu has already read every sample's audio
+        # into the `Bank` object by the time `parse_akai_program` returns --
+        # the same fact `foreign_import.parse_foreign`'s `with staged:` rests
+        # on -- and `_apply_and_write` allocates its OWN session dir for the
+        # result, so nothing the caller needs is inside `tmp_dir`.
+        #
+        # In a `finally`, and around the whole call rather than after the
+        # parse, because every refusal in `_convert_akai_program` (missing
+        # samples, a name collision, AKAI->AKAI) happens after this directory
+        # is allocated, and an empty session dir is the same leak wearing a
+        # smaller hat. A parse that RAISES leaves the same whole volume
+        # behind, and that is the more likely half of the two on real
+        # material.
+        #
+        # Exactly ONE `forget()` call, and it has to be.
+        # `tempdirs.forget()` falls back to `path.parent` when its argument is
+        # no longer a directory, so a second call for an already-removed
+        # staging dir would rmtree its PARENT -- the whole temp root. That is
+        # a landmine worth writing down, not merely avoiding: this is the only
+        # AKAI reclaim in the module, by design.
+        try:
+            return _convert_akai_program(bank, preset_obj, opts, tmp_dir, risks_out)
+        finally:
+            tempdirs.forget(tmp_dir)
     if isinstance(bank, vs_e4b.E4BFile):
         data = vs_e4b.assemble([(bank, preset_obj)])
         tmp_path = tmp_dir / f"{stem}.e4b"
@@ -2066,6 +2123,11 @@ def _convert_akai_program(
         str(samples_dir),
         **_akai_parse_kwargs(opts),
     )
+    # The staging directory this wrote into is reclaimed by `convert_preset`,
+    # around the whole call to this function -- see the note there. Not here,
+    # and not after this line: exactly one `forget()` per staging directory,
+    # because a second call for an already-removed path would rmtree its
+    # PARENT.
     return _apply_and_write(parsed, opts, _sanitize_stem(name), risks_out)
 
 
