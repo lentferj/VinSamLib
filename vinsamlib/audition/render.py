@@ -207,6 +207,16 @@ def _decode(sample) -> _Source:
     else:
         flat = mpc2emu_bridge.resampler._pcm_to_float(data)
         if n_ch == 2:
+            # TRIM TO WHOLE FRAMES, EXACTLY AS THE NUMPY ARM DOES ABOVE.
+            # `_pcm_to_float` drops a trailing odd BYTE and nothing else, so a
+            # stereo sample whose byte count is 2 or 3 past a frame boundary
+            # leaves an odd number of 16-bit words behind -- and then
+            # `flat[0::2]` has one element more than `flat[1::2]`. No crash,
+            # but the channels are desynchronised by one sample at the tail
+            # and `src.frames` disagrees with the accelerated path, so
+            # whether numpy is installed decides how long the sample is.
+            # The trim is what makes the two arms the same decoder.
+            flat = flat[: (len(flat) // 2) * 2]
             channels = [flat[0::2], flat[1::2]]
         else:
             channels = [flat]
