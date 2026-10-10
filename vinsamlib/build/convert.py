@@ -32,6 +32,7 @@ import array
 import contextlib
 import dataclasses
 import math
+import operator
 import re  # noqa: F401
 import tempfile  # noqa: F401
 import time
@@ -325,6 +326,28 @@ def _apply_max_sample_rate(bank: Any, hz: int) -> None:
         bank.samples[i] = resampler.resample_to_rate(sample, hz, verbose=False)
 
 
+#: Frames of a stereo sample `suggest_mono_side` will look at before
+#: stopping -- the SAME cap and the SAME number its sibling uses.
+#: `models_common.channel_correlation(max_frames=20000)` is what
+#: `stereo_mono_risk` below reads through, and an RMS asymmetry over 20 000
+#: frames is as decisive as one over 2 646 000.
+#:
+#: WHY THIS IS THE FIX RATHER THAN AN OPTIMISATION. The uncapped scan was a
+#: pure-Python step per sample per channel, so its cost was linear in sample
+#: LENGTH. Measured (code review 2026-10-09, M21) on 20 stereo samples of 60 s
+#: at 44.1 kHz -- 211.7 MB of audio:
+#:
+#:     stereo_mono_risk : 0.29s   (capped, via channel_correlation)
+#:     suggest_mono_side: 9.26s   (uncapped)
+#:
+#: Both run on the GUI thread (`ui/convert_options_dialog._show_risk` and
+#: `_confirm_mono_risk`), and `_show_risk` is reached whenever ANY sample is
+#: decorrelated -- which, per the same dialog's own corpus figure (median
+#: channel correlation 0.076 over 247 real stereo E-mu samples), is the common
+#: case. A five-second frozen window per open, on material whose answer does
+#: not change after the first 20 000 frames.
+_MONO_SIDE_MAX_FRAMES = 20000
+
 # Below this per-sample Pearson correlation, averaging both sides (--mono
 # mix) is considered likely to cancel signal rather than just narrow the
 # image -- same threshold and rationale as mpc2emu's own convert.py CLI
@@ -550,19 +573,38 @@ def suggest_mono_side(samples: list) -> dict:
     Returns {"side": "left"|"right", "avg_db": float, "n": int} -- avg_db is
     the average |left_rms/right_rms| dB difference across the `n` stereo
     samples actually measured (n=0, side="left" if none were measurable --
-    an arbitrary tie-break, not a real signal)."""
+    an arbitrary tie-break, not a real signal).
+
+    CAPPED AT `_MONO_SIDE_MAX_FRAMES` FRAMES PER SAMPLE, which is what makes
+    this O(1) in sample length rather than linear in it, and the same cap its
+    sibling `stereo_mono_risk` already applies through
+    `models_common.channel_correlation`. Measured before and after on 20
+    stereo samples of 60 s at 44.1 kHz (211.7 MB of audio): 9.26 s -> 0.06 s.
+    See the constant for the rest of the measurement."""
     diffs = []
     for s in samples:
         if getattr(s, "channels", 1) != 2:
             continue
-        data = s.data[: len(s.data) // 4 * 4]
-        if not data:
+        # Whole frames only, and only the first `_MONO_SIDE_MAX_FRAMES` of
+        # them. The `// 4 * 4` matters on its own: a stereo sample with an odd
+        # byte count is a real shape (the pure decode path in
+        # audition/render.py exists for it), and `array.frombytes` would raise
+        # on a half frame.
+        n_frames = min(len(s.data) // 4, _MONO_SIDE_MAX_FRAMES)
+        if not n_frames:
             continue
         a = array.array("h")
-        a.frombytes(data)
+        a.frombytes(s.data[: n_frames * 4])
         L, R = a[0::2], a[1::2]
-        l_rms = (sum(x * x for x in L) / len(L)) ** 0.5
-        r_rms = (sum(x * x for x in R) / len(R)) ** 0.5
+        # `sum(map(operator.mul, L, L))` rather than
+        # `sum(x * x for x in L)`: same answer, but no Python frame per
+        # sample. `map` with two array arguments and a C callable feeds
+        # `sum` directly off the array's sequence protocol, which is the
+        # closest thing to an array-level reduction the standard library
+        # offers without numpy -- and numpy is an optional accelerator here
+        # (`pyproject.toml`'s `speed` extra), so this module stays pure.
+        l_rms = (sum(map(operator.mul, L, L)) / len(L)) ** 0.5
+        r_rms = (sum(map(operator.mul, R, R)) / len(R)) ** 0.5
         if l_rms <= 0 or r_rms <= 0:
             continue
         diffs.append(20 * math.log10(l_rms / r_rms))
