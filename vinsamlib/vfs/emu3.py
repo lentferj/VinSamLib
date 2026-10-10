@@ -36,6 +36,36 @@ EMU3_FTYPE_SYS = 0x80  # special ROM/system file (fixed ids, not a user bank)
 E4B_PROPS = b"\x00E4B0"
 
 
+def _plausible_size_fields(
+    n_clusters: int, blks: int, brem: int, blocks_per_cluster: int
+) -> bool:
+    """Can (clusters, blks, brem) describe a file at all?
+
+    ``writers.iso_builder._alloc()`` is the only writer of these three
+    fields, and what it guarantees is narrower than it first looks --
+    ``blks`` and ``brem`` describe the LAST cluster, not the whole file:
+
+        size == 0  ->  (1, 0, 0)      the zero-length sentinel
+        size  > 0  ->  1 <= blks <= blocks_per_cluster, 1 <= brem <= 512
+
+    so ``blks == 0`` on anything but that one sentinel means the size
+    arithmetic is going to subtract a block that does not exist, which is
+    how a size goes negative in the first place.
+
+    The sentinel is KEPT, deliberately: it is what a real empty file looks
+    like on disk, ``_true_size`` answers 0 for it once it stops subtracting
+    that block, and dropping the entry instead would delete a real (if
+    useless) bank from the tree.
+    """
+    if n_clusters == 0:
+        # Nothing allocated, so nothing may be claimed for it.
+        return not (blks or brem)
+    if blks == 0:
+        return n_clusters == 1 and brem == 0
+    # `blks` counts blocks in the last cluster, never across the file.
+    return blks <= blocks_per_cluster
+
+
 class Emu3FormatError(ValueError):
     pass
 
@@ -192,6 +222,14 @@ class Emu3Volume(WritableVolume):
                 start_cluster, n_clusters, blks, brem = struct.unpack_from(
                     "<HHHH", meta, eo + 18
                 )
+                if not _plausible_size_fields(
+                    n_clusters, blks, brem, self.blocks_per_cluster
+                ):
+                    # A slot whose (clusters, blocks, bytes) triple no file
+                    # can have. Nothing downstream can size it, so there is
+                    # nothing to list -- and leaving it in is how a size
+                    # ends up negative and indexed.
+                    continue
                 ftype = meta[eo + 26]
                 props = bytes(meta[eo + 27 : eo + 32])
                 out.append(
@@ -218,7 +256,14 @@ class Emu3Volume(WritableVolume):
         valid-in-last-block) triple."""
         if n_clusters == 0:
             return 0
-        return (n_clusters - 1) * cluster_size + (blks - 1) * BSIZE + brem
+        # A size is a length, so it cannot be negative. `blks == 0` makes
+        # the middle term -512 and takes the whole sum below zero:
+        # _true_size(1, 0, 0, 524288) == -512, and that -512 is what
+        # `buf[:-512]` in read() then hands back -- 1536 bytes of the NEXT
+        # file, filed under this entry's name. The zero-length sentinel
+        # reaches 0; a corrupt slot is rejected in _bank_entries before it
+        # gets here. This floor is the backstop for both.
+        return max(0, (n_clusters - 1) * cluster_size + (blks - 1) * BSIZE + brem)
 
     # ── Volume interface ────────────────────────────────────────────────────
 
