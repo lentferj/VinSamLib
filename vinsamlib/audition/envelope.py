@@ -44,7 +44,17 @@ SILENCE_DB = 60.07
 _EPS = 1e-12
 
 
-def _db_to_gain(db: float) -> float:
+def _db_to_gain_env(db: float) -> float:
+    """dB -> linear gain, with NO floor.
+
+    NOT THE SAME FUNCTION as `render._db_to_gain_floored`, and the difference
+    is the point. That one refuses to answer below -96 dB; this one does not,
+    because an envelope that falls into denormals is *information* -- it says
+    the release ran past the point where the model says silence is. Clamping
+    here would silence a long release early and nothing downstream could tell.
+    Two functions that differ by one clamp, both called `_db_to_gain`, is how
+    the wrong one gets used; they are named for what they do instead.
+    """
     return 10.0 ** (db / 20.0)
 
 
@@ -125,7 +135,7 @@ def _amp_shape(
         elif t < attack + decay:
             frac = (t - attack) / decay if decay > _EPS else 1.0
             below = _curve_depth(env, frac, span_db)
-            g = _db_to_gain(-below)
+            g = _db_to_gain_env(-below)
         else:
             g = sustain
         # Note-off only matters when the source is gated at all.
@@ -135,12 +145,12 @@ def _amp_shape(
             if rate:
                 # Fall at the measured rate from wherever the note is now.
                 level_db = -20.0 * math.log10(max(g, _EPS))
-                g = _db_to_gain(-(level_db + abs(float(rate)) * rt))
+                g = _db_to_gain_env(-(level_db + abs(float(rate)) * rt))
             else:
                 rel = max(0.0, float(getattr(env, "release", 0.0)))
                 frac = min(1.0, rt / rel) if rel > _EPS else 1.0
                 below = _curve_depth(env, frac, SILENCE_DB)
-                g *= _db_to_gain(-below)
+                g *= _db_to_gain_env(-below)
         values.append(g)
     return values
 
@@ -175,7 +185,7 @@ def _filter_shape(env, *, hold_s: float, total_s: float) -> List[float]:  # noqa
             rate = getattr(env, "release_rate_db_per_s", None)
             if rate:
                 level_db = -20.0 * math.log10(max(v, _EPS))
-                v = _db_to_gain(-(level_db + abs(float(rate)) * rt))
+                v = _db_to_gain_env(-(level_db + abs(float(rate)) * rt))
             else:
                 frac = min(1.0, rt / release) if release > _EPS else 1.0
                 v *= 1.0 - frac

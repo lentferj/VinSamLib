@@ -111,7 +111,16 @@ KEYTRACK_PIVOT = 60
 _HARD_FLOOR_DB = -96.0
 
 
-def _db_to_gain(db: float) -> float:
+def _db_to_gain_floored(db: float) -> float:
+    """dB -> linear gain, clamped at `_HARD_FLOOR_DB`.
+
+    NOT THE SAME FUNCTION as `envelope._db_to_gain_env`, and the difference is
+    the point: that one has no floor, because an envelope falling into
+    denormals is information. THIS one refuses, because a level the user set at
+    -100 dB would otherwise produce `10 ** -5 = 1e-5`-and-smaller values that
+    cost real time to multiply and sound like nothing anyway. The two were
+    both called `_db_to_gain`, which is how the wrong one gets picked.
+    """
     return 10.0 ** (max(db, _HARD_FLOOR_DB) / 20.0)
 
 
@@ -837,7 +846,7 @@ def render_voice(
         + float(getattr(zone, "volume", 0.0) or 0.0)
         + velocity_to_volume_db(voice, opts.velocity, report)
     )
-    gain = _db_to_gain(db)
+    gain = _db_to_gain_floored(db)
     pan = (
         float(getattr(getattr(opts, "_preset", None), "pan", 0.0) or 0.0)
         + float(getattr(zone, "pan", 0.0) or 0.0)
@@ -902,7 +911,7 @@ def render_voice(
             # at the same place is at least reproducible.
             wave = lfo_value(lfo[1], f * lfo[0] / rate_hz)
             if lfo[5]:
-                g *= _db_to_gain(wave * lfo[5] * LFO_VOLUME_DB)
+                g *= _db_to_gain_floored(wave * lfo[5] * LFO_VOLUME_DB)
         else:
             wave = 0.0
 
@@ -922,7 +931,7 @@ def render_voice(
                         / 1200.0
                     )
                 )
-                lo, hi = 20.0, 0.45 * opts.render_rate
+                lo, hi = filter_mod.f0_band(opts.render_rate)
                 if (f0 < lo or f0 > hi) and not clamped:
                     clamped = True
                     report.note(
@@ -1046,7 +1055,7 @@ def _render_voice_np(
         # and nothing else.
         clamped = False
         env_cents = float(getattr(voice, "filter_env_cents", 0.0) or 0.0)
-        lo_hz, hi_hz = 20.0, 0.45 * opts.render_rate
+        lo_hz, hi_hz = filter_mod.f0_band(opts.render_rate)
         outs = [chans[0].tolist(), chans[1].tolist()]
         for start in range(0, n_frames, block):
             stop = min(start + block, n_frames)
@@ -1372,7 +1381,7 @@ def render(bank, preset, prov, opts, progress=None) -> "Rendering":  # noqa: F82
 
     _say(96, "Mixing\u2026")
     peak, pcm = _finish(out_l, out_r, opts)
-    if peak * _db_to_gain(opts.headroom_db) > 1.0:
+    if peak * _db_to_gain_floored(opts.headroom_db) > 1.0:
         report.note(
             Severity.NOT_MODELLED,
             "output level",
@@ -1468,7 +1477,7 @@ def _render_events_parallel(
 
 
 def _finish(out_l: List[float], out_r: List[float], opts) -> tuple[float, bytes]:  # noqa: UP006
-    headroom = _db_to_gain(opts.headroom_db)
+    headroom = _db_to_gain_floored(opts.headroom_db)
     # Report the pre-headroom peak: a quiet audition the user attributes to the
     # preset is a lie about the preset. The caller checks it against headroom.
     #
