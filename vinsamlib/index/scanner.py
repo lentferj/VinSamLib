@@ -62,16 +62,20 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
     # mount is not a question that reliably returns. A root that held
     # containers and now yields none has gone away; a root that legitimately
     # became empty loses its rows on the next scan, once it answers at all.
+    #
+    # THE PATHS ARE READ ONCE. `db.all_container_paths()` used to be called
+    # inside the `for root in roots` loop, so a library of N roots paid
+    # O(roots x containers) full table reads before it walked anything --
+    # 8 167 rows per root, for a library folder list of any size. The
+    # per-root read is what a QUIET root costs, which is the pathological
+    # case this guard exists for, so it is the expensive one.
+    indexed = db.all_container_paths()
     quiet: list[str] = []
     for root in roots:
         prefix = str(root).rstrip("/") + "/"
         if any(p.startswith(prefix) or p == str(root) for p in seen_paths):
             continue
-        had = sum(
-            1
-            for p in db.all_container_paths()
-            if p.startswith(prefix) or p == str(root)
-        )
+        had = sum(1 for p in indexed if p.startswith(prefix) or p == str(root))
         if had:
             quiet.append(str(root))
             if progress is not None:
@@ -80,7 +84,11 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
                     f"item(s) — keeping them; it is unreachable, not empty"
                 )
 
-    for path in db.all_container_paths():
+    # ONE TRANSACTION FOR THE WHOLE PRUNE. `forget_container()` used to commit
+    # per container, so removing a library folder of 4 000 containers cost
+    # 4 000 fsyncs for one operation. The DELETEs are batched and only become
+    # durable at the end.
+    for path in indexed:
         if path in seen_paths:
             continue
         if any(path == q or path.startswith(q.rstrip("/") + "/") for q in quiet):
@@ -106,6 +114,7 @@ def scan(roots: list[Path], db: IndexDB, progress: ProgressCB = None) -> None:
             )
         ):
             db.forget_container(path)
+    db.commit()
 
 
 def _scan_directory(
