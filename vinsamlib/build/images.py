@@ -6,10 +6,11 @@ image, for UI use. Two rules, unconditionally:
    collision (`on_duplicate='prompt'`) is always called with an explicit
    'add-new' / 'skip' / 'overwrite' policy instead.
 2. Any in-place mutation of an EXISTING image (append / delete / rename)
-   happens on a `<image>.vinsamlib-tmp` copy first, swapped into place with
-   `os.replace()` only once the mutation fully succeeds — a crash or
-   exception mid-operation leaves the original file completely untouched.
-   Creating a brand-new image has nothing to protect, so it writes directly.
+   happens on a `<image>.vinsamlib-tmp-<unique>` copy first, swapped into
+   place with `os.replace()` only once the mutation fully succeeds — a
+   crash or exception mid-operation leaves the original file completely
+   untouched. Creating a brand-new image has nothing to protect, so it
+   writes directly.
 
 Dispatch mirrors mpc2emu's own `convert.py` (the one place all of this logic
 was already proven against real hardware): appending an E4B bank picks
@@ -26,6 +27,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional  # noqa: UP035
+from uuid import uuid4
 
 from .. import tempdirs
 from . import akai_image
@@ -251,14 +253,24 @@ def _build_floppy(
 
 
 def _mutate_in_place(image_path: str, mutate: Callable[[str], Any]) -> Any:
-    """Copy `image_path` to a sibling `.vinsamlib-tmp` file, run `mutate` on
-    the COPY's path, then atomically swap it into place. The original is
-    never touched until `mutate` has fully succeeded; on any failure the
-    temp copy is discarded and the original is left exactly as it was."""
+    """Copy `image_path` to a sibling `.vinsamlib-tmp-<unique>` file, run
+    `mutate` on the COPY's path, then atomically swap it into place. The
+    original is never touched until `mutate` has fully succeeded; on any
+    failure the temp copy is discarded and the original is left exactly as
+    it was."""
     src = Path(image_path)
     if not src.exists():
         raise ImageOpError(f"{image_path} does not exist.")
-    tmp = src.with_name(src.name + ".vinsamlib-tmp")
+    # UNIQUE PER CALL, not a fixed `.vinsamlib-tmp`. A fixed name meant two
+    # concurrent mutations of the same image staged onto the SAME path: both
+    # copies wrote one file, each mutate() ran over whatever had landed there
+    # last, and one os.replace() installed a half-mutated image while the
+    # other call reported success. Not reachable from the GUI today -- nothing
+    # issues two mutations of one image at once -- and nothing here prevented
+    # it either, so it was one Worker away. See
+    # tests/manual_image_concurrent_mutate.py, which drives exactly that
+    # interleaving and fails deterministically against the fixed name.
+    tmp = src.with_name(f"{src.name}.vinsamlib-tmp-{uuid4().hex}")
     # The COPY can fail too, and the way it fails matters: a full disk raises
     # here, outside the try below, and left a half-written .vinsamlib-tmp
     # sitting beside the image -- consuming the very space that was short, and
@@ -278,20 +290,27 @@ def _mutate_in_place(image_path: str, mutate: Callable[[str], Any]) -> Any:
 
     # Messages name the USER'S file, not the staging copy. Every writer is
     # handed the temp path, so their refusals came back saying "no room on
-    # hd0.img.vinsamlib-tmp" -- a filename the user has never seen, attached
-    # to the one moment they are being told something went wrong.
+    # hd0.img.vinsamlib-tmp-9f2c..." -- a filename the user has never seen,
+    # attached to the one moment they are being told something went wrong.
     def _own_name(text: str) -> str:
         return text.replace(tmp.name, src.name)
 
     try:
         result = mutate(str(tmp))
+        # INSIDE the try, so the finally below is the one place the staging
+        # copy is removed. The two except arms used to unlink it themselves,
+        # which left every other way out -- including a failure of the swap
+        # below, and anything added between here and there -- keeping a
+        # uniquely-named, therefore never-reused, file in the user's folder.
+        os.replace(tmp, src)  # same directory as src -> atomic, incl. on Windows
     except ImageOpError as ex:
-        tmp.unlink(missing_ok=True)
         raise ImageOpError(_own_name(str(ex))) from ex
     except Exception as ex:
-        tmp.unlink(missing_ok=True)
         raise ImageOpError(_own_name(str(ex))) from ex
-    os.replace(tmp, src)  # same directory as src -> atomic, incl. on Windows
+    finally:
+        # No-op on the success path: os.replace has already moved the staging
+        # copy onto the image, so there is nothing left to remove.
+        tmp.unlink(missing_ok=True)
     # The success path can carry the staging name too -- the rebuild
     # fallback reports which image it grew.
     if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], str):
