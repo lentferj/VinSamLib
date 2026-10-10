@@ -283,7 +283,45 @@ def acceleration_note() -> str:
 #: invalidate on the next run.
 RENDER_CACHE_MAX = 20
 _RENDER_CACHE: "OrderedDict" = OrderedDict()  # noqa: UP037
-_RENDER_CACHE_LOCK = threading.Lock()
+#: REENTRANT, deliberately: `_cache_render` holds it across the eviction that
+#: calls `_pin`, which takes it again. A plain Lock there deadlocks the first
+#: time the cache fills.
+_RENDER_CACHE_LOCK = threading.RLock()
+
+#: Keepalives of EVICTED entries, most-recently-used last, capped.
+#:
+#: WHY THIS EXISTS. The cache is keyed on `id(bank)` and `id(preset)` for an
+#: in-memory source, and the keepalive rides in the VALUE -- so while an entry
+#: lives its objects cannot be collected and nothing else can land on their
+#: addresses. But `popitem` on eviction drops that keepalive, and nothing else
+#: in the program is obliged to hold them: `render_cache_key`'s own docstring
+#: notes that the Explorer tree holding every bank is what makes this safe
+#: today. An audition whose bank is NOT in the tree -- a New Bank's staged
+#: preset, a preset opened from a file and dropped -- can be evicted, freed,
+#: and have a different object allocated on the same address. The key tuples
+#: are then EQUAL, and the next audition of the new object plays the old one's
+#: audio. Silent, and it sounds like a preset: just not this one.
+#:
+#: Holding the keepalive for a while longer cannot make that impossible -- a
+#: bounded cache must eventually let go -- but it moves the hazard from "the
+#: very next allocation" to "the PIN_MAX-th eviction". Addresses are handed out
+#: in a few distinct size classes and the freed object's block is reused early,
+#: so without this the reuse is near-certain; with it, the address has to be
+#: wanted by an object of the same size class that is also allocated after
+#: PIN_MAX further evictions.
+PIN_MAX = 4096
+_PINS: "OrderedDict" = OrderedDict()  # noqa: UP037
+
+
+def _pin(keepalive: tuple) -> None:
+    """Hold `keepalive` so the addresses its ids name cannot be reused."""
+    if not keepalive:
+        return
+    with _RENDER_CACHE_LOCK:
+        for obj in keepalive:
+            _PINS[id(obj)] = obj
+            while len(_PINS) > PIN_MAX:
+                _PINS.popitem(last=False)
 
 
 def render_cache_key(kind: str, payload, opts: AuditionOptions, extra=None) -> tuple:
@@ -355,12 +393,21 @@ def _cache_render(key, rendering, keep=()):
         _RENDER_CACHE[key] = (rendering, tuple(keep))
         _RENDER_CACHE.move_to_end(key)
         while len(_RENDER_CACHE) > RENDER_CACHE_MAX:
-            _RENDER_CACHE.popitem(last=False)
+            _old_key, (_old_rendering, old_keep) = _RENDER_CACHE.popitem(last=False)
+            # The evicted entry's keepalive does NOT die with it -- see `_PINS`.
+            _pin(old_keep)
 
 
 def clear_render_cache() -> None:
     with _RENDER_CACHE_LOCK:
         _RENDER_CACHE.clear()
+        _PINS.clear()
+
+
+def render_cache_pins() -> int:
+    """How many evicted keepalives are still held. For the report, and for a test."""
+    with _RENDER_CACHE_LOCK:
+        return len(_PINS)
 
 
 def render_cache_size() -> int:

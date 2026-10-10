@@ -34,7 +34,11 @@ _BANK_CACHE_MAX = 4
 # plus `popitem` on a shared OrderedDict from two threads is a reordering of
 # a container mid-iteration, not an atomic swap. The parse stays outside the
 # lock; a duplicated parse costs ~30 ms and yields an equal Bank.
-_BANK_CACHE_LOCK = threading.Lock()
+#
+# REENTRANT, because `_cache_put` holds it across the eviction that calls
+# `_pin`, which takes it again. A plain Lock there deadlocks the moment the
+# cache fills.
+_BANK_CACHE_LOCK = threading.RLock()
 
 
 class AuditionError(RuntimeError):
@@ -95,12 +99,45 @@ def _cache_put(key, value):
         _BANK_CACHE[key] = value
         _BANK_CACHE.move_to_end(key)
         while len(_BANK_CACHE) > _BANK_CACHE_MAX:
-            _BANK_CACHE.popitem(last=False)
+            _old_key, old = _BANK_CACHE.popitem(last=False)
+            # The evicted entry's `source` keepalive does NOT die with it. Its
+            # id() is half of the key of any entry built from those same
+            # objects, so if the objects are freed and a different object is
+            # allocated on their addresses the two key tuples are EQUAL and the
+            # next lookup returns the wrong bank's audio. `_pin` holds them a
+            # while longer; see the longer note in `audition/__init__.py`.
+            _pin(getattr(old, "source", None))
+
+
+#: Keepalives of evicted entries, capped. Same hazard, same shape of answer as
+#: `_PINS` in `audition/__init__.py`: a bounded `id()`-keyed cache must let go
+#: eventually, but it does not have to let go THIS SOON. Without it the address
+#: is reused by the very next allocation of that size class; with it, by the
+#: PIN_MAX-th eviction after.
+PIN_MAX = 4096
+_PINS: "OrderedDict[int, Any]" = OrderedDict()
+
+
+def _pin(source) -> None:
+    if not source:
+        return
+    with _BANK_CACHE_LOCK:
+        for obj in source:
+            _PINS[id(obj)] = obj
+        while len(_PINS) > PIN_MAX:
+            _PINS.popitem(last=False)
+
+
+def pin_count() -> int:
+    """How many evicted keepalives are still held. For a test."""
+    with _BANK_CACHE_LOCK:
+        return len(_PINS)
 
 
 def clear_cache() -> None:
     with _BANK_CACHE_LOCK:
         _BANK_CACHE.clear()
+        _PINS.clear()
 
 
 # ── the routes, one per source format ────────────────────────────────────────
@@ -230,7 +267,7 @@ def _akai_route(bank, program, edits: Optional[dict] = None) -> _Parsed:  # noqa
     preset = parsed.presets[0] if parsed.presets else None
     if preset is None:
         raise AuditionError(
-            f"mpc2emu read no program from " f"{getattr(program, 'name', '?')!r}."
+            f"mpc2emu read no program from {getattr(program, 'name', '?')!r}."
         )
     return _Parsed(
         parsed,
