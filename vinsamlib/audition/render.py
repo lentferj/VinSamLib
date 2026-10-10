@@ -644,6 +644,23 @@ def velocity_to_filter_cents(voice, velocity: int) -> float:
 #: `_lfo_terms` normalises through.
 LFO_SHAPES = ("sine", "triangle", "square", "sawtooth", "random")
 
+#: Full-scale ±cents for an LFO→pitch cord at amount = ±1.0.
+#:
+#: `lfo1_to_pitch` / `lfo2_to_pitch` are a NORMALISED depth, not cents --
+#: `models/common.py:691` calls them "±100%" and every parser that fills them
+#: clamps to ±1.0. Treating that raw number as cents would give a depth of
+#: ±0.09%, which is not modulation anybody could hear, so the depth is put
+#: through the one measured conversion that exists.
+#:
+#: MEASURED ON THE E4XT, 2026-06-12 (MOD_DEPTH_CAL PitchDepth 25/50/75/100 %,
+#: square-LFO recording, recorded in RESOLUTION_NOTES §19): the response is
+#: linear through the origin, one-sided cents 400/801/1190/1583 at
+#: 25/50/75/100 %, so the full scale is 1593 c (σ=8) -- ±16 semitones, NOT the
+#: ±1 octave a first guess would assume. Copied here rather than imported so
+#: this module still imports without mpc2emu on the path; the constant lives at
+#: `models/common.py:493`.
+LFO_PITCH_FULL_CENTS = 1593.0
+
 #: Full LFO-to-volume depth, in dB either side of the note's own level.
 #:
 #: CHOSEN, NOT MEASURED, and the report says so. The model gives a 0..1
@@ -677,12 +694,18 @@ def lfo_value(shape: str, phase: float) -> float:
 
 
 def _lfo_terms(voice):
-    """(rate_hz, shape, to_cents, to_q, to_pan, to_volume) or None.
+    """(rate_hz, shape, to_cents, to_q, to_pan, to_volume, to_pitch_cents).
 
     Sums LFO 1 and LFO 2 into one oscillator when both route to the same
     place and share a rate; otherwise LFO 1 wins, because two independent
     oscillators would need two phases and the second is vanishingly rare
     (15 of 32 558 E4B voices route LFO 2 to the filter at all).
+
+    PITCH is the seventh term, in CENTS, converted from the model's normalised
+    depth through `LFO_PITCH_FULL_CENTS`. It used to be absent altogether: a
+    voice whose ONLY LFO routing was pitch produced None here, so the note was
+    unmodulated and the report said nothing about it -- the model carries the
+    field, so the silence was a lie in both directions.
     """
     rate = float(getattr(voice, "lfo1_rate", 0.0) or 0.0)
     # Normalised through LFO_SHAPES, not compared against it one string at a
@@ -696,13 +719,17 @@ def _lfo_terms(voice):
     q = float(getattr(voice, "lfo1_to_filter_q", 0.0) or 0.0)
     pan = float(getattr(voice, "lfo1_to_pan", 0.0) or 0.0)
     vol = float(getattr(voice, "lfo1_to_volume", 0.0) or 0.0)
-    if not any((cents, q, pan, vol)):
+    pitch = float(getattr(voice, "lfo1_to_pitch", 0.0) or 0.0) * LFO_PITCH_FULL_CENTS
+    if not any((cents, q, pan, vol, pitch)):
         rate2 = float(getattr(voice, "lfo2_rate", 0.0) or 0.0)
         cents = float(getattr(voice, "lfo2_to_filter_cents", 0.0) or 0.0)
         q = float(getattr(voice, "lfo2_to_filter_q", 0.0) or 0.0)
         pan = float(getattr(voice, "lfo2_to_pan", 0.0) or 0.0)
         vol = float(getattr(voice, "lfo2_to_volume", 0.0) or 0.0)
-        if not any((cents, q, pan, vol)):
+        pitch = (
+            float(getattr(voice, "lfo2_to_pitch", 0.0) or 0.0) * LFO_PITCH_FULL_CENTS
+        )
+        if not any((cents, q, pan, vol, pitch)):
             return None
         rate = rate2 or rate
         shape = str(getattr(voice, "lfo2_shape", "") or shape).lower()
@@ -710,15 +737,23 @@ def _lfo_terms(voice):
             shape = "sine"
     if rate <= 0.0:
         return None
-    return (rate, shape, cents, q, pan, vol)
+    return (rate, shape, cents, q, pan, vol, pitch)
 
 
 def _lfo_caveats(voice, terms, report) -> None:
     if report is None or terms is None:
         return
-    rate, shape, cents, q, pan, vol = terms
+    rate, shape, cents, q, pan, vol, pitch = terms
     dests = [
-        n for n, v in (("cutoff", cents), ("Q", q), ("pan", pan), ("volume", vol)) if v
+        n
+        for n, v in (
+            ("cutoff", cents),
+            ("Q", q),
+            ("pan", pan),
+            ("volume", vol),
+            ("pitch", pitch),
+        )
+        if v
     ]
     # LFOs LEFT THE "not modelled" LIST ON 2026-09-27, so what remains
     # missing has to be said where an LFO actually runs -- a preset with none
@@ -727,8 +762,8 @@ def _lfo_caveats(voice, terms, report) -> None:
     report.note(
         Severity.NOT_MODELLED,
         "LFO, the parts still missing",
-        "An LFO's rate, shape and depth to cutoff, Q, pan and volume are "
-        "modelled. Its delay and fade-in, key-sync and tempo-sync are not, "
+        "An LFO's rate, shape and depth to cutoff, Q, pan, volume and pitch "
+        "are modelled. Its delay and fade-in, key-sync and tempo-sync are not, "
         "and where a voice routes a second LFO to somewhere the first one "
         "already goes, only the first is heard.",
     )
@@ -739,7 +774,15 @@ def _lfo_caveats(voice, terms, report) -> None:
         f"{', '.join(dests)}. The rate, shape and depth are read from the "
         f"file; the WAVEFORM is this renderer's own and the machines' are "
         f"not measured, so the movement is right and its exact contour is "
-        f"not.",
+        f"not."
+        + (
+            # The one conversion in the chain, said where it is applied.
+            f" Its depth to pitch is a normalised amount put through the "
+            f"±{LFO_PITCH_FULL_CENTS:.0f} cents full scale measured on the "
+            f"E4XT; no other machine here has had that cord swept."
+            if pitch
+            else ""
+        ),
     )
     if float(getattr(voice, "lfo1_delay", 0.0) or 0.0):
         report.note(
@@ -1053,6 +1096,12 @@ def render_voice(
     pos = 0.0
     clamped = False
     rate_hz = opts.render_rate
+    # LFO to PITCH: the same oscillator applied to the pitch ratio instead of
+    # to the filter. `lfo[6]` is in cents, so the ratio is detuned by exactly
+    # the same `2 ** (cents / 1200)` the filter corner uses. False for every
+    # voice without a pitch routing, and then the step below is `ratio` itself
+    # -- which is why a voice with no pitch LFO is byte-for-byte untouched.
+    pitch_lfo = lfo is not None and bool(lfo[6])
 
     for f in range(n_frames):
         looping = forward_loop or (forward_rel and f < hold_frame)
@@ -1119,7 +1168,14 @@ def render_voice(
                 left[f] += v * (gl_f if lfo is not None and lfo[4] else gl)
             else:
                 right[f] += v * (gr_f if lfo is not None and lfo[4] else gr)
-        pos += ratio
+        # ACCUMULATE, do not multiply: a pitch LFO changes the STEP, and the
+        # read position is the running sum of steps. Multiplying the position
+        # by a detune factor would transpose the whole sample rather than
+        # vibrate it.
+        if pitch_lfo:
+            pos += ratio * 2.0 ** (wave * lfo[6] / 1200.0)
+        else:
+            pos += ratio
 
     return left, right, seconds
 
@@ -1193,6 +1249,20 @@ def _render_voice_np(
         wave = _lfo_wave(lfo[1], phase)
         if lfo[5]:
             env = env * _np.power(10.0, (wave * lfo[5] * LFO_VOLUME_DB) / 20.0)
+        if lfo[6]:
+            # LFO to PITCH. The detune is applied per FRAME and the read
+            # position is the running SUM of the steps, which is exactly what
+            # the pure path accumulates with `pos += ratio * 2 ** (wave *
+            # cents / 1200)` -- an exclusive cumulative sum, so position[f] is
+            # the total of the first f steps. numpy's `cumsum` is a sequential
+            # accumulate and is bit-identical to that loop; that was measured
+            # over 5 000 steps before it was relied on here.
+            #
+            # `_np.power(2.0, x)` and not `_np.exp2(x)`: the first is
+            # bit-identical to Python's `2.0 ** x` (measured over 200 000
+            # points), the second is not.
+            steps = ratio * _np.power(2.0, wave * lfo[6] / 1200.0)
+            positions = _np.concatenate((_np.zeros(1), _np.cumsum(steps)[:-1]))
 
     chans = []
     for c in range(2):
