@@ -57,6 +57,14 @@ PREFIXES = (
     "vinsamlib_preview_",
     "vinsamlib_audition_",
     "vinsamlib_tal_",
+    # build/images.py's AKAI volume regrow staging. Third instance of the same
+    # shape: `vinsamlib_tal_` was missing until 2026-10-05, and this one was
+    # in the same state from the day that staging was written. Context-managed
+    # so it is not a live leak, but a kill during a regrow leaves it and
+    # reap_stale() cannot see it -- the age sweep never learns the name exists.
+    # tests/manual_image_tempdir_prefix_registry.py now scans the whole package
+    # for this, so the fourth one is caught rather than found on disk.
+    "vinsamlib_akai_regrow_",
     # A single FILE, not a directory: audition_player.py hands a rendered WAV
     # to an external player. Noted because the sweeper below has to treat
     # files as well as directories to reach it, which it did not until this
