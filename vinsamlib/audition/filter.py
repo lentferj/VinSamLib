@@ -36,6 +36,23 @@ CASCADE_3DB_RATIO = 0.802
 _MIN_F0_HZ = 20.0
 
 
+def f0_band(rate: int) -> Tuple[float, float]:  # noqa: UP006
+    """The ``(low, high)`` f0 this filter can run at ``rate``.
+
+    ONE HOME FOR THE BAND, because it was three literals in agreement by luck:
+    ``SVF.set`` clamped to it, and the render loop clamped to it again in two
+    places (numpy and pure) so it could NAME the same two numbers in the
+    "cutoff clamped" caveat. A caveat quoting a band the filter is not actually
+    using is worse than no caveat, and it would only be found by someone
+    diffing the message against the clamp.
+
+    ``0.45 * rate`` rather than Nyquist: a TPT section's ``g = tan(pi*f0/rate)``
+    goes unstable well before ``rate/2`` once ``k`` is small, and the ceiling is
+    where the machine's own corner is unreachable anyway.
+    """
+    return _MIN_F0_HZ, 0.45 * float(rate)
+
+
 class SVF:
     """Topology-preserving-transform state-variable filter, one per channel.
 
@@ -55,8 +72,8 @@ class SVF:
         self._recompute()
 
     def set(self, f0_hz: float, q: float) -> None:
-        nyquist = 0.5 * self.rate  # noqa: F841
-        f0 = min(max(float(f0_hz), _MIN_F0_HZ), 0.45 * self.rate)
+        lo, hi = f0_band(self.rate)
+        f0 = min(max(float(f0_hz), lo), hi)
         q = max(float(q), 0.05)
         self._g = math.tan(math.pi * f0 / self.rate)
         self._k = 1.0 / q
@@ -155,9 +172,6 @@ class Cascade:
             raise ValueError(f"unknown filter mode {mode!r}")
         self.mode = mode
         self.sections = [SVF(rate) for _ in range(max(0, sections))]
-        self._idx = (
-            {"lp": 0, "hp": 1, "bp": 2, "notch": 3}[mode] if mode != "bypass" else 0
-        )
         # Decided ONCE, here, rather than per sample. `active` was a property
         # evaluated 4.4 million times in one render, and the tap was chosen by
         # indexing a freshly built tuple every sample of every section; both
@@ -367,9 +381,3 @@ def caveat_for_type(filter_type: int, report: AuditionReport) -> None:
         f"This voice's filter is a {name}. The audition plays a {mode} in its "
         f"place, because nothing here models that type.",
     )
-
-
-#: Types whose resonance law is the invented one -- used by the report so the
-#: 'most invented number' sentence is only shown when a resonant filter ran.
-def is_resonant(filter_resonance: float) -> bool:
-    return float(filter_resonance or 0.0) > 0.0

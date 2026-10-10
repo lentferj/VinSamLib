@@ -123,7 +123,7 @@ class _Source:
 
     ``arrays`` holds the numpy form of each channel's list, lazily. The lists
     are the pure path's format and the arrays are the accelerated path's, and
-    `_read_block_np` used to convert between them **once per voice per
+    `_read_block` used to convert between them **once per voice per
     channel** -- with L layers over M notes that is ``2 L M`` conversions of
     the same data. MEASURED on a real render: `np.asarray` on a 264 000-element
     list is 7.0 ms, and `numpy.asarray` was 0.409 s of a 1.314 s render (31 %)
@@ -325,7 +325,7 @@ def _read(src: _Source, ch: List[float], pos: float, looping: bool) -> float:  #
     return ch[i] + (ch[i + 1] - ch[i]) * frac
 
 
-def _read_block_np(src: "_Source", ch_idx: int, pos, looping):  # noqa: UP006, UP037
+def _read_block(src: "_Source", ch_idx: int, pos, looping):  # noqa: UP006, UP037
     """`_read` for a whole array of positions at once.
 
     A transcription of `_read`, mask for branch, and it has to stay one: that
@@ -340,6 +340,16 @@ def _read_block_np(src: "_Source", ch_idx: int, pos, looping):  # noqa: UP006, U
     Takes the channel INDEX rather than the channel, so the float list is
     converted to an array once per sample instead of once per voice per
     channel -- see `_Source.array`.
+
+    NUMPY-ONLY, AND THE NAME NO LONGER PRETENDS OTHERWISE. This used to be
+    `_read_block_np` and carried a full pure-Python branch behind an
+    `if _np is None:` guard -- which sat BELOW the `_np.zeros(...)` at the top
+    of the same function, so it could never run: with the accelerator off,
+    an empty channel raised AttributeError on the first dereference and a
+    populated one raised it in `_Source.array`. Every caller reaches this from
+    `_render_voice_np`, which is itself only entered when `_np is not None`.
+    The branch is deleted rather than repaired; the pure path is `_read`, and
+    it is not a fallback for this one.
     """
     n = len(src.channels[ch_idx])
     if n == 0:
@@ -364,9 +374,7 @@ def _read_block_np(src: "_Source", ch_idx: int, pos, looping):  # noqa: UP006, U
             seam_frac[idx[at_seam]] = rel[at_seam] - (span - 1)
             p[idx[~at_seam]] = ls + rel[~at_seam]
 
-    i = (
-        [math.floor(x) for x in p] if _np is None else _np.floor(p).astype(_np.int64)
-    )  # positions are >= 0, so == int()
+    i = _np.floor(p).astype(_np.int64)  # positions are >= 0, so == int()
     frac = p - i
     inside = (i >= 0) & (i < n - 1) & ~seam
     past = (i >= n - 1) & ~seam
@@ -490,6 +498,13 @@ def velocity_to_filter_cents(voice, velocity: int) -> float:
 # do not read. The shapes below are the four every format here names; an
 # unknown shape falls back to a sine rather than to silence.
 
+#: The shapes this renderer knows, and the ONLY place they are listed. It used
+#: to be read by nothing but `tests/manual_audition_lfo.py`, while `_lfo_terms`
+#: re-implemented the table as a chain of `if shape == "..."` string
+#: comparisons and `lfo_value` fell back to a sine for anything else -- so an
+#: unrecognised name reached the oscillator unnormalised and the table could
+#: have named a shape the renderer did not implement. It is now the thing
+#: `_lfo_terms` normalises through.
 LFO_SHAPES = ("sine", "triangle", "square", "sawtooth", "random")
 
 #: Full LFO-to-volume depth, in dB either side of the note's own level.
@@ -533,7 +548,13 @@ def _lfo_terms(voice):
     (15 of 32 558 E4B voices route LFO 2 to the filter at all).
     """
     rate = float(getattr(voice, "lfo1_rate", 0.0) or 0.0)
-    shape = str(getattr(voice, "lfo1_shape", "") or "sine").lower()
+    # Normalised through LFO_SHAPES, not compared against it one string at a
+    # time: an unknown shape must land on a shape this renderer HAS, which is
+    # what `lfo_value` would do anyway -- but doing it here means the shape the
+    # report names and the shape the oscillator runs are the same string.
+    shape = str(getattr(voice, "lfo1_shape", "") or "").lower()
+    if shape not in LFO_SHAPES:
+        shape = "sine"
     cents = float(getattr(voice, "lfo1_to_filter_cents", 0.0) or 0.0)
     q = float(getattr(voice, "lfo1_to_filter_q", 0.0) or 0.0)
     pan = float(getattr(voice, "lfo1_to_pan", 0.0) or 0.0)
@@ -548,6 +569,8 @@ def _lfo_terms(voice):
             return None
         rate = rate2 or rate
         shape = str(getattr(voice, "lfo2_shape", "") or shape).lower()
+        if shape not in LFO_SHAPES:
+            shape = "sine"
     if rate <= 0.0:
         return None
     return (rate, shape, cents, q, pan, vol)
@@ -996,7 +1019,7 @@ def _render_voice_np(
     wave = None
     if lfo is not None:
         phase = _np.arange(n_frames, dtype="float64") * lfo[0] / opts.render_rate
-        wave = _lfo_wave_np(lfo[1], phase)
+        wave = _lfo_wave(lfo[1], phase)
         if lfo[5]:
             env = env * _np.power(10.0, (wave * lfo[5] * LFO_VOLUME_DB) / 20.0)
 
@@ -1005,7 +1028,7 @@ def _render_voice_np(
         # Mono material is read from channel 0 for both hands, which is what
         # the `c < n_ch` guard below used to do by picking the list.
         idx = c if c < n_ch else 0
-        chans.append(_read_block_np(src, idx, positions, looping))
+        chans.append(_read_block(src, idx, positions, looping))
 
     if filt is not None:
         # Coefficients change once per control block; step them there and run
@@ -1068,35 +1091,35 @@ def _render_voice_np(
     return left, right, seconds
 
 
-def _lfo_wave_np(shape: str, phase):
-    """`lfo_value` over an array of phases, same arithmetic per shape."""
-    if _np is not None:
-        ph = phase - _np.floor(phase)
-    else:
-        ph = [p - math.floor(p) for p in phase]
+def _lfo_wave(shape: str, phase):
+    """`lfo_value` over an array of phases, same arithmetic per shape.
+
+    NUMPY-ONLY, like `_read_block`: it used to be `_lfo_wave_np` with a
+    pure-Python branch below its OWN `_np.floor(phase)` on line two, so the
+    arm could not run -- with the accelerator off the first statement of the
+    body already raised AttributeError. The suffix is gone so the name stops
+    implying a paired implementation; `_lfo_wave_np` below is an alias for the
+    one test that imports it by that name, not a second implementation.
+    """
+    ph = phase - _np.floor(phase)
     if shape == "square":
-        if _np is not None:
-            return _np.where(ph < 0.5, 1.0, -1.0)
-        return [1.0 if p < 0.5 else -1.0 for p in ph]
+        return _np.where(ph < 0.5, 1.0, -1.0)
     if shape == "sawtooth":
-        if _np is not None:
-            return 2.0 * ph - 1.0
-        return [2.0 * p - 1.0 for p in ph]
+        return 2.0 * ph - 1.0
     if shape == "triangle":
-        if _np is not None:
-            return _np.where(ph < 0.5, 4.0 * ph - 1.0, 3.0 - 4.0 * ph)
-        return [4.0 * p - 1.0 if p < 0.5 else 3.0 - 4.0 * p for p in ph]
+        return _np.where(ph < 0.5, 4.0 * ph - 1.0, 3.0 - 4.0 * ph)
     if shape == "random":
-        if _np is not None:
-            step = _np.floor(phase).astype(_np.int64)
-            x = (step * 1103515245 + 12345) & 0x7FFFFFFF
-            return (x / float(0x3FFFFFFF)) - 1.0
-        step = [int(math.floor(p)) for p in phase]
-        x = [(s * 1103515245 + 12345) & 0x7FFFFFFF for s in step]
-        return [(v / float(0x3FFFFFFF)) - 1.0 for v in x]
-    if _np is not None:
-        return _np.sin(2.0 * _np.pi * ph)
-    return [math.sin(2.0 * math.pi * p) for p in ph]
+        step = _np.floor(phase).astype(_np.int64)
+        x = (step * 1103515245 + 12345) & 0x7FFFFFFF
+        return (x / float(0x3FFFFFFF)) - 1.0
+    return _np.sin(2.0 * _np.pi * ph)
+
+
+#: The spelling `tests/manual_audition_lfo.py` calls this by. tests/ is
+#: gitignored by decision and is not part of this change, so the rename leaves
+#: its old name reachable; it is the SAME function object, not a shim, and
+#: nothing in the product reads it.
+_lfo_wave_np = _lfo_wave
 
 
 # ── rendering events in parallel ─────────────────────────────────────────────
