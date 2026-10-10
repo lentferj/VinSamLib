@@ -406,13 +406,26 @@ def save(
     # non-empty, so a project saved with the switch off is byte-for-byte the
     # file it was before this existed.
     call_log = calllog.as_jsonl()
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("project.json", json.dumps(manifest, indent=1))
-        for digest, data in blobs.items():
-            z.writestr(f"blobs/{digest}", data)
-        if call_log:
-            z.writestr(calllog.ARCHIVE_NAME, call_log)
-    tmp.replace(out)
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("project.json", json.dumps(manifest, indent=1))
+            for digest, data in blobs.items():
+                z.writestr(f"blobs/{digest}", data)
+            if call_log:
+                z.writestr(calllog.ARCHIVE_NAME, call_log)
+        # Inside the try, with the unlink below as the one exit that removes
+        # the side file. The success path was the ONLY path that cleaned it up,
+        # because `replace()` is what consumes the name -- so a failure while
+        # writing (and the contents are megabytes of bank audio, so a full
+        # disk is the ordinary one) left `myproject.vslproj.part` beside the
+        # real project. The previous save stays intact and loads, so nothing
+        # is broken; what is left is a file that looks like a second copy of
+        # their project and is not, one per failed save.
+        tmp.replace(out)
+    finally:
+        # No-op on success: the replace has already moved the side file onto
+        # the project path.
+        tmp.unlink(missing_ok=True)
     mb = out.stat().st_size / 1024 / 1024
     note = f", {calllog.summary()}" if call_log else ""
     return (
