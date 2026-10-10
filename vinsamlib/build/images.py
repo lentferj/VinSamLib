@@ -20,8 +20,6 @@ goes through `k2000_disk_append` — K2000 media has no EMU-fs equivalent.
 
 from __future__ import annotations  # noqa: I001
 
-import contextlib
-import io
 import os
 import shutil
 import tempfile
@@ -32,6 +30,7 @@ from typing import Any, Callable, Optional  # noqa: UP035
 from .. import tempdirs
 from . import akai_image
 from . import calllog
+from . import captured_stdout
 from ..filenames import safe_path_component
 from ..mpc2emu_bridge import fat12, hda_builder, iso_builder
 from ..vfs.base import Entry, EntryKind
@@ -92,10 +91,15 @@ def _run_captured(fn: Callable, *args, **kwargs) -> tuple[Any, str]:
     # caller, which already shows it. Recording it as well is not redundant:
     # that copy is shown once and discarded, and the question this log
     # answers is always asked later.
-    buf = io.StringIO()
+    #
+    # NOT contextlib.redirect_stdout, which this used to be: that mutates
+    # sys.stdout globally and restores it to whatever the entering thread
+    # found, so two image builds overlapping on the shared thread pool left
+    # the process's stdout bound to a dead buffer. See
+    # build/captured_stdout.py.
     started = time.monotonic()
     try:
-        with contextlib.redirect_stdout(buf):
+        with captured_stdout.capture() as buf:
             result = fn(*args, **kwargs)
     except Exception as ex:
         calllog.record_call(
@@ -227,9 +231,11 @@ def create_image(
 def _build_floppy(
     output_path: str, bank_paths: list[str], label: str, floppy_kind: str
 ) -> str:
-    buf = io.StringIO()
+    # The same per-thread capture _run_captured uses above -- a whole-image
+    # build runs on the shared thread pool, and redirect_stdout's global
+    # swap is what left two of them fighting over sys.stdout.
     try:
-        with contextlib.redirect_stdout(buf):
+        with captured_stdout.capture() as buf:
             fs = fat12.format_new(output_path, floppy_kind, label[:11])
             try:
                 for p in bank_paths:

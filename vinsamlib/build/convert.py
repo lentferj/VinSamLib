@@ -31,7 +31,6 @@ from __future__ import annotations  # noqa: I001
 import array
 import contextlib
 import dataclasses
-import io
 import math
 import re  # noqa: F401
 import tempfile  # noqa: F401
@@ -41,6 +40,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional  # noqa: UP035
 
 from . import calllog
+from . import captured_stdout
 from . import firmware_sim
 
 from .. import tempdirs
@@ -270,10 +270,16 @@ def _run_captured(fn: Callable, *args, **kwargs) -> Any:
     # function, so a site added later is recorded without anyone remembering
     # to. calllog is off by default and checks a flag before formatting
     # anything, so the disabled path costs an attribute read.
-    buf = io.StringIO()
+    #
+    # NOT contextlib.redirect_stdout, which this used to be. That assigns
+    # sys.stdout -- a process global -- and restores whatever it was when the
+    # ENTERING thread arrived, so two conversions overlapping on the shared
+    # thread pool left sys.stdout bound to a StringIO nobody would ever read
+    # again and silenced every later print() in the process. See
+    # build/captured_stdout.py.
     started = time.monotonic()
     try:
-        with contextlib.redirect_stdout(buf):
+        with captured_stdout.capture() as buf:
             result = fn(*args, **kwargs)
     except Exception as ex:
         calllog.record_call(

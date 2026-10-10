@@ -305,16 +305,24 @@ def traced(fn: Any, *args: Any, **kwargs: Any) -> Any:
     When enabled the callee's stdout is captured for the record and then
     written straight back out, so nothing a user would have seen on the
     console is swallowed by the act of logging it.
+
+    NOT contextlib.redirect_stdout, which this used to be. That swaps
+    sys.stdout -- a process global -- and restores it to whatever the
+    ENTERING thread found, so two traced calls overlapping on the shared
+    thread pool left sys.stdout pointing at a buffer nobody read again and
+    silenced every later print() in the process. build/captured_stdout.py's
+    per-thread proxy is what this uses instead, and it is the same mechanism
+    convert.py and images.py's _run_captured use -- one mechanism, not three
+    copies of the same race.
     """
     if not _enabled:
         return fn(*args, **kwargs)
-    import contextlib
-    import io
 
-    buf = io.StringIO()
+    from . import captured_stdout
+
     started = time.monotonic()
     try:
-        with contextlib.redirect_stdout(buf):
+        with captured_stdout.capture() as buf:
             result = fn(*args, **kwargs)
     except Exception as ex:
         record_call(
