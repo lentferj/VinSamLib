@@ -389,11 +389,11 @@ def _interp(ch: List[float], p: float) -> float:  # noqa: UP006
 
 
 def _seam_blend(
-    ch: List[float],
+    ch: List[float],  # noqa: UP006
     ls: int,
     le: int,
     xf: int,
-    k: float,  # noqa: UP006
+    k: float,
 ) -> float:
     """Equal-power crossfade across a forward loop's seam, over ``xf`` frames.
 
@@ -1342,8 +1342,45 @@ def _fork_init(plans, args):
     _FORK_ARGS = args
 
 
-#: Below this many output frames, forking costs more than it saves.
-PARALLEL_MIN_FRAMES = 3 * 44100
+#: Below this much estimated WORK, forking costs more than it saves.
+#:
+#: WORK, NOT BUS LENGTH, and the difference is not cosmetic. This used to be
+#: `total_frames >= 3 * 44100` -- the length of the output standing in for the
+#: cost of producing it -- and it was wrong in both directions:
+#:
+#:   * a long HOLD makes the bus long and the render cheap. The envelope is a
+#:     control-rate grid and the read is a gather, so a thin preset held for
+#:     three seconds paid fork+Pool for well under a second of work;
+#:   * a note the keymap does not cover still occupies its gap, so a
+#:     twelve-note list of silent keys forked twelve children that each
+#:     rendered nothing at all.
+#:
+#: Fork + Pool is measured on this machine at 8 ms for 3 workers and ~30 ms for
+#: 12, and the pure path renders at roughly 10 µs per zone-frame, so break-even
+#: is on the order of 3 s of zone-frames. 4 s leaves room for a slower machine
+#: and sits about a third above the old effective floor for a
+#: one-zone-per-note preset -- while being far above it for the two shapes
+#: above, which is the point.
+PARALLEL_MIN_FRAMES = 4 * 44100
+
+
+def _estimated_work_frames(plans, render_rate: int) -> int:
+    """Zone-frames this audition will render: the cost, not the bus length.
+
+    Sum over every event of its sounding zones times the frames each occupies.
+    A silent note contributes nothing, because it renders nothing; a long hold
+    on a thin preset contributes almost nothing, because there is almost
+    nothing to interpolate.
+
+    ``span`` is in seconds on the plan (the bus is built from it further down),
+    so the rate is applied here rather than assumed.
+    """
+    total = 0.0
+    for voices, span in plans:
+        span_frames = span * render_rate
+        for _note, sounds, _o in voices:
+            total += len(sounds) * span_frames
+    return int(total)
 
 
 def parallel_supported() -> bool:
@@ -1513,7 +1550,9 @@ def render(bank, preset, prov, opts, progress=None) -> "Rendering":  # noqa: F82
         out_r = [0.0] * total_frames
 
     parallel = (
-        len(plans) > 1 and total_frames >= PARALLEL_MIN_FRAMES and parallel_supported()
+        len(plans) > 1
+        and _estimated_work_frames(plans, opts.render_rate) >= PARALLEL_MIN_FRAMES
+        and parallel_supported()
     )
     done = False
     if parallel:
