@@ -231,8 +231,17 @@ class ConversionOptions:
         # rewrite to honour it would lose fidelity in the name of preserving
         # it. krz_drum_program IS in the list: asking for a drum program is
         # asking for a file the source is not.
+        #
+        # match_device_import IS in the list, and it is the dangerous one to
+        # leave out: it asks for what the TARGET sampler's own disk importer
+        # would have written, which on a KRZ source is the writer's
+        # `firmware_sim` -- a different FILE, not the same one. Its companion
+        # firmware_reader_only is NOT here: alone it selects no reader and
+        # asks for nothing, because it only qualifies the meaning of
+        # match_device_import (see manual_noop_knows_every_option.py).
         return (
             self.target_format == source_format
+            and not self.match_device_import
             and self.resample_profile is None
             and not self.max_sample_rate
             and self.reduce_key_zones_pct <= 0
