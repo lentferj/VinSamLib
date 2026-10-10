@@ -478,13 +478,12 @@ def _container_audio_total(db: IndexDB, container_id: int) -> Optional[int]:  # 
     shared sample once for each preset that reaches it, so adding those would
     multiply the shared audio by however many presets use it. Two banks on one
     disc do not share sample storage, so summing them is sound.
+
+    THE SQL IS `db.container_audio_total()`'s. This used to reach through
+    `db._conn` -- a private attribute of another class -- and the query
+    belongs with the schema anyway.
     """
-    row = db._conn.execute(
-        "SELECT SUM(audio_bytes) FROM item "
-        "WHERE container_id = ? AND kind = 'bank' AND audio_bytes IS NOT NULL",
-        (container_id,),
-    ).fetchone()
-    return row[0] if row and row[0] is not None else None
+    return db.container_audio_total(container_id)
 
 
 def _akai_programs(vol, entries) -> list:
