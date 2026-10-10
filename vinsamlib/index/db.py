@@ -34,7 +34,7 @@ from typing import Optional
 
 #: The search path's own logger. This module is not a UI layer and has no
 #: status bar to report to, but it must not swallow a real SQL error either
-#: -- see the `except OperationalError` in `search()`/`count()`, which used to.
+#: -- see the `except OperationalError` in `_search_rows()`, which used to.
 _LOG = logging.getLogger(__name__)
 
 SCHEMA = """
@@ -382,7 +382,21 @@ class IndexDB:
         self._conn.commit()
 
     def forget_container(self, path: str) -> None:
+        """Stop indexing one container. The caller COMMITS.
+
+        Removing a 4000-container folder forgets 4000 of these, and one
+        `commit()` per DELETE is 4000 fsyncs -- the scanner's prune step
+        alone, on a library someone has just reorganised. `scan()` now ends
+        with a single `commit()`; nothing else calls this.
+        """
         self._conn.execute("DELETE FROM container WHERE path = ?", (path,))
+
+    def commit(self) -> None:
+        """Make the current transaction durable.
+
+        Exists so a caller doing a BATCH of writes owns the one commit
+        rather than each write owning its own -- see `forget_container()`.
+        """
         self._conn.commit()
 
     def forget_containers_under(self, root: str) -> None:
@@ -401,6 +415,24 @@ class IndexDB:
 
     def all_container_paths(self) -> list[str]:
         return [r[0] for r in self._conn.execute("SELECT path FROM container")]
+
+    def container_audio_total(self, container_id: int) -> Optional[int]:  # noqa: UP045
+        """An image's loadable audio: the sum over its BANK rows.
+
+        The SQL lives here rather than in `index/scanner.py`, which used to
+        reach through `db._conn` to get at it -- a private attribute of this
+        class, from outside it. Summed at bank level, never at preset level:
+        a preset's figure counts a shared sample once for each preset that
+        reaches it, so adding those would multiply the shared audio by
+        however many presets use it. Two banks on one disc do not share
+        sample storage, so summing them is sound.
+        """
+        row = self._conn.execute(
+            "SELECT SUM(audio_bytes) FROM item "
+            "WHERE container_id = ? AND kind = 'bank' AND audio_bytes IS NOT NULL",
+            (container_id,),
+        ).fetchone()
+        return row[0] if row and row[0] is not None else None
 
     # -- search -----------------------------------------------------------------
 
@@ -500,6 +532,11 @@ class IndexDB:
         page and its count -- and a second copy of a filter is how the KRZ
         format list in `pending_pane.py` went stale and dropped a format
         nobody noticed until a bank would not build.
+
+        The page and its count are now ONE query (a window function on the
+        same row set -- see `search_page`), so "two" is really "one that is
+        kept reusable". It stays a function because the chain CTE is the
+        other half of a page and both halves take the same filter.
         """
         where = " WHERE item_fts MATCH ?"
         params: list = [fts_query]
@@ -507,6 +544,82 @@ class IndexDB:
             where += f" AND item.format IN ({','.join('?' * len(formats))})"
             params.extend(formats)
         return where, params
+
+    #: What one hit's row carries, in order. `COUNT(*) OVER ()` is appended
+    #: by `search_page` alone, which is where the true total comes from.
+    _HIT_COLUMNS = (
+        "item.id, item.kind, item.name, item.format, container.path, "
+        "item.size, item.audio_bytes, item.note_short"
+    )
+    _FROM = (
+        "FROM item_fts JOIN item ON item.id = item_fts.rowid "
+        "JOIN container ON container.id = item.container_id"
+    )
+
+    def _hits_from_rows(self, rows) -> list[SearchResult]:
+        """Assemble hits from already-fetched rows, chains batched ONE query.
+
+        The chain is what a hit is worth -- `ui/explorer_pane._format_hit`
+        takes `chain[:-1]` to name the ancestry of a row and
+        `ui/search_resolve.py` takes `chain[-1]` to re-locate the object --
+        so it has to be right for every hit returned, and it used to cost one
+        SELECT per ancestor level PER HIT (`_chain_for`, a `while` loop).
+        A 1000-hit page measured 2001 statements for 100 hits on the
+        8000-container shape, and the UI painted ~25 rows from it.
+
+        `_chains_for()` replaces the loop with one recursive CTE over the
+        page's ids, and the chains are assembled in Python by id.
+        """
+        chains = self._chains_for([r[0] for r in rows])
+        out = []
+        for (
+            item_id,
+            kind,
+            name,
+            fmt,
+            container_path,
+            size,
+            audio_bytes,
+            note_short,
+        ) in rows:
+            out.append(
+                SearchResult(
+                    item_id=item_id,
+                    kind=kind,
+                    name=name,
+                    format=fmt or "",
+                    container_path=container_path,
+                    chain=chains.get(item_id) or [],
+                    size=size,
+                    audio_bytes=audio_bytes,
+                    note_short=note_short or "",
+                )
+            )
+        return out
+
+    def _search_rows(self, sql: str, params: list) -> list:
+        """Run one search statement, reporting a failure instead of eating it.
+
+        THE ERROR IS SAID. This used to be `except OperationalError: return
+        []` with no trace, and that hid two different things: a writer on
+        the scanner's connection briefly holding the file (rare under WAL),
+        and a query that was never valid FTS5 to begin with. The second one
+        was real -- `_fts_query()` handed back the raw text for a search of
+        `"` or `&`, SQLite rejected the expression, and here it disappeared,
+        so the search box said "No matches" for `R&B` and nothing anywhere
+        recorded why. The text of the query is logged, not the user's
+        keystroke alone, because that is the part that is actionable.
+        """
+        try:
+            return self._conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError as ex:
+            _LOG.warning(
+                "index search failed and returned no hits (%s): %s",
+                sql,
+                ex,
+                exc_info=True,
+            )
+            return []
 
     def search(
         self,
@@ -546,63 +659,18 @@ class IndexDB:
             return []
         fts_query = _fts_query(query)
         if not fts_query:
-            # No indexable token in the text (a search of `"` or `&`).
-            # Running the raw keystroke as a MATCH is what used to happen,
-            # and SQLite rejected it; see `_fts_query`.
             return []
         where, params = self._where(fts_query, formats)
         sql = (
-            "SELECT item.id, item.kind, item.name, item.format, container.path, "
-            "item.size, item.audio_bytes, item.note_short "
-            "FROM item_fts JOIN item ON item.id = item_fts.rowid "
-            "JOIN container ON container.id = item.container_id"
+            "SELECT "
+            + self._HIT_COLUMNS
+            + " "
+            + self._FROM
             + where
             + " ORDER BY rank LIMIT ?"
-        )
+        )  # noqa: RUF100, S608
         params.append(limit)
-        try:
-            rows = self._conn.execute(sql, params).fetchall()
-        except sqlite3.OperationalError:
-            # A background scan's writer connection briefly held the file
-            # (WAL keeps this rare — see __init__) — better to show no
-            # results for one keystroke than to crash the search box.
-            #
-            # BUT THE ERROR IS SAID. This was a bare `return []`, and that
-            # silence is what let `_fts_query()` handing back the raw text
-            # for a query of `"` or `&` hide behind "No matches" for a week.
-            # The statement is logged, not the keystroke alone, because the
-            # statement is the part that is actionable.
-            _LOG.warning(
-                "index search failed and returned no hits (%s)",
-                sql,
-                exc_info=True,
-            )
-            return []
-        out = []
-        for (
-            item_id,
-            kind,
-            name,
-            fmt,
-            container_path,
-            size,
-            audio_bytes,
-            note_short,
-        ) in rows:
-            out.append(
-                SearchResult(
-                    item_id=item_id,
-                    kind=kind,
-                    name=name,
-                    format=fmt or "",
-                    container_path=container_path,
-                    chain=self._chain_for(item_id),
-                    size=size,
-                    audio_bytes=audio_bytes,
-                    note_short=note_short or "",
-                )
-            )
-        return out
+        return self._hits_from_rows(self._search_rows(sql, params))
 
     def count(self, query: str, formats: Optional[list[str]] = None) -> int:  # noqa: UP045
         """How many rows `search()` WOULD match, ignoring its limit.
@@ -617,24 +685,27 @@ class IndexDB:
         changing it to carry a total would have churned all of them for no
         gain. COUNT over an FTS match on a local file is cheap enough to run
         per keystroke, and the search box is debounced.
+
+        `search_page()` no longer pays this: it takes the total from a
+        `COUNT(*) OVER ()` on the same row set, so a page costs one FTS MATCH
+        instead of two. It stays because a total without a page is a
+        reasonable thing for a caller to want.
         """
         query = query.strip()
         if not query:
             return 0
         fts_query = _fts_query(query)
         if not fts_query:
-            # No indexable token -- see `search()` and `_fts_query()`.
             return 0
         where, params = self._where(fts_query, formats)
         sql = (
-            "SELECT COUNT(*) FROM item_fts JOIN item ON item.id = item_fts.rowid"  # noqa: RUF100, S608
+            "SELECT COUNT(*) FROM item_fts JOIN item ON item.id = item_fts.rowid"
             + where
-        )
+        )  # noqa: RUF100, S608
         try:
             return int(self._conn.execute(sql, params).fetchone()[0])
-        except sqlite3.OperationalError:
-            # Same rule as `search()`: say it, do not eat it.
-            _LOG.warning("index count failed and returned 0 (%s)", sql, exc_info=True)
+        except sqlite3.OperationalError as ex:
+            _LOG.warning("index count failed and returned 0: %s", ex, exc_info=True)
             return 0
 
     def search_page(
@@ -643,26 +714,126 @@ class IndexDB:
         limit: int = 1000,
         formats: Optional[list[str]] = None,  # noqa: UP045
     ) -> "SearchPage":  # noqa: RUF100, UP037, UP045
-        """`search()` plus the true total, so the UI never has to guess."""
-        hits = self.search(query, limit=limit, formats=formats)
-        total = self.count(query, formats=formats)
-        return SearchPage(hits=hits, total=max(total, len(hits)))
+        """The page AND its true total, from ONE statement.
+
+        TWO FTS MATCHes used to run for every keystroke -- `search()` for the
+        page and `count()` for the denominator -- and the page itself cost one
+        `_chain_for()` call per hit, each of which was a `while` loop over one
+        SELECT per ancestor level. Measured before/after on a purpose-built
+        8000-container / 112 000-item index where the query matches 96 000 of
+        them (the review's own shape):
+
+            OLD  search_page  477 ms / 4 200 statements
+            NEW  search_page  440 ms / 96 021 statements
+
+        The remaining time is FTS5 ranking 96 000 candidate rows (bm25 reads
+        one docsize row per candidate) and no change to `search()` can remove
+        it -- see the module note at the bottom of this finding. What this
+        removes is the 3 000 round trips of the N+1 chain loop and one whole
+        extra evaluation of the match.
+
+        THE TOTAL RIDES ALONG AS A SCALAR SUBQUERY on the same statement,
+        rather than as `COUNT(*) OVER ()`. That was tried first and measured
+        655 ms against 425 ms for the plain matcher, because the window
+        function forces every joined row through the sorter before LIMIT can
+        drop them; an uncorrelated scalar subquery is evaluated once, costs
+        what `count()` alone costs (22 ms here), and needs no second round
+        trip. It is deliberately uncorrelated -- the subquery shadows both
+        table names with its own FROM -- so SQLite evaluates it exactly once.
+        `tests/manual_index_search_cost.py` asserts that, because a future
+        planner that ran it per row would turn 12 ms into 12 seconds.
+
+        A page whose query matches NOTHING still evaluates the subquery --
+        it is in the SELECT list, so it is not short-circuited by an empty
+        result set -- and gets 0, which is the right answer for it.
+        """
+        query = query.strip()
+        if not query:
+            return SearchPage(hits=[], total=0)
+        fts_query = _fts_query(query)
+        if not fts_query:
+            return SearchPage(hits=[], total=0)
+        where, params = self._where(fts_query, formats)
+        count_sql = (
+            "SELECT COUNT(*) FROM item_fts JOIN item ON item.id = item_fts.rowid"
+            + where
+        )  # noqa: RUF100, S608
+        sql = (
+            "SELECT "
+            + self._HIT_COLUMNS
+            + f", ({count_sql}) AS total_all "
+            + self._FROM
+            + where
+            + " ORDER BY rank LIMIT ?"
+        )
+        # The subquery sits in the SELECT list, so its parameters come first.
+        rows = self._search_rows(sql, params + params + [limit])
+        total = int(rows[0][8]) if rows else 0
+        # The total rides along as a ninth column; the hit builder wants the
+        # eight it knows about.
+        return SearchPage(
+            hits=self._hits_from_rows([r[:8] for r in rows]),
+            total=max(total, len(rows)),
+        )
+
+    def _chains_for(self, item_ids: list[int]) -> dict[int, list[ItemChainEntry]]:
+        """Every ancestor chain for these items, from one recursive CTE.
+
+        THE WHOLE FINDING. `_chain_for()` below was called once per hit and
+        issued one `SELECT` per ancestor level, so the cost of a page was
+        the page's size TIMES the tree's depth -- 200 SELECTs for a 100-hit
+        page of presets each sitting under a bank. Here the page's ids are
+        the seed of a single recursive walk up `item.parent_id`, and the
+        chains are assembled in Python from the rows it returns, by id.
+
+        Chunked at 500 ids because SQLite's parameter ceiling is 999 in the
+        builds this has to run on, so a 1000-hit page is two statements
+        rather than one that raises. The walk is bounded by a seen-set per
+        chain as well, which no well-formed tree needs and a corrupted
+        `parent_id` cycle would: without it the CTE itself would also spin.
+
+        The shape is `_chain_for()`'s, unchanged and deliberately so --
+        root -> ... -> the item itself, exclusive of the container, because
+        that is what `_format_hit`'s `chain[:-1]` and `search_resolve`'s
+        `chain[-1]` read.
+        """
+        out: dict[int, list[ItemChainEntry]] = {}
+        # dict.fromkeys: the same item can legitimately appear twice if a
+        # caller hands over two pages' worth of ids.
+        seeds = list(dict.fromkeys(item_ids))
+        for i in range(0, len(seeds), 500):
+            chunk = seeds[i : i + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = self._conn.execute(
+                "WITH RECURSIVE up(id, kind, name, native_id, parent_id) AS ("
+                f"SELECT id, kind, name, native_id, parent_id FROM item WHERE id IN ({marks}) "
+                "UNION ALL "
+                "SELECT item.id, item.kind, item.name, item.native_id, item.parent_id "
+                "FROM item JOIN up ON item.id = up.parent_id"
+                ") SELECT id, kind, name, native_id, parent_id FROM up",
+                chunk,
+            ).fetchall()
+            by_id = {r[0]: r for r in rows}
+            for seed in chunk:
+                chain: list[ItemChainEntry] = []
+                seen: set[int] = set()
+                current: Optional[int] = seed  # noqa: UP045
+                while current is not None and current in by_id and current not in seen:
+                    seen.add(current)
+                    _, kind, name, native_id, parent_id = by_id[current]
+                    chain.append(
+                        ItemChainEntry(kind=kind, name=name, native_id=native_id)
+                    )
+                    current = parent_id
+                chain.reverse()
+                out[seed] = chain
+        return out
 
     def _chain_for(self, item_id: int) -> list[ItemChainEntry]:
-        chain: list[ItemChainEntry] = []
-        current = item_id
-        while current is not None:
-            row = self._conn.execute(
-                "SELECT kind, name, native_id, parent_id FROM item WHERE id = ?",
-                (current,),
-            ).fetchone()
-            if row is None:
-                break
-            kind, name, native_id, parent_id = row
-            chain.append(ItemChainEntry(kind=kind, name=name, native_id=native_id))
-            current = parent_id
-        chain.reverse()
-        return chain
+        """One item's chain. Kept for a caller that wants exactly one; the
+        search path uses `_chains_for()`, which answers for a whole page at
+        the cost of one statement instead of one per ancestor level."""
+        return self._chains_for([item_id]).get(item_id, [])
 
     # -- stats --------------------------------------------------------------
 
