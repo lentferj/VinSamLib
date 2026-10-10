@@ -36,7 +36,7 @@ EMU3_FTYPE_SYS = 0x80  # special ROM/system file (fixed ids, not a user bank)
 E4B_PROPS = b"\x00E4B0"
 
 #: Bytes of an entry's own data that identify its bank format. `list()` reads
-#: exactly this much per entry, and never more.
+#: exactly this much per entry, and never less.
 _SNIFF_BYTES = 16
 
 #: How many bytes ONE read may cover when it is serving several entries at
@@ -64,12 +64,15 @@ def _plausible_size_fields(
 
     so ``blks == 0`` on anything but that one sentinel means the size
     arithmetic is going to subtract a block that does not exist, which is
-    how a size goes negative in the first place.
+    how a size goes negative in the first place. ``brem`` is left alone: it
+    never makes a size negative, and the only writer of these fields is
+    mpc2emu's, so an out-of-range ``brem`` on a commercial disc is a
+    convention nobody has verified rather than a corruption.
 
-    The sentinel is KEPT, deliberately: it is what a real empty file looks
-    like on disk, ``_true_size`` answers 0 for it once it stops subtracting
-    that block, and dropping the entry instead would delete a real (if
-    useless) bank from the tree.
+    The zero-length sentinel is KEPT, deliberately: it is what a real empty
+    file looks like on disk, ``_true_size`` answers 0 for it once it stops
+    subtracting that block, and dropping the entry instead would delete a
+    real (if useless) bank from the tree.
     """
     if n_clusters == 0:
         # Nothing allocated, so nothing may be claimed for it.
