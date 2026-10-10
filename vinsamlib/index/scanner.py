@@ -357,16 +357,27 @@ def _scan_foreign_container(
     """
     if not foreign_import.available():
         return
-    verdict = foreign_import.inspect(path)
-    if verdict is None:
-        return  # not one of ours (a macOS ._ fork, say)
-    seen_paths.add(path)
     try:
         mtime = Path(path).stat().st_mtime
     except OSError:
         return
+    # THE GUARD COMES FIRST, ABOVE `inspect()`. The order used to be
+    # inspect() -> needs_rescan(), so an UNCHANGED rescan paid the whole
+    # classification cost of every soundfont-style file in the library and
+    # then skipped it: the module's own figure is 1.4 s for the 5977-file
+    # corpus here, and a rescan whose entire point is to skip repays all of
+    # it. `inspect()` opens the file and, for SF2/GIG, lists its presets.
+    #
+    # `seen_paths.add()` STAYS AFTER THE VERDICT, exactly where it was, so
+    # the prune's behaviour is unchanged: a row is still kept while its file
+    # exists and still forgotten when mpc2emu goes away (the `available()`
+    # test above returns before anything is marked).
     if not db.needs_rescan(path, size, mtime):
         return
+    verdict = foreign_import.inspect(path)
+    if verdict is None:
+        return  # not one of ours (a macOS ._ fork, say)
+    seen_paths.add(path)
     if progress:
         progress(f"Scanning {Path(path).name}…")
     fmt = verdict.format
