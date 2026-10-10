@@ -1364,18 +1364,121 @@ def _apply_and_write_pipeline(
     else:
         out_path = tmp_dir / f"{out_stem}.e4b"
         _run_captured(e4b_writer.write_e4b, bank, str(out_path))
-    _verify_written(bank, out_path, opts)
+    # Read back ONCE, and hand the parsed result to both checks below. Each of
+    # them used to do its own read_bytes() + parse_bytes(): on a 36 MB bank that
+    # pulled 58.7 MB back off disk and fully re-parsed the result twice, for two
+    # questions about the same file (measured, code review 2026-10-09, M19).
+    written = _read_back_written(out_path, opts, risks_out)
+    _verify_written(bank, written, opts, risks_out)
     # After the refusal check, not before: there is no point warning about the
     # zones of a bank that is about to be thrown away for losing samples.
+    #
+    # `written`, NOT `out_path`: `_zone_loss_risk` takes the bank
+    # `_read_back_written` already parsed, which is the whole point of M19.
     if risks_out is not None:
-        zone_risk = _zone_loss_risk(bank, out_path, opts)
+        zone_risk = _zone_loss_risk(bank, written, opts)
         if zone_risk is not None:
             risks_out.append(zone_risk)
     return str(out_path)
 
 
-def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
-    """Read the freshly-written bank back and refuse it if samples went missing.
+def _verify_skipped(risks_out, what: str, ex: BaseException) -> None:
+    """Record, through the ordinary risks channel, that the verification
+    could not run.
+
+    **A verification that cannot run is not a verification that passed, and
+    for years it was.** Both readers used to end in `except Exception: return`,
+    on the reasoning that "unreadable for some other reason is a separate
+    problem, and the caller will meet it soon enough". The reasoning does not
+    hold: the except is broad enough to swallow a defect in the CHECK ITSELF,
+    and then the whole safety net is off with nothing on screen to say so.
+    Proved during the 2026-10-09 review -- a patched attempt that assigned to
+    `E4BSample.pcm`, a read-only property, raised AttributeError inside the
+    try, was swallowed at the handler, and `_verify_written` reported success
+    on a bank whose verification had never happened.
+
+    So a failure now does two things instead of one: it leaves a record where
+    every other finding lands (the same list, so the same renderer shows it),
+    and the caller REFUSES. Both run on the worker thread -- there is no
+    reason either should swallow.
+    """
+    if risks_out is not None:
+        risks_out.append(
+            {
+                "code": "VINSAMLIB_VERIFY_SKIPPED",
+                "subject": what,
+                "message": f"{what} could not be read back to be checked.",
+                "body": (
+                    "The written bank could not be parsed again, so the check "
+                    "that the audio survived was never run -- and a check that "
+                    "did not run is not a check that passed. The conversion "
+                    "was refused rather than handed on. "
+                    f"({type(ex).__name__}: {ex})"
+                ),
+                # TRUE, not False. Nothing is known to have been lost; what is
+                # certain is that it was never verified, and the count of
+                # "findings losing content" must not read zero for something
+                # that was never measured.
+                "content_lost": True,
+                "detail": {"error": f"{type(ex).__name__}: {ex}"},
+            }
+        )
+
+
+def _read_back_written(out_path: Path, opts: ConversionOptions, risks_out=None):
+    """Read the freshly-written result back ONCE, with VinSamLib's own
+    byte-level readers rather than mpc2emu's, so the check is independent of
+    the code that produced the file.
+
+    Called once per conversion and handed to both `_verify_written` and
+    `_zone_loss_risk`, which need the same reader anyway. It used to be called
+    twice -- each of those two did its own read_bytes() and its own full
+    parse_bytes(), decoding every sample's PCM into memory twice. Measured on
+    a 36 MB bank (code review 2026-10-09, M19): 58.7 MB pulled back off disk
+    and 2 full re-parses of the result.
+
+    AKAI returns an `AkaiBank` instead, because an AKAI result is a DIRECTORY
+    of loose files with no container around them. That is also why this is the
+    only place the target format is branched on: both consumers take whatever
+    this hands them and ask it the question they own.
+    """
+    from ..banks import e4b as vs_e4b
+    from ..banks import eiii as vs_eiii
+    from ..banks import krz as vs_krz
+
+    try:
+        if opts.target_format == "AKAI":
+            from ..banks import akai as vs_akai
+
+            return vs_akai.parse_dir(str(out_path))
+        data = out_path.read_bytes()
+        if opts.target_format == "KRZ":
+            return vs_krz.parse_bytes(data, out_path.name)
+        if opts.target_format == "EIII":
+            return vs_eiii.parse_bytes(data, out_path.name)
+        return vs_e4b.parse_bytes(data, out_path.name)
+    except Exception as ex:
+        _verify_skipped(risks_out, "the converted bank", ex)
+        raise ConvertOpError(
+            f"The converted {opts.target_format} bank could not be read back "
+            f"to be checked, so it was discarded rather than handed on: "
+            f"{type(ex).__name__}: {ex}. This is not sample loss -- it means "
+            f"the check itself could not run, and a check that did not run is "
+            f"not a check that passed."
+        ) from ex
+
+
+def _verify_written(
+    bank: Any,
+    written: Any,
+    opts: ConversionOptions,
+    risks_out=None,
+) -> None:
+    """Refuse the freshly-written bank if samples went missing.
+
+    `written` is the result already read back and parsed once by
+    `_read_back_written` -- an E4BFile / EIIIFile / KrzFile, or an `AkaiBank`
+    for the AKAI target.
 
     A writer is the one stage whose failures cannot be seen from the inside:
     the Bank in memory is still correct, and the file is what the hardware
@@ -1442,10 +1545,6 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
     two zones panned hard left and hard right, so nothing is folded and the
     counts agree. That is a property of the format, not a general truth.
     """
-    from ..banks import e4b as vs_e4b
-    from ..banks import eiii as vs_eiii
-    from ..banks import krz as vs_krz
-
     expected = len(bank.samples)
     if not expected:
         return
@@ -1456,27 +1555,35 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
     expected_bytes = sum(len(getattr(s, "data", b"") or b"") for s in bank.samples)
     try:
         if opts.target_format == "AKAI":
-            # A folder, so there are no bytes to read -- and the count that
-            # matters is the same one. Left to the read_bytes() below it
-            # would raise IsADirectoryError and be swallowed by the handler,
-            # which is accidentally safe and silently skips the one check
-            # that catches a writer losing audio -- on the one target no
+            # A folder, so there are no bytes to read, and the reader that
+            # answers the question is `banks/akai.py` -- which is what
+            # `_read_back_written` already did. It used to be reached only
+            # after `read_bytes()` had raised IsADirectoryError and the handler
+            # below had swallowed it, which "accidentally safe" skipped the one
+            # check that catches a writer losing audio -- on the one target no
             # machine has ever heard.
-            from ..banks import akai as vs_akai
-
-            akai_written = vs_akai.parse_dir(str(out_path))
-            got = len(akai_written.samples)
-            got_bytes = sum(len(s.pcm) for s in akai_written.samples.values())
-            if got >= expected:
-                return
-            # Same reasoning as the file targets below, applied here first:
-            # an AKAI writer that folds a stereo pair is doing the same
-            # legitimate thing, and a count of objects cannot tell that from
-            # loss. The early return above is the one that was wrong there --
-            # see the note on the file-target branch -- but an AKAI writer that
-            # LOSES a sample loses its object too, so the count is a real
-            # first test here and the bytes are the confirmation.
-            if got_bytes >= expected_bytes * 0.95:
+            got = len(written.samples)
+            got_bytes = sum(len(s.pcm) for s in written.samples.values())
+            # THE HEADER NEVER REACHES RAM, AND THE EXPECTATION MUST SAY SO.
+            # `AkaiSample.pcm` is header-stripped (banks/akai.py), while
+            # `expected_bytes` is the in-memory PCM length with no allowance
+            # for the 150-192 bytes every .S3 carries in front of it -- plus
+            # block padding on a file lifted off a disc. Comparing the two raw
+            # would demand the audio arrive whole AND the header come with it.
+            # Measured, and the shape matters: for 128 one-shots of 100 frames
+            # each the headers alone are 96% of the expectation, so without
+            # this subtraction a short-sample volume is refused for being
+            # correctly written.
+            #
+            # Measured from what was actually written rather than restated as
+            # a second copy of the 150: the header is generation-specific
+            # (150 on an S1000, 192 on an S3000 -- banks/akai.py's
+            # SAMPLE_HEADER_BYTES), and this is the only form that is right
+            # about both at once. A writer that keeps the object and destroys
+            # the audio leaves it unchanged, so the check still bites.
+            overhead = sum(s.size - len(s.pcm) for s in written.samples.values())
+            budget = max(0, expected_bytes - overhead)
+            if got_bytes >= budget * 0.95:
                 return
             raise ConvertOpError(
                 f"The AKAI volume came back with {got_bytes:,} of "
@@ -1484,9 +1591,7 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
                 f"sample objects) -- the writer lost audio, so it has not "
                 f"been kept."
             )
-        data = out_path.read_bytes()
         if opts.target_format == "KRZ":
-            written = vs_krz.parse_bytes(data, out_path.name)
             #: KRZ OBJECTS CARRY NO PCM FIELD. A KrzObject is the raw physical
             #: block (banks/krz.py:497), so there is nothing to sum -- the
             #: audio length comes from the object's extent in WORDS, which is
@@ -1496,25 +1601,39 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
             got_bytes = 2 * sum(
                 written.sample_word_extent(s)[1] for s in written.samples.values()
             )
-        elif opts.target_format == "EIII":
-            written = vs_eiii.parse_bytes(data, out_path.name)
         else:
-            written = vs_e4b.parse_bytes(data, out_path.name)
+            #: `.values()`, NOT the dict itself. Every one of these readers
+            #: keys its samples by index -- E4BFile.samples, EIIIFile.samples
+            #: and KrzFile.samples are all dict[int, Sample] -- so iterating
+            #: the collection yields ints, and `len(s.pcm)` was measuring an
+            #: int's attribute, which raised, which the old handler swallowed
+            #: as "unreadable for some other reason". Both halves of that are
+            #: worth writing down: a broad except around a verification turns
+            #: its own bugs into silence, and a sum over a dict measures the
+            #: wrong thing without saying so.
+            got_bytes = sum(len(s.pcm) for s in written.samples.values())
         got = len(written.samples)
-        #: `.values()`, NOT the dict itself. Every one of these readers keys
-        #: its samples by index -- E4BFile.samples, EIIIFile.samples and
-        #: KrzFile.samples are all dict[int, Sample] -- so iterating the
-        #: collection yields ints, and `len(s.pcm)` was measuring an int's
-        #: attribute, which raised, which the handler below swallowed as
-        #: "unreadable for some other reason". Both halves of that are worth
-        #: writing down: a broad except around a verification turns its own
-        #: bugs into silence, and a sum over a dict measures the wrong thing
-        #: without saying so.
-        got_bytes = sum(len(s.pcm) for s in written.samples.values())
-    except Exception:  # noqa: BLE001
-        # Unreadable for some other reason is a separate problem, and the
-        # caller will meet it soon enough; do not mask it as sample loss.
-        return
+    except ConvertOpError:
+        # A REFUSAL MADE BY THIS FUNCTION. The byte comparison below raises
+        # ConvertOpError when it finds real loss, and an `except Exception`
+        # that wraps it turns "the writer lost audio" into "the check itself
+        # could not run" -- which is factually wrong and sends whoever reads it
+        # debugging the reader instead of the writer. Found by testing: a
+        # 7/8-lossy AKAI write produced both messages, one inside the other,
+        # and the outer one lied about the cause.
+        raise
+    except Exception as ex:
+        # NOT swallowed. See _verify_skipped: refusing is the default, because
+        # an except this wide catches a defect in the check itself, and a check
+        # that stopped running must not read as a check that passed.
+        _verify_skipped(risks_out, "the converted bank", ex)
+        raise ConvertOpError(
+            f"The converted {opts.target_format} bank could not be read back "
+            f"to be checked, so it was discarded rather than handed on: "
+            f"{type(ex).__name__}: {ex}. This is not sample loss -- it means "
+            f"the check itself could not run, and a check that did not run is "
+            f"not a check that passed."
+        ) from ex
     # BOTH figures have to be read, and NEITHER one alone decides.
     #
     # An earlier version returned as soon as the object count was satisfied,
@@ -1544,9 +1663,7 @@ def _verify_written(bank: Any, out_path: Path, opts: ConversionOptions) -> None:
     )
 
 
-def _zone_loss_risk(
-    bank: Any, out_path: Path, opts: ConversionOptions
-) -> Optional[dict]:  # noqa: UP045
+def _zone_loss_risk(bank: Any, written: Any, opts: ConversionOptions) -> Optional[dict]:  # noqa: UP045
     """Warn when the written bank references FEWER zones than the Bank held.
 
     The other half of the check above, and the half its own docstring said it
@@ -1577,9 +1694,10 @@ def _zone_loss_risk(
     audio is intact -- a user who wants it should get it -- but nobody should
     receive it without being told, which is what happened until this ran.
     Returns a risk dict for the same list polyphony findings use, or None.
+
+    `written` is the result `_read_back_written` already parsed for
+    `_verify_written` -- it used to read and parse the same file a second time.
     """
-    from ..banks import e4b as vs_e4b
-    from ..banks import eiii as vs_eiii
 
     # E4B and EIII. It was EIII-only for a day because E4B reported "140 of
     # 141" on ordinary conversions and nobody had explained it.
@@ -1625,25 +1743,31 @@ def _zone_loss_risk(
         # and the sample count is already checked by _verify_written.
         return None
     try:
-        data = out_path.read_bytes()
         if opts.target_format == "E4B":
-            parsed = vs_e4b.parse_bytes(data, out_path.name)
             got = sum(
                 1
-                for p in parsed.presets
+                for p in written.presets
                 for _off, idx in p.zone_refs
-                if idx and idx in parsed.samples
+                if idx and idx in written.samples
             )
         else:
-            parsed = vs_eiii.parse_bytes(data, out_path.name)
             got = sum(
                 1
-                for p in parsed.presets
+                for p in written.presets
                 for _off, raw in p.zone_refs
-                if (raw & 0x3FFF) and (raw & 0x3FFF) in parsed.samples
+                if (raw & 0x3FFF) and (raw & 0x3FFF) in written.samples
             )
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as ex:
+        # NOT swallowed. `_read_back_written` has already parsed this file
+        # successfully by the time we get here, so reaching this except at all
+        # means THIS check is broken -- and a broken check that reads as "no
+        # zone loss" is the same silent pass _verify_written used to give.
+        raise ConvertOpError(
+            f"The zone-loss check on the written {opts.target_format} bank "
+            f"could not run: {type(ex).__name__}: {ex}. The conversion was "
+            f"refused rather than reported as clean -- a check that did not "
+            f"run is not a check that passed."
+        ) from ex
     if got >= wanted:
         return None
     return {
