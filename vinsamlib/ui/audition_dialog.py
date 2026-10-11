@@ -187,7 +187,7 @@ class AuditionDialog(QDialog):
                 f"<span style='color:gray'>({severity.value})</span></p><ul>"
             )
             for c in group:
-                parts.append(f"<li><b>{_esc(c.subject)}</b> — " f"{_esc(c.text)}</li>")
+                parts.append(f"<li><b>{_esc(c.subject)}</b> — {_esc(c.text)}</li>")
             parts.append("</ul>")
         parts.append("</body></html>")
         return "".join(parts)
@@ -374,7 +374,7 @@ class AuditionNotice(QDialog):
         layout.addWidget(self._label)
         self._sub = QLabel(HEADER)
         self._sub.setWordWrap(True)
-        self._sub.setStyleSheet("color: palette(placeholdertext);" " font-size: 11px;")
+        self._sub.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(self._sub)
 
         row = QHBoxLayout()
@@ -402,7 +402,7 @@ class AuditionNotice(QDialog):
         # with a click that did nothing and no reason anywhere.
         self._label.setText("Audition could not play")
         self._sub.setText(
-            f"{why}\n\nUse Show report to save it as a WAV " f"and play it yourself."
+            f"{why}\n\nUse Show report to save it as a WAV and play it yourself."
         )
         self._stop_btn.setEnabled(False)
 
@@ -491,9 +491,7 @@ class AuditionProgress(QDialog):
         layout.addWidget(self._bar)
 
         self._phase = QLabel("Starting…")
-        self._phase.setStyleSheet(
-            "color: palette(placeholdertext);" " font-size: 11px;"
-        )
+        self._phase.setStyleSheet("color: palette(placeholdertext); font-size: 11px;")
         layout.addWidget(self._phase)
 
         row = QHBoxLayout()

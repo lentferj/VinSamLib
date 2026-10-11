@@ -26,6 +26,7 @@ frozen copy of already-assembled bytes.
 """
 
 from __future__ import annotations  # noqa: I001
+import weakref
 
 import functools
 import re
@@ -265,8 +266,7 @@ class BankPane(QWidget):
 
         self._head = QLabel("New Bank")
         self._head.setStyleSheet(
-            "font-weight: 600; padding: 6px 10px;"
-            "border-bottom: 1px solid palette(mid);"
+            "font-weight: 600; padding: 6px 10px;border-bottom: 1px solid palette(mid);"
         )
         layout.addWidget(self._head)
 
@@ -1254,10 +1254,26 @@ class BankPane(QWidget):
             lambda msg, g=gen: self._apply_preset_info_error(g, msg)
         )
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         self._live_workers.append(w)
         workers.run(w)
@@ -1295,10 +1311,26 @@ class BankPane(QWidget):
         w.signals.finished.connect(lambda data, g=gen: self._apply_size(g, data))
         w.signals.error.connect(lambda msg, g=gen: self._apply_size_error(g, msg))
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         self._live_workers.append(w)
         workers.run(w)
@@ -2173,9 +2205,7 @@ class BankPane(QWidget):
             over_pram = bool(pram_budget) and pram_used > pram_budget
             meter = f"{n} preset(s) — {_human(len(data))} / {_human(limit_bytes)}"
             if pram_budget:
-                meter += (
-                    f"  ·  PRAM {pram_used // 1024} K / " f"{pram_budget // 1024} K"
-                )
+                meter += f"  ·  PRAM {pram_used // 1024} K / {pram_budget // 1024} K"
             # References the bank does not contain are free in bytes and slow
             # to load -- about 0.37 s each, measured. Shown, never blocking:
             # they are legitimate, and whole categories of bank are built from
@@ -2183,8 +2213,7 @@ class BankPane(QWidget):
             if rom_refs >= krz.ROM_REF_ADVISORY:
                 secs = int(rom_refs * 0.37)
                 meter += (
-                    f"  ·  {rom_refs} ROM refs ≈ {secs // 60}m{secs % 60:02d}s "
-                    f"to load"
+                    f"  ·  {rom_refs} ROM refs ≈ {secs // 60}m{secs % 60:02d}s to load"
                 )
             self._meter_label.setText(meter)
             hard = n > _KRZ_MAX_PRESETS

@@ -5,6 +5,7 @@ for individual samples once M5 adds drag-and-drop.
 """
 
 from __future__ import annotations  # noqa: I001
+import weakref
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor, QPalette
@@ -236,10 +237,26 @@ class SamplesPane(QWidget):
         w.signals.finished.connect(lambda ps, g=gen: self._apply(g, ps))
         w.signals.error.connect(lambda msg, g=gen: self._apply_error(g, msg))
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         self._live_workers.append(w)
         workers.run(w)
@@ -343,10 +360,26 @@ class SamplesPane(QWidget):
         w.signals.finished.connect(lambda xs, g=gen: self._apply_program(g, xs))
         w.signals.error.connect(lambda msg, g=gen: self._apply_error(g, msg))
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         self._live_workers.append(w)
         workers.run(w)

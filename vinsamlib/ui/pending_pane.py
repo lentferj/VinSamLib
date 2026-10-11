@@ -20,6 +20,7 @@ real image anyway.
 """
 
 from __future__ import annotations  # noqa: I001
+import weakref
 
 import tempfile  # noqa: F401
 from pathlib import Path  # noqa: F401
@@ -204,8 +205,7 @@ class PendingBanksPane(QWidget):
 
         self._head = QLabel("Pending for Image")
         self._head.setStyleSheet(
-            "font-weight: 600; padding: 6px 10px;"
-            "border-bottom: 1px solid palette(mid);"
+            "font-weight: 600; padding: 6px 10px;border-bottom: 1px solid palette(mid);"
         )
         layout.addWidget(self._head)
 
@@ -919,10 +919,26 @@ class PendingBanksPane(QWidget):
         )
         w.signals.error.connect(self._on_build_error)
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         self._live_workers.append(w)
         workers.run(w)

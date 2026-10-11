@@ -323,7 +323,7 @@ class FormatConvertDialog(ConvertOptionsDialog):
         # two things.
         self._mpc_radio = QRadioButton(firmware_sim.mode_label("best").capitalize())
         self._device_radio = QRadioButton(
-            f'{firmware_sim.mode_label("firmware").capitalize()} ' f'(experimental)'
+            f"{firmware_sim.mode_label('firmware').capitalize()} (experimental)"
         )
         box.addWidget(self._mpc_radio)
         box.addWidget(self._device_radio)
@@ -336,7 +336,7 @@ class FormatConvertDialog(ConvertOptionsDialog):
         self._device_note = QLabel("")
         self._device_note.setWordWrap(True)
         self._device_note.setStyleSheet(
-            "color: palette(placeholdertext); font-size: 11px; " "margin-left: 20px;"
+            "color: palette(placeholdertext); font-size: 11px; margin-left: 20px;"
         )
         box.addWidget(self._device_note)
 

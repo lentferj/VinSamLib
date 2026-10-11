@@ -42,6 +42,7 @@ from .models import (
 )
 from . import models
 from ..build import foreign_import
+from ..config import Config
 from ..index.db import IndexDB, SearchResult
 
 
@@ -163,28 +164,37 @@ class ExplorerPane(QWidget):
     importForeignRequested = Signal(list)
     removeLibraryRootRequested = Signal(object)  # Path of a root "directory" node
     auditionRequested = Signal(object)  # a single TreeNode to audition
+    #: A line for the window's status bar. The pane has no statusBar of its own
+    #: and used to reach for one -- `self.statusBar()` is a QMainWindow method
+    #: and this is a QWidget, so the error path raised AttributeError instead of
+    #: saying what went wrong.
+    statusMessage = Signal(str)
 
     def __init__(
         self,
         model: LibraryTreeModel,
         index_db: Optional[IndexDB] = None,  # noqa: UP045
         parent=None,
+        config: Optional[Config] = None,  # noqa: UP045
     ):  # noqa: RUF100, UP045
         super().__init__(parent)
         self._index_db = index_db
+        #: Held and handed to the DetailPane, so neither has to load Config
+        #: off disk to read one boolean per selection change.
+        self._config = config
         self._current_node: Optional[TreeNode] = None  # noqa: UP045
         #: The in-flight multi-hit resolve for a right-click, and where its
         #: menu should open. Held for the reason every other worker in this
         #: pane is: `setAutoDelete(False)` keeps the C++ side from being
         #: collected while its signal is still owed a delivery.
-        self._resolve_worker = None
+        self._resolve_worker: Optional[workers.Worker] = None  # noqa: UP045
         self._pending_menu_pos = None
         self._live_workers: list = []
         #: The in-flight cache warm-up for the current selection. Kept for the
         #: same reason the resolve worker is: a Worker is discarded by Qt the
         #: moment run() returns, and this codebase keeps its own reference so
         #: the signal still has someone to reach.
-        self._warm_worker = None
+        self._warm_worker: Optional[workers.Worker] = None  # noqa: UP045
         #: What format New Bank is locked to right now, or None while it is
         #: empty. Set by MainWindow. A CALLABLE rather than a stored value
         #: because the lock changes as the user fills and clears New Bank,
@@ -258,7 +268,7 @@ class ExplorerPane(QWidget):
         self._stack.setCurrentWidget(self._tree)
         splitter.addWidget(self._stack)
 
-        self._detail = DetailPane()
+        self._detail = DetailPane(config=self._config)
         splitter.addWidget(self._detail)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -603,8 +613,12 @@ class ExplorerPane(QWidget):
     def _on_hits_resolve_failed(self, message: str) -> None:
         self._resolve_worker = None
         self._pending_menu_pos = None
-        self.statusBar().showMessage(
-            f"Couldn't open the selection: {workers.last_error_line(message)}", 8000
+        # Emitted, not written: this is a QWidget, and `self.statusBar()` is a
+        # QMainWindow method -- calling it raised AttributeError from the one
+        # slot that exists to report a failure, so a broken container produced
+        # silence instead of a sentence.
+        self.statusMessage.emit(
+            f"Couldn't open the selection: {workers.last_error_line(message)}"
         )
 
     def _on_results_selection_changed(self) -> None:

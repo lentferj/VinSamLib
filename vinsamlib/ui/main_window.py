@@ -181,10 +181,13 @@ class MainWindow(QMainWindow):
             lambda msg: self.statusBar().showMessage(msg, 6000)
         )
 
-        self._explorer = ExplorerPane(self._model, self._index_db)
+        self._explorer = ExplorerPane(self._model, self._index_db, config=self._config)
         self._samples = SamplesPane()
         self._samples.setVisible(False)
         self._explorer.selectionChanged.connect(self._samples.show_node)
+        self._explorer.statusMessage.connect(
+            lambda msg: self.statusBar().showMessage(msg, 8000)
+        )
 
         self._bank_pane = BankPane(self._config)
         self._bank_pane.statusMessage.connect(
@@ -1592,7 +1595,7 @@ class MainWindow(QMainWindow):
             staged.name,
             sampledir_import.selection_label(paths),
             staged,
-            source_text=f"{len(paths)} file(s) from " f"{Path(paths[0]).parent}",
+            source_text=f"{len(paths)} file(s) from {Path(paths[0]).parent}",
         )
 
     def _start_sample_import(
@@ -2283,7 +2286,7 @@ class MainWindow(QMainWindow):
             lambda msg: (
                 setattr(self, "_autosave_busy", False),
                 self.statusBar().showMessage(
-                    f"Autosave failed: " f"{workers.last_error_line(msg)}", 8000
+                    f"Autosave failed: {workers.last_error_line(msg)}", 8000
                 ),
             )
         )
@@ -2372,7 +2375,7 @@ class MainWindow(QMainWindow):
         if (bp._items or pp._pending) and QMessageBox.question(
             self,
             "Load Project",
-            "Loading replaces what is in New Bank and Pending for Image. " "Continue?",
+            "Loading replaces what is in New Bank and Pending for Image. Continue?",
         ) != QMessageBox.StandardButton.Yes:
             return
         start = str(self._config.last_image_dir or Path.home())
@@ -2462,9 +2465,7 @@ class MainWindow(QMainWindow):
             # Worth saying out loud: someone who turned the switch on to
             # capture a problem needs to know the capture is in the file
             # they just opened, and the file is where they will look.
-            loaded += (
-                f" — carries a debug log of " f"{rep.call_log_lines} mpc2emu call(s)"
-            )
+            loaded += f" — carries a debug log of {rep.call_log_lines} mpc2emu call(s)"
         self.statusBar().showMessage(loaded, 10000)
         if rep.problems:
             # Never a silent partial load: what did not come back is the half

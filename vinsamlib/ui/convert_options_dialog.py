@@ -663,7 +663,7 @@ class ConvertOptionsDialog(QDialog):
         self._test_button.setEnabled(self._bank_loader is not None)
         if self._bank_loader is None:
             self._test_button.setToolTip(
-                "Not available here -- nothing to preview yet for this " "conversion."
+                "Not available here -- nothing to preview yet for this conversion."
             )
         row.addWidget(self._test_button)
         outer.addLayout(row)
@@ -845,7 +845,7 @@ class ConvertOptionsDialog(QDialog):
             )
             self._stereo_result_label.setText(
                 f"⚠ {n} of {risk['stereo_count']} stereo sample(s) have decorrelated "
-                f"channels (worst: \"{worst_name}\", r={worst_r:+.2f}) -- averaging "
+                f'channels (worst: "{worst_name}", r={worst_r:+.2f}) -- averaging '
                 f"cancels signal there. Consider {suggestion['side'].capitalize()} "
                 f"instead{side_note}."
             )
@@ -913,7 +913,7 @@ class ConvertOptionsDialog(QDialog):
             worst_name, worst_r = risk["decorrelated"][0]
             detail = (
                 f"{len(risk['decorrelated'])} of {risk['stereo_count']} stereo "
-                f"sample(s) have decorrelated channels (worst: \"{worst_name}\", "
+                f'sample(s) have decorrelated channels (worst: "{worst_name}", '
                 f"r={worst_r:+.2f})."
             )
         else:

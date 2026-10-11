@@ -11,6 +11,7 @@ queued Qt signal connection.
 """
 
 from __future__ import annotations  # noqa: I001
+import weakref
 
 import gzip
 import os
@@ -1267,8 +1268,28 @@ class LibraryTreeModel(QAbstractItemModel):
             )
         )  # noqa: B008, RUF100
         worker.signals.error.connect(lambda msg, n=node: self._on_fetch_error(n, msg))
-        worker.signals.finished.connect(lambda *_: self._live_workers.remove(worker))
-        worker.signals.error.connect(lambda *_: self._live_workers.remove(worker))
+        worker.signals.finished.connect(
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(worker)
+                    if worker in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
+        )
+        worker.signals.error.connect(
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(worker)
+                    if worker in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
+        )
         self._live_workers.append(worker)
         workers.run(worker)
 
@@ -1454,10 +1475,26 @@ class LibraryTreeModel(QAbstractItemModel):
             lambda *_a, ps=list(pending): [self._measuring.discard(p) for p in ps]
         )
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         self._live_workers.append(w)
         workers.run(w)
@@ -1540,10 +1577,26 @@ class LibraryTreeModel(QAbstractItemModel):
         )
         w.signals.error.connect(lambda *_a, p=path: self._measuring.discard(p))
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         self._live_workers.append(w)
         workers.run(w)

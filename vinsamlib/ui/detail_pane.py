@@ -7,6 +7,9 @@ back (the generation-counter pattern below).
 """
 
 from __future__ import annotations  # noqa: I001
+import weakref
+
+from typing import Optional
 
 from PySide6.QtWidgets import QTextBrowser, QVBoxLayout, QWidget
 
@@ -14,6 +17,7 @@ from . import workers
 from .models import TreeNode, human_size
 from ..banks import summary
 from ..build import xpm_import
+from ..config import Config
 
 
 def unplayable_rate_line(ps) -> str:
@@ -43,8 +47,12 @@ def unplayable_rate_line(ps) -> str:
 
 
 class DetailPane(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, config: Optional[Config] = None):  # noqa: UP045
         super().__init__(parent)
+        #: The Config this pane reads, held rather than loaded. See `show_node`
+        #: -- a TOML open and parse per selection change, for one boolean, was
+        #: what it used to cost.
+        self._config = config
         layout = QVBoxLayout(self)
         # Flush with the tree above it. Both sit in the same splitter, the
         # tree's frame runs to the pane's edge, and a 10 px inset here left
@@ -106,13 +114,21 @@ class DetailPane(QWidget):
             bank, preset_obj = node.payload
             # The loop check is off unless the user turned it on: it reads the
             # PCM around every loop the preset touches, which is far more work
-            # than summarising one. Config is loaded here rather than held,
-            # so toggling it in Settings takes effect on the next selection.
-            from ..config import Config
-
+            # than summarising one.
+            #
+            # THE CONFIG IS HELD, not loaded per selection. It used to be
+            # `Config.load()` on every click -- a TOML open, a read and a parse,
+            # on the GUI thread, for one boolean -- and the comment here said
+            # "loaded rather than held, so toggling it in Settings takes effect
+            # on the next selection". Holding the window's own Config object
+            # is what actually delivers that: Settings writes to the same object
+            # `MainWindow` holds, so a tick in the dialog is visible here on the
+            # next selection without anyone re-reading the file. A pane built
+            # with no Config (a test, a bare ExplorerPane) falls back to the
+            # file once, so the default is still the default.
             self._run(
                 summary.summarize_preset,
-                (bank, preset_obj, Config.load().loop_click_check),
+                (bank, preset_obj, self._loop_click_check()),
                 gen,
                 self._apply_preset,
             )
@@ -166,7 +182,7 @@ class DetailPane(QWidget):
                 node.format_label or "Unsupported format",
                 [("Name", node.label), ("Size", human_size(node.size))],
                 note=node.note
-                or "Real content, but VinSamLib has no " "reader for this format yet.",
+                or "Real content, but VinSamLib has no reader for this format yet.",
             )
         else:
             self._browser.setHtml("")
@@ -178,6 +194,16 @@ class DetailPane(QWidget):
     # of RSS on a single click in the tree. Past this size the pane shows what
     # the header already told it and says how to see the rest.
     _PARSE_FOR_DETAIL_MAX = 64 << 20
+
+    def _loop_click_check(self) -> bool:
+        """The loop-click setting, read without touching the disk per click."""
+        if self._config is None:
+            # No Config handed over: read the file, once. The setting is written
+            # by Settings through the same `Config.save()` this bypasses, so a
+            # pane with no owner is the one case a re-read is honest -- and it
+            # is one that nothing in the application takes.
+            self._config = Config.load()
+        return bool(getattr(self._config, "loop_click_check", False))
 
     def _show_foreign(self, node: TreeNode, gen: int) -> None:
         from ..build import foreign_import
@@ -249,11 +275,27 @@ class DetailPane(QWidget):
     # -- rendering ------------------------------------------------------------
 
     def _render_kv(
-        self, title: str, rows: list[tuple[str, str]], note: str = ""
+        self,
+        title: str,
+        rows: list[tuple[str, str]],
+        note: Optional[str] = "",  # noqa: UP045
     ) -> None:
-        html = f"<b>{title}</b><br>" + "".join(f"{k}: {v}<br>" for k, v in rows)
+        """EVERYTHING here is a `setHtml` payload, so everything is escaped.
+
+        The values are not known text -- `("Path", node.payload)` is a path off
+        the user's own disk, and a folder called `R&B & Synths` renders as
+        broken markup: `& B` is read as an entity reference, the rest of the row
+        is dropped, and the pane shows a truncated path. `bank_pane`
+        `_apply_preset_info` already escapes the same kind of string; this is the
+        same rule reached for the other pane, applied here rather than described.
+
+        The note and the key are escaped too, for the same reason and because a
+        note that mentions a sample named `<x>` must not become a tag.
+        """
+        body = "".join(f"{_escape(k)}: {_escape(v)}<br>" for k, v in rows)
+        html = f"<b>{_escape(title)}</b><br>" + body
         if note:
-            html += f"<br><i>{note}</i>"
+            html += f"<br><i>{_escape(note)}</i>"
         self._browser.setHtml(html)
 
     def _apply_bank(self, gen: int, bs: summary.BankSummary) -> None:
@@ -345,10 +387,26 @@ class DetailPane(QWidget):
         w.signals.finished.connect(lambda result, g=gen: on_done(g, result))
         w.signals.error.connect(lambda msg, g=gen: self._apply_error(g, msg))
         w.signals.finished.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         w.signals.error.connect(
-            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+            lambda *_: (
+                lambda sref=weakref.ref(self): (
+                    sref()._live_workers.remove(w)
+                    if w in sref()._live_workers
+                    else None
+                )
+                if sref() is not None
+                else None
+            )()
         )
         self._live_workers.append(w)
         workers.run(w)

@@ -28,15 +28,28 @@ from PySide6.QtWidgets import QWidget
 
 from .note_naming import midi_to_name
 
-LOW = 0     # C-2 in this project's C3=60 convention
+LOW = 0  # C-2 in this project's C3=60 convention
 HIGH = 127  # G8
 #: Derived, not counted by hand: the old 52 was a constant that had to agree
 #: with LOW/HIGH and would not have if either moved.
-WHITE_KEY_COUNT = sum(1 for m in range(LOW, HIGH + 1) if (m % 12) in
-                      (0, 2, 4, 5, 7, 9, 11))
+WHITE_KEY_COUNT = sum(
+    1 for m in range(LOW, HIGH + 1) if (m % 12) in (0, 2, 4, 5, 7, 9, 11)
+)
 
-_WHITE_POS = {0: 0.0, 1: 0.5, 2: 1.0, 3: 1.5, 4: 2.0, 5: 3.0, 6: 3.5,
-              7: 4.0, 8: 4.5, 9: 5.0, 10: 5.5, 11: 6.0}
+_WHITE_POS = {
+    0: 0.0,
+    1: 0.5,
+    2: 1.0,
+    3: 1.5,
+    4: 2.0,
+    5: 3.0,
+    6: 3.5,
+    7: 4.0,
+    8: 4.5,
+    9: 5.0,
+    10: 5.5,
+    11: 6.0,
+}
 _WHITE_PCS = frozenset((0, 2, 4, 5, 7, 9, 11))
 
 
@@ -55,7 +68,7 @@ class PianoKeyboardWidget(QWidget):
     def __init__(self, octave_offset: int = 1, parent=None):
         super().__init__(parent)
         self._octave_offset = octave_offset
-        self._zones: list[dict] = []   # [{"lo","root","hi","color"}, ...]
+        self._zones: list[dict] = []  # [{"lo","root","hi","color"}, ...]
         self.setMinimumHeight(90)
         self.setMinimumWidth(WHITE_KEY_COUNT * 12)
 
@@ -101,9 +114,11 @@ class PianoKeyboardWidget(QWidget):
         for midi in range(LOW, HIGH + 1):
             if midi % 12 == 0:
                 r = self._key_rect(midi, white_w, h)
-                p.drawText(r.adjusted(1, 0, -1, -3),
-                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
-                           midi_to_name(midi, self._octave_offset))
+                p.drawText(
+                    r.adjusted(1, 0, -1, -3),
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+                    midi_to_name(midi, self._octave_offset),
+                )
 
         # 4) per-sample range overlays, drawn last so they tint both
         #    white and black keys alike (overlapping zones visibly blend,
@@ -125,8 +140,12 @@ class PianoKeyboardWidget(QWidget):
             if not (LOW <= root <= HIGH):
                 continue
             r = self._key_rect(root, white_w, h)
-            marker = QRectF(r.center().x() - r.width() * 0.16, r.bottom() - r.height() * 0.2,
-                             r.width() * 0.32, r.height() * 0.15)
+            marker = QRectF(
+                r.center().x() - r.width() * 0.16,
+                r.bottom() - r.height() * 0.2,
+                r.width() * 0.32,
+                r.height() * 0.15,
+            )
             p.drawRect(marker)
 
         p.end()
