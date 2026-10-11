@@ -519,6 +519,17 @@ class MainWindow(QMainWindow):
         ImagePane._remember_dir."""
         directory = Path(chosen).parent
         if getattr(self._config, setting, None) != directory:
+            # A FIELD, not a convenient name. `setattr` accepts anything, so a
+            # typo or a setting that only ever existed in a reply writes an
+            # attribute off the side of the Config dataclass -- `save()` never
+            # serialises it, `load()` never reads it, and the dialog that asked
+            # for it falls back to its next choice on every open with nothing
+            # anywhere saying why. `last_instrument_dir` was exactly this.
+            if not hasattr(type(self._config), setting):
+                raise AttributeError(
+                    f"Config has no field {setting!r} -- remembered directories "
+                    f"must name one it persists (see _start_dir)"
+                )
             setattr(self._config, setting, directory)
             self._config.save()
 
@@ -1781,6 +1792,11 @@ class MainWindow(QMainWindow):
         A file chosen here is imported whole: picking one preset out of a
         multi-preset SoundFont is what the Explorer's rows are for, and this
         dialog has no way to show them.
+
+        The remembered directory is `last_instrument_dir`, now a real field
+        on Config (see config.py). Before it existed `last_sample_dir` was
+        used as a stand-in; that meant soundfont imports remembered sample
+        folders and vice-versa, which was wrong.
         """
         path, _filter = QFileDialog.getOpenFileName(
             self,

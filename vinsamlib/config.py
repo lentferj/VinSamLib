@@ -138,6 +138,7 @@ class Config:
     # backup, and neither is where you last added a library folder.
     last_sample_dir: Optional[Path] = None  # noqa: UP045
     last_program_dir: Optional[Path] = None  # noqa: UP045
+    last_instrument_dir: Optional[Path] = None  # noqa: UP045
     # New Bank's size-meter warning threshold, in MB, per format. This is
     # a soft, user-adjustable "will this fit MY hardware's RAM" warning,
     # separate from the hard format-technical ceiling banks/e4b.py always
@@ -287,6 +288,10 @@ class Config:
         last_sample_dir = Path(last_sample_dir_str) if last_sample_dir_str else None
         last_program_dir_str = data.get("last_program_dir")
         last_program_dir = Path(last_program_dir_str) if last_program_dir_str else None
+        last_instrument_dir_str = data.get("last_instrument_dir")
+        last_instrument_dir = (
+            Path(last_instrument_dir_str) if last_instrument_dir_str else None
+        )
         defaults = cls()
         e4b_bank_limit_mb = data.get("e4b_bank_limit_mb", defaults.e4b_bank_limit_mb)
         krz_bank_limit_mb = data.get("krz_bank_limit_mb", defaults.krz_bank_limit_mb)
@@ -338,6 +343,7 @@ class Config:
             last_library_dir=last_library_dir,
             last_sample_dir=last_sample_dir,
             last_program_dir=last_program_dir,
+            last_instrument_dir=last_instrument_dir,
             e4b_bank_limit_mb=e4b_bank_limit_mb,
             krz_bank_limit_mb=krz_bank_limit_mb,
             krz_pram_kb=krz_pram_kb,
@@ -392,6 +398,10 @@ class Config:
             lines.append(f'last_sample_dir = "{self.last_sample_dir.as_posix()}"')
         if self.last_program_dir is not None:
             lines.append(f'last_program_dir = "{self.last_program_dir.as_posix()}"')
+        if self.last_instrument_dir is not None:
+            lines.append(
+                f'last_instrument_dir = "{self.last_instrument_dir.as_posix()}"'
+            )
         lines.append(f"e4b_bank_limit_mb = {self.e4b_bank_limit_mb}")
         lines.append(f"krz_bank_limit_mb = {self.krz_bank_limit_mb}")
         lines.append(f"krz_pram_kb = {self.krz_pram_kb}")
