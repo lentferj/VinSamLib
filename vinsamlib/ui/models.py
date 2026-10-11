@@ -747,9 +747,7 @@ def _fetch_foreign_bank(node: TreeNode) -> list[TreeNode]:
     path: Path = node.payload
     listed = foreign_import.list_presets(path)
     if listed is None:
-        raise ValueError(
-            f"{path.name} does not read as a " f"{node.format_label} file."
-        )
+        raise ValueError(f"{path.name} does not read as a {node.format_label} file.")
     if not listed:
         node.empty_reason = f"{path.name} holds no preset."
         return []
@@ -1141,6 +1139,12 @@ def bank_presets(bank) -> list:
     return list(bank.programs.values())
 
 
+#: How far up a parent chain `_reaches_a_root` will look before deciding a
+#: node is unreachable. A real chain is a handful of levels deep; the
+#: number exists only so a malformed one cannot spin.
+_PARENT_CHAIN_LIMIT = 64
+
+
 # ── the Qt model ─────────────────────────────────────────────────────────────
 
 
@@ -1268,10 +1272,44 @@ class LibraryTreeModel(QAbstractItemModel):
         self._live_workers.append(worker)
         workers.run(worker)
 
+    def _reaches_a_root(self, node: TreeNode) -> bool:
+        """True when walking up `node`'s parents arrives back at a live root.
+
+        Bounded, because a parent chain that does not terminate is a bug and
+        not something to walk for ever -- and it terminates at `None` for a
+        node whose own parent is None, which is the case that matters here.
+        """
+        current = node
+        for _level in range(_PARENT_CHAIN_LIMIT):
+            if current is None:
+                return False
+            if current.parent is None:
+                return any(r is current for r in self._roots)
+            current = current.parent
+        return False
+
     def _on_fetched(
         self, node: TreeNode, children: list[TreeNode], parent_index: QModelIndex
     ) -> None:
         node.fetching = False
+        if not self._reaches_a_root(node):
+            # THE ROOT WAS REMOVED WHILE THIS WALK WAS IN FLIGHT. `parent_index`
+            # was captured when the worker was STARTED and names a node the
+            # model no longer holds, so `beginInsertRows` is being asked to
+            # insert under an index it cannot find -- and it does not check, in
+            # a release build, that `rowCount(parent)` still agrees.
+            #
+            # Measured, on this build: no assertion, no crash. What happens is
+            # worse than either -- the rows are inserted against a node the tree
+            # no longer shows, so the removed root's node is left permanently
+            # holding every child the walk found (`rowCount` on the stale index
+            # keeps answering 20 for a parent `node_index` cannot find), and
+            # `_measure_reference_audio` spawns workers to measure them.
+            #
+            # Removing the folder is an instruction to take its rows with it,
+            # so they are dropped here rather than kept for nobody.
+            node.children = []
+            return
         if not children:
             node.children = []
             # No rows to insert, but the row itself changed: it lost its
