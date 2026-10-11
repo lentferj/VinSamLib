@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import workers
 from ..build.convert import ConversionOptions, stereo_mono_risk, suggest_mono_side
 from ..mpc2emu_bridge import resampler
 
@@ -108,6 +109,18 @@ class ConvertOptionsDialog(QDialog):
         self._tested_mono: Optional[str] = (  # noqa: UP045
             None  # method last successfully Tested  # noqa: RUF100, UP045
         )
+        #: Held for the reason every other worker in this codebase is: a
+        #: Worker is discarded by Qt the moment run() returns, and this keeps
+        #: the reference that survives long enough to deliver its signal.
+        self._live_workers: list = []
+        #: The in-flight preview load. There is at most one: the loader is a
+        #: whole parse of the source (see the docstrings below), so a second
+        #: one answering the same question is not work anybody asked for.
+        self._load_worker: Optional[workers.Worker] = None  # noqa: UP045
+        #: True while OK is waiting for the accept-time risk check. A worker
+        #: that outruns a cancelled dialog must not accept() on the user's
+        #: behalf; the dialog closing is the answer it was going to give.
+        self._accept_pending = False
 
         layout = QVBoxLayout(self)
 
@@ -167,8 +180,10 @@ class ConvertOptionsDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self._on_accept_clicked)
-        buttons.rejected.connect(self.reject)
+        buttons.rejected.connect(self._on_cancel_clicked)
         layout.addWidget(buttons)
+        self._buttons = buttons
+        self._ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
 
         if initial is not None:
             self._apply_initial(initial)
@@ -705,19 +720,86 @@ class ConvertOptionsDialog(QDialog):
             )
 
     def _on_test_clicked(self) -> None:
-        if self._bank_loader is None:
+        if self._bank_loader is None or self._load_worker is not None:
             return
         method = self._current_mono_method()
-        self._test_button.setEnabled(False)
-        try:
-            samples = self._bank_loader()
-        except Exception as ex:  # noqa: BLE001
-            QMessageBox.warning(self, "Test", f"Couldn't preview the samples:\n\n{ex}")
-            return
-        finally:
-            self._test_button.setEnabled(True)
+        self._run_load(
+            "Checking the samples…",
+            lambda samples: self._on_test_samples(samples, method),
+        )
+
+    def _on_test_samples(self, samples, method) -> None:
         self._show_risk(stereo_mono_risk(samples, method or "mix"), method, samples)
         self._tested_mono = method
+
+    def _run_load(self, busy_text: str, on_done) -> None:
+        """Parse the source on a worker, and hand its samples to `on_done`.
+
+        THE LOADERS' OWN DOCSTRINGS SAY NOT TO CALL THEM HERE. Their warnings are
+        not modesty: `xpm_import.load_samples_for_test` -- "*'Not cheap': it
+        loads every referenced WAV, so a project can pull tens of MB*" -- and
+        `foreign_import.load_samples_for_test` -- "*'Not cheap.' This loads every
+        sample: one 1 GB SoundFont here costs 2.7 s and about 3 GB of RSS.
+        Browsing must not call it -- ... callers that do should be on a worker.*"
+
+        Clicking Test did exactly that, and so did merely pressing OK with
+        Mono=Mix and no prior Test: 2.7 s of a window that has stopped
+        repainting, and ~3 GB of RSS allocated while the user watches. On a
+        SoundFont source the byte figure is the worse half of the two, and
+        neither showed a sign of happening.
+
+        The wait is not shorter, it moved -- which is all a parse of a source
+        this size can offer. What it buys is a window that keeps repainting and
+        a button that says what it is doing.
+        """
+        loader = self._bank_loader
+        assert loader is not None  # every caller checks
+        self._test_button.setEnabled(False)
+        self._stereo_result_label.setText(busy_text)
+        w = workers.Worker(loader)
+        # The dialog becomes interactive again BEFORE the result is acted on,
+        # so a caller that wants to keep the button greyed (accept's own risk
+        # check re-disables OK) is the only thing standing between the user
+        # and a second click.
+        w.signals.finished.connect(lambda *_a: self._settle_load())
+        w.signals.finished.connect(on_done)
+        w.signals.error.connect(self._on_load_failed)
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        self._live_workers.append(w)
+        self._load_worker = w
+        workers.run(w)
+
+    def _settle_load(self) -> None:
+        """Whatever the outcome, the dialog is interactive again."""
+        self._load_worker = None
+        self._test_button.setEnabled(self._bank_loader is not None)
+
+    def _on_load_failed(self, message: str) -> None:
+        self._settle_load()
+        self._stereo_result_label.setText("")
+        if self._accept_pending:
+            # OK is waiting on this. Fall through to the generic confirmation
+            # exactly as the synchronous path did when its try/except caught
+            # the loader raising: the user is still told about the risk and
+            # still chooses, so a parse that failed has not quietly become a
+            # silent accept.
+            self._accept_pending = False
+            self._ok_button.setEnabled(True)
+            self._confirm_mono_mix_risk(None, None)
+            return
+        self._warn_load_failed(message)
+
+    def _warn_load_failed(self, message: str) -> None:
+        QMessageBox.warning(
+            self,
+            "Test",
+            "Couldn't preview the samples:\n\n" + workers.last_error_line(message),
+        )
 
     def _show_risk(self, risk: dict, method: Optional[str], samples: list) -> None:  # noqa: UP045
         if risk["stereo_count"] == 0:
@@ -778,22 +860,49 @@ class ConvertOptionsDialog(QDialog):
         available (freshest info wins over a stale Test click), or fall
         back to a generic warning if it isn't -- either way the user
         chooses explicitly rather than the risk being invisible, mirroring
-        mpc2emu's own convert.py CLI warning."""
+        mpc2emu's own convert.py CLI warning.
+
+        The check runs on a worker now, so this returns with OK still
+        disabled and the dialog still open; the dialog accepts itself from
+        the finished slot once the risk is known. Pressing OK is the moment
+        the user has said they are done, and leaving them looking at a frozen
+        window for 2.7 s at that exact point is the worst place in the
+        application to do the parse.
+        """
         if self._current_mono_method() != "mix" or self._tested_mono == "mix":
             self.accept()
             return
-        samples = None
-        risk = None
-        if self._bank_loader is not None:
-            try:
-                samples = self._bank_loader()
-                risk = stereo_mono_risk(samples, "mix")
-            except Exception:  # noqa: BLE001
-                samples, risk = None, None  # fall through to the generic warning below
-        if risk is not None and not risk["decorrelated"]:
+        if self._bank_loader is None:
+            self._confirm_mono_mix_risk(None, None)
+            return
+        if self._load_worker is not None:
+            return  # that load will finish this job from its own slot
+        self._accept_pending = True
+        self._ok_button.setEnabled(False)
+        self._run_load(
+            "Checking for cancellation risk…",
+            lambda samples: self._on_accept_samples(samples),
+        )
+
+    def _on_accept_samples(self, samples) -> None:
+        self._settle_load()
+        if not self._accept_pending:
+            # The user cancelled while this was running. accept() would take
+            # their cancellation back, so the samples are simply dropped.
+            return
+        self._accept_pending = False
+        self._ok_button.setEnabled(True)
+        risk = stereo_mono_risk(samples, "mix")
+        if not risk["decorrelated"]:
             self.accept()
             return
         self._confirm_mono_mix_risk(risk, samples)
+
+    def _on_cancel_clicked(self) -> None:
+        """Cancel, and tell a check still in flight that its answer is moot."""
+        self._accept_pending = False
+        self._ok_button.setEnabled(True)
+        self.reject()
 
     def _confirm_mono_mix_risk(
         self,
