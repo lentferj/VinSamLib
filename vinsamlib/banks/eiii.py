@@ -430,17 +430,17 @@ def parse_bytes(data: bytes, path: str = "<bytes>") -> EIIIFile:
     preset_table_end = fmt.preset_table_offset + n_preset_entries * 4
     if preset_table_end > len(data):
         raise EIIIFormatError(f"{path}: truncated (preset address table runs past EOF)")
-    preset_table = [
-        _u32(data, fmt.preset_table_offset + i * 4) for i in range(n_preset_entries)
-    ]
+    preset_table = list(
+        struct.unpack_from(f"<{n_preset_entries}I", data, fmt.preset_table_offset)
+    )
 
     n_sample_entries = fmt.max_samples + 1
     sample_table_end = fmt.sample_table_offset + n_sample_entries * 4
     if sample_table_end > len(data):
         raise EIIIFormatError(f"{path}: truncated (sample address table runs past EOF)")
-    sample_table = [
-        _u32(data, fmt.sample_table_offset + i * 4) for i in range(n_sample_entries)
-    ]
+    sample_table = list(
+        struct.unpack_from(f"<{n_sample_entries}I", data, fmt.sample_table_offset)
+    )
 
     # sampleArea = presetArea + 1(filler byte) + presetTable[maxPresets] - bias
     # (EIII_FORMAT.md "Address tables" — the terminating preset-table entry
