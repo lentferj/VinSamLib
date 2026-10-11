@@ -364,7 +364,7 @@ def akai_samples_elsewhere(bank, prog) -> bool:
             return False
         return len(bank.missing_samples(prog)) == len(set(wanted))
     except Exception:  # noqa: BLE001
-        return False
+        return False  # unprovable is not empty: a bank we cannot read keeps its rows
 
 
 def _preset_audio_bytes(bank, obj) -> Optional[int]:  # noqa: UP045
@@ -381,7 +381,7 @@ def _preset_audio_bytes(bank, obj) -> Optional[int]:  # noqa: UP045
 
         return summary.summarize_preset(bank, obj).total_sample_bytes
     except Exception:  # noqa: BLE001
-        return None
+        return None  # summary walks arbitrary parsed banks; unknown stays unknown
 
 
 def _container_empty_reason(node: TreeNode) -> str:
@@ -799,7 +799,7 @@ def _fetch_volume_root(node: TreeNode) -> list[TreeNode]:
             try:
                 node.note = warn() or ""
             except Exception:  # noqa: BLE001, S110
-                pass
+                pass  # optional diagnostic hook; a broken note must not break the listing
     return _fetch_vfs_listing(node.handle, None, node)
 
 
@@ -872,7 +872,7 @@ def _vfs_folder_has_content(vol, entry, budget: list[int]) -> bool:
     try:
         children = vol.list(entry)
     except Exception:  # noqa: BLE001
-        return True
+        return True  # an unreadable image folder is shown, not hidden, like :549 above
     subfolders = []
     for e in children:
         if e.kind == EntryKind.FOLDER:
@@ -967,7 +967,7 @@ def _reads_as_mpc_container(path: Path) -> bool:
                 return g.readline().rstrip("\n") == "ACVS"
         return ET.fromstring(path.read_bytes()).tag in _MPC_XML_ROOTS
     except Exception:  # noqa: BLE001
-        return False
+        return False  # sniffing raw bytes: malformed input is simply not an MPC project
 
 
 def _project_program_labels(path: Path, presets: list) -> list[str]:
@@ -1426,7 +1426,7 @@ class LibraryTreeModel(QAbstractItemModel):
             try:
                 found = self._index_db.audio_bytes_for_items(image_path, names)
             except Exception:  # noqa: BLE001, S112
-                continue
+                continue  # stale/busy index skips enrichment; the rows already listed stand
             for r in rows:
                 if r.audio_bytes is None and r.label in found:
                     r.audio_bytes = found[r.label]
@@ -1507,7 +1507,7 @@ class LibraryTreeModel(QAbstractItemModel):
             try:
                 self._index_db.set_container_audio_by_path(path, total)
             except Exception:  # noqa: BLE001, S110
-                pass
+                pass  # cache write is best-effort; the measured display value stands
             for p, node in rows:
                 if p != path or node.audio_bytes is not None:
                     continue
