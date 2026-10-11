@@ -14,6 +14,7 @@ usually right but not always what the user actually wants.
 
 from __future__ import annotations  # noqa: I001
 
+from pathlib import Path
 from typing import Any, Callable, Optional  # noqa: UP035
 
 from PySide6.QtWidgets import (
@@ -26,9 +27,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import workers
 from .format_convert_dialog import FormatConvertDialog
 from .sample_names_widget import SampleNamesWidget
 from .sample_placement_dialog import SamplePlacementDialog, vel_window
+from ..build import sampledir_import
 from ..build.convert import ConversionOptions
 from ..build.sample_names import names_from_base
 
@@ -65,6 +68,42 @@ _DEFAULT_WARNING = (
 )
 
 
+def _preview_note(bank) -> str:
+    """What the placement editor is about to edit, in one line."""
+    try:
+        zones = bank.presets[0].voices[0].zones
+    except (AttributeError, IndexError):
+        return "Auto-computed placement (default)"
+    return f"{len(zones)} sample(s) placed — Adjust Sample Placement… to change them"
+
+
+#: How many parse previews to keep. ONE would do for the shape of the gesture
+#: this exists for -- open the dialog, open the placement editor, maybe change
+#: the octave -- but the octave picker's four choices are all cheap to hold and
+#: a second pick costs nothing then. Each entry is a whole parsed mpc2emu Bank
+#: holding every sample's key range, so it is not unbounded.
+_MAX_PREVIEWS = 8
+
+
+def _preview_key(dir_path: str, octave_offset: Optional[int]) -> tuple:  # noqa: UP045
+    """(path, mtime_ns, size, octave) -- the identity of ONE parse.
+
+    mtime and size, not just the path, because the whole point of a cache on a
+    folder is that an edited folder must re-parse rather than offer what it
+    used to be. `st_mtime_ns` on a directory changes when its entries do.
+    """
+    try:
+        st = Path(dir_path).stat()
+    except OSError:
+        return (dir_path, None, None, octave_offset)
+    return (dir_path, st.st_mtime_ns, st.st_size, octave_offset)
+
+
+def _parse_preview(dir_path: str, octave_offset: Optional[int]) -> Any:  # noqa: UP045
+    """`parse_sample_dir`, on a pool thread. See SampleDirImportDialog."""
+    return sampledir_import.parse_preview(dir_path, octave_offset)
+
+
 class SampleDirImportDialog(FormatConvertDialog):
     def __init__(
         self,
@@ -76,6 +115,7 @@ class SampleDirImportDialog(FormatConvertDialog):
         sample_loader: Optional[Callable[[Optional[int]], list]] = None,  # noqa: UP045
         placement_loader: Optional[Callable[[Optional[int]], Any]] = None,  # noqa: UP045
         source_text: str = "",
+        preview_path: Optional[str] = None,  # noqa: UP045
     ):
         super().__init__(
             parent,
@@ -87,6 +127,15 @@ class SampleDirImportDialog(FormatConvertDialog):
         )
 
         self._placement_loader = placement_loader
+        #: The folder itself, which the callers above deliberately do not hand
+        #: over: `placement_loader` is a closure and `source_text` is prose the
+        #: user reads. Without the path the dialog cannot parse anything until
+        #: asked, which is exactly the freeze this is here to remove -- see
+        #: _prefill_preview.
+        self._preview_path = preview_path
+        self._preview_cache: dict[tuple, Any] = {}
+        self._preview_inflight: set[tuple] = set()
+        self._preview_workers: list = []
         self._zone_overrides: Optional[dict] = None  # noqa: UP045
         self._velocity_overrides: Optional[dict] = None  # noqa: UP045
         self._name_overrides: dict = {}
@@ -134,6 +183,12 @@ class SampleDirImportDialog(FormatConvertDialog):
                 self.octave_offset() or _NAME_OCTAVE_FALLBACK
             )
         )
+        # Changing the middle-C convention changes every root note the parser
+        # derives from the filenames, so it is a DIFFERENT parse -- re-parsed in
+        # the background rather than on the next click.
+        self._octave_box.currentIndexChanged.connect(
+            lambda *_: self._request_preview(self.octave_offset())
+        )
 
         # sample_loader/placement_loader both take the LIVE octave_offset
         # (this dialog's own choice), unlike ConvertOptionsDialog's plain
@@ -151,6 +206,9 @@ class SampleDirImportDialog(FormatConvertDialog):
                 "Check the actual samples for stereo content and, for Mix, "
                 "whether averaging would cancel signal on any of them."
             )
+
+        # LAST, so the octave picker exists and the current offset is readable.
+        self._prefill_preview()
 
     def octave_offset(self) -> Optional[int]:  # noqa: UP045
         return _OCTAVE_CHOICES[self._octave_box.currentIndex()][1]
@@ -176,20 +234,122 @@ class SampleDirImportDialog(FormatConvertDialog):
         base scheme."""
         return dict(self._name_overrides)
 
+    def _preview_key(self) -> tuple:
+        return _preview_key(self._preview_path, self.octave_offset())
+
+    def _cached_preview(self):
+        """The parse already in hand for the current octave, or None."""
+        return self._preview_cache.get(self._preview_key())
+
+    def _prefill_preview(self) -> None:
+        """Parse the folder in the background, the moment the dialog opens.
+
+        `parse_sample_dir` reads every WAV in the folder -- measured 160 ms for
+        400 mono 2-second files, linear in the count, and a real multisample
+        folder is 0.16-0.5 s and more. It used to run on the GUI thread inside
+        `_on_adjust_placement_clicked`, so "Adjust Sample Placement..." opened,
+        nothing appeared to happen, and the window stopped repainting until it
+        was done. It also re-ran on every octave change, and again on every
+        open of the editor, for work that had not changed.
+
+        A folder nobody opens the placement editor for is parsed for nothing,
+        which is the only thing this costs. It is on a pool thread and the cache
+        is bounded, so the cost is not on the window's time and not unbounded
+        in memory.
+        """
+        self._request_preview(self.octave_offset())
+
+    def _request_preview(self, octave, on_done=None) -> bool:
+        """Fill the preview cache for `octave` off the GUI thread.
+
+        True if this call started a parse; False if the answer is already in
+        hand or already being fetched. `on_done` is for a COLD click -- one
+        that arrives before the prefill has landed -- which then runs its work
+        from the same slot rather than freezing to catch up.
+        """
+        if self._preview_path is None:
+            return False
+        key = _preview_key(self._preview_path, octave)
+        if key in self._preview_cache or key in self._preview_inflight:
+            return False
+        self._preview_inflight.add(key)
+        w = workers.Worker(_parse_preview, self._preview_path, octave)
+        w.signals.finished.connect(
+            lambda bank, k=key: self._on_preview(k, bank, on_done)
+        )
+        w.signals.error.connect(
+            lambda msg, k=key: self._on_preview_failed(k, msg, on_done)
+        )
+        w.signals.finished.connect(
+            lambda *_: (
+                self._preview_workers.remove(w) if w in self._preview_workers else None
+            )
+        )
+        w.signals.error.connect(
+            lambda *_: (
+                self._preview_workers.remove(w) if w in self._preview_workers else None
+            )
+        )
+        self._preview_workers.append(w)
+        workers.run(w)
+        return True
+
+    def _settle_preview(self, key: tuple) -> None:
+        self._preview_inflight.discard(key)
+        while len(self._preview_cache) > _MAX_PREVIEWS:
+            self._preview_cache.pop(next(iter(self._preview_cache)))
+
+    def _on_preview(self, key: tuple, bank, on_done) -> None:
+        self._settle_preview(key)
+        self._preview_cache[key] = bank
+        self._placement_status.setText(_preview_note(bank))
+        if on_done is not None:
+            on_done(bank)
+
+    def _on_preview_failed(self, key: tuple, message: str, on_done) -> None:
+        self._settle_preview(key)
+        self._placement_status.setText("Auto-computed placement (default)")
+        if on_done is None:
+            QMessageBox.warning(
+                self,
+                "Adjust Sample Placement",
+                "Couldn't parse the folder:\n\n" + workers.last_error_line(message),
+            )
+            return
+        on_done(None)
+
     def _on_adjust_placement_clicked(self) -> None:
         if self._placement_loader is None:
             return
-        self._placement_button.setEnabled(False)
-        try:
-            bank = self._placement_loader(self.octave_offset())
-        except Exception as ex:  # noqa: BLE001
-            QMessageBox.warning(
-                self, "Adjust Sample Placement", f"Couldn't parse the folder:\n\n{ex}"
-            )
+        bank = self._cached_preview()
+        if bank is not None:
+            self._show_placement_editor(bank)
             return
-        finally:
-            self._placement_button.setEnabled(True)
+        # Cold: the prefill has not landed yet, or the octave changed a moment
+        # ago. Parsed on a worker and the editor opens when it is done, instead
+        # of the window stopping while the click waits for 0.5 s of WAV reads.
+        if not self._request_preview(self.octave_offset(), on_done=self._on_cold_click):
+            # Nothing to wait for (no path): the closure is all there is.
+            self._placement_button.setEnabled(False)
+            try:
+                bank = self._placement_loader(self.octave_offset())
+            except Exception as ex:  # noqa: BLE001
+                QMessageBox.warning(
+                    self,
+                    "Adjust Sample Placement",
+                    f"Couldn't parse the folder:\n\n{ex}",
+                )
+                return
+            finally:
+                self._placement_button.setEnabled(True)
+            self._show_placement_editor(bank)
 
+    def _on_cold_click(self, bank) -> None:
+        if bank is None:
+            return  # _on_preview_failed already said so
+        self._show_placement_editor(bank)
+
+    def _show_placement_editor(self, bank) -> None:
         zones = bank.presets[0].voices[0].zones
         rows = [
             {
