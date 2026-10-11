@@ -77,6 +77,30 @@ def _resolve_hits(hits: list) -> list:
     return [search_resolve.resolve_result(hit) for hit in hits]
 
 
+def _warm_containers(hits: list) -> int:
+    """Fill the container cache for a selection, up to that cache's own cap.
+
+    A DRAG is the reason this exists. `_ResultsListWidget.mimeData` has to
+    return its payload before the drag starts, so Qt pulls it on the caller's
+    thread whatever it costs -- and dragging sixty results out of a 30 MB bank
+    measured 2 145 ms there. Warming the same cache the resolve reads makes
+    that drag pay for containers already in hand.
+
+    Stops at the cache's cap rather than walking all of `hits`: a page holds
+    up to a thousand hits, and parsing a thousand banks for a gesture the user
+    may never make is speculation. The cap is what bounds the memory too --
+    one entry is one whole parsed bank.
+    """
+    cap = search_resolve._MAX_CONTAINERS
+    warmed = 0
+    for hit in hits:
+        if search_resolve.cache_stats()[0] >= cap:
+            break
+        search_resolve.resolve_result(hit)
+        warmed += 1
+    return warmed
+
+
 class _ResultsListWidget(QListWidget):
     """QListWidget's own default drag payload only carries enough to
     reorder items within itself -- to make a multi-selected drag out of
@@ -143,8 +167,8 @@ class ExplorerPane(QWidget):
     def __init__(
         self,
         model: LibraryTreeModel,
-        index_db: Optional[IndexDB] = None,
-        parent=None,  # noqa: UP045
+        index_db: Optional[IndexDB] = None,  # noqa: UP045
+        parent=None,
     ):  # noqa: RUF100, UP045
         super().__init__(parent)
         self._index_db = index_db
@@ -156,6 +180,11 @@ class ExplorerPane(QWidget):
         self._resolve_worker = None
         self._pending_menu_pos = None
         self._live_workers: list = []
+        #: The in-flight cache warm-up for the current selection. Kept for the
+        #: same reason the resolve worker is: a Worker is discarded by Qt the
+        #: moment run() returns, and this codebase keeps its own reference so
+        #: the signal still has someone to reach.
+        self._warm_worker = None
         #: What format New Bank is locked to right now, or None while it is
         #: empty. Set by MainWindow. A CALLABLE rather than a stored value
         #: because the lock changes as the user fills and clears New Bank,
@@ -214,6 +243,10 @@ class ExplorerPane(QWidget):
         self._results.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
+        # Watched so a multi-selection can be resolved in the background: a
+        # drag pulls mimeData() on the GUI thread and cannot wait for a worker
+        # itself (see _on_results_selection_changed).
+        self._results.itemSelectionChanged.connect(self._on_results_selection_changed)
         self._results.setDragEnabled(True)
         self._results.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self._results.currentItemChanged.connect(self._on_result_current_changed)
@@ -573,6 +606,39 @@ class ExplorerPane(QWidget):
         self.statusBar().showMessage(
             f"Couldn't open the selection: {workers.last_error_line(message)}", 8000
         )
+
+    def _on_results_selection_changed(self) -> None:
+        """Warm the container cache for a multi-selection, off the GUI thread.
+
+        The OTHER half of the freeze the review measured. A right-click now
+        resolves off the GUI thread, but a drag cannot: `mimeData()` has to
+        return its payload before the drag starts, so Qt pulls it on the
+        caller's thread whatever the cost. Dragging sixty results out of a
+        30 MB bank cost 2 145 ms there too.
+
+        So the selection is resolved in the background and the result lands in
+        the SAME cache the right-click and the drag both read, instead of a
+        second store of parsed banks. Bounded by that cache's own cap, because
+        a page holds up to a thousand hits and parsing a thousand banks for a
+        gesture the user may not make is speculation, not warm-up.
+        """
+        if self._warm_worker is not None:
+            return
+        hits = [i.data(Qt.ItemDataRole.UserRole) for i in self._results.selectedItems()]
+        hits = [h for h in hits if h is not None]
+        if len(hits) < 2:
+            return
+        w = workers.Worker(_warm_containers, hits)
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.finished.connect(lambda *_: setattr(self, "_warm_worker", None))
+        self._live_workers.append(w)
+        self._warm_worker = w
+        workers.run(w)
 
     def _show_context_menu(self, nodes: list[Optional[TreeNode]], global_pos) -> None:  # noqa: UP045
         presets = [n for n in nodes if n is not None and n.kind == "preset"]
