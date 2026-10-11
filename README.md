@@ -271,6 +271,10 @@ would be walked twice, shown under two rows and indexed twice, which reads as
 a duplicate bug rather than as something you asked for. A symlink pointing at
 a root is recognised as that root.
 
+A folder added while a scan is already running is **queued, not dropped**:
+it is walked when the running scan finishes, and the status message says it
+is waiting rather than leaving the new rows permanently unindexed.
+
 ### Audition a preset before you carry it
 
 Every defect this project found by ear needed media carried to a machine
@@ -932,6 +936,10 @@ dialog with up to three choices:
 
 It only fires once per crossing — adding still more while already over
 won't nag you again until you drop back under the limit.
+
+A drop that mixes new presets with duplicates warns about **the presets it
+actually added**, not the whole drop: rows skipped as duplicates are not
+counted in the warning.
 
 > Until 2026-09-14 **Keep Anyway did nothing at all**: the box closed and
 > Save stayed disabled. Settings had promised the button since it was
@@ -1694,7 +1702,14 @@ That remedy is worth knowing about, because it is **not** applied
 automatically and the reason is measured. Above an absolute playback rate the
 E4XT runs off the end of a sample into neighbouring sample RAM — measured on
 real hardware 2026-09-20: a 44.1 kHz sample plays cleanly to +45 semitones and
-breaks at +46, and halving the rate buys a full octave. But commercial banks
+breaks at +46, and halving the rate buys a full octave. That +46 is the
+**first EDGE of a band, not a ceiling**: the same bench measurement has the
+E4XT free-running at +46..+49 and +58..+61 with normal playback at +50..+57
+and again at +62..+67 — so a zone past the edge is a zone whose window
+*reaches into* a free-run band, and zones living entirely in the +50..+57
+band still play. The warning reports that first edge (each record carries
+it), and narrows to the bands rather than treating everything above +46 as
+unsafe. But commercial banks
 are routinely authored past it — and **which** ones is not evenly spread. Over
 five libraries in this project's own collection, 1 605 presets:
 

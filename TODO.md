@@ -8,7 +8,9 @@ know. Resolution strategies live next to the code that needs them.
 
 # External code review — 2026-10-09 (whole repo, ~38k LOC)
 
-**Status: findings only, no code changed in this pass.** Full record, with
+**Status: findings worked on `fix/code-review-2026-10-09` — the fix ledger in
+[`docs/CODE_REVIEW_2026-10-09.md`](docs/CODE_REVIEW_2026-10-09.md) is the
+record; nothing pushed.** Full record, with
 every reproduction and the evidence for each refutation, in
 [`docs/CODE_REVIEW_2026-10-09.md`](docs/CODE_REVIEW_2026-10-09.md).
 

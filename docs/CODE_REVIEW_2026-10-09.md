@@ -1261,6 +1261,39 @@ pushed. Each entry names the finding, the commit, and the verification.
 | M9 + M12 | `4d741e0` (superseded, see below) | ui_smoke_pending, audition_dialog_render, audition_worker_generation, favourites_list |
 | M10 + M23 | `fabebf3` | convert_dialog_clicks, ui_smoke_sampledir_import, convert_option_additions |
 | L5-7 | `f56e25e` | a drop warns about the presets it actually added |
+| L5-10 | `a420d5b` | `tests/manual_ui_image_read_snapshot.py`: fails on the old code, where the re-read after an in-place mutation ran on the GUI thread (16 ms on a 537 MB / 300-bank EMU3 HD, scaling with the image); `manual_ui_smoke_image` and both "reaches image" tests still pass |
+| L5-11 | `7cc3939` | `tests/manual_ui_queued_scan.py`: fails on the old code ("adding a folder during a scan said nothing about the wait"); folders queue and drain when the running scan finishes, on the failed-exit path too |
+| M23 | `f2310f6` | `tests/manual_sampledir_preview_cache.py` (arrived with this commit): preview cached on (path, mtime_ns, size, octave_offset), prefilled by a worker on open; fails on the old inline-per-click parse; `ui_smoke_sampledir_import`, `sampledir_velocity` still pass |
+| M23 | `da8d3b9` | 4-line companion to `f2310f6`: hands the placement dialog the folder so the worker prefill has a source; covered by the same `manual_sampledir_preview_cache` |
+| M23 | `4889096` | same test now drives all three cases — prefill off-thread, warm cache, and a cold click that queues behind the in-flight parse instead of falling back to the GUI thread — plus the key carrying (path, mtime_ns, size, octave) so an edited folder re-parses |
+| M23 seam | `13806ae` | `manual_dialog_seam` back to baseline (54 raise-sites): the background-parse and cold-click failure paths share one modal site; `manual_sampledir_preview_cache` still green |
+| L5-28 | `f502f54` | `tests/manual_ui_models_remove_root.py`: fails on the old code ("the removed root's node still holds 20 rows"); verdict first — no crash — and the walk's rows are dropped when the node no longer reaches a live root |
+| H1 interim (A1.1) | `b01a49b` | weakref interim for the 16 completion lambdas' `live_workers` removal across 11 panes; releases the pane and its `IndexDB` where `deleteLater` provably did not |
+| H1 redesign (A1.2) | `7fe7ac1` | worker signals get a parent in the receiver; the pool owns the runnable; `setAutoDelete(False)` dropped — the direction the review verified as the honest fix |
+| H1 test (A1.3) | — (untracked) | `tests/manual_worker_lifetime.py` (untracked — `tests/` is gitignored by decision, and this line is the tracked record of it): N workers finish + pane dropped → 0 reachable Workers, 0 panes; fails on the old `setAutoDelete(False)` shape |
+| L5-8 + L5-9 | `d84a7b3` | `tests/manual_detail_pane_escape.py`: fails on the old code ("the pane is not showing the path verbatim: '/mnt/R&amp;S' -> '/mnt/R&S'"); title, keys, values and note escaped; `ExplorerPane` takes a Config and hands it down |
+| L5-9 follow-up (A2.2) | `996bb5c` | detail_pane holds the window's Config (cached `_config_ref`) with the staleness comment per ER-6; no TOML open + parse per click |
+| L5-5 (A2.1) | `a5e0aea` | `last_instrument_dir` is now a real `Config` field, wired into foreign-file import; replaces the `last_sample_dir` stopgap; `tests/manual_ui_remember_dirs.py` |
+| L5 `co_varnames` probe (A2.3) | `a0588d5` | capability probes read `inspect.signature` via `build/_compat.py accepts_kw` instead of `fn.__code__.co_varnames` (which included locals); gated by `manual_upstream_parity` |
+| L5 private-name reaches (A2.4) | `7a40e53` | the four private reaches in `assemble()` (`e4b_writer._build_e4ma/_build_emst`, `eiii_writer._create_empty_bank/BANK_FORMATS`) gated behind `Config.check_assemble_support`; `manual_upstream_parity.check_assemble_support_gate` |
+| L5 EIII address tables (A2.5) | `59c4c2e` | the two address tables parse with one `unpack_from` each instead of ~1 257 calls; output byte-identical (roundtrip corpus unchanged) |
+| ER-6 models.py excepts (B2) | `d27a884` | every broad except in `ui/models.py` carries its one-line reason; the eight that were OPEN are closed |
+| T-B6 | — (`tests/` gitignored) | verification lives in the gitignored `tests/` tree and cannot travel with a commit; this ledger line is the tracked record of it |
+
+### Isolation-test coverage cross-ref
+
+`tests/` is gitignored, so a test name below is a claim, not a file — the
+COVERS rule from the release matrix applies: each test fails on the code it
+guards (the ledger's Verification column states how). `docs/RELEASE_TEST_MATRIX.md`
+is untouched by this pass; the proposed homes are for whoever edits it next.
+
+| Test | Guards | Proposed matrix home |
+|---|---|---|
+| `manual_worker_lifetime.py` (A1.3) | H1 — workers and panes released after N runs | Matrix K, beside AUD7 (generation guard): lifetime, not supersession |
+| `manual_upstream_parity.py :: check_assemble_support_gate` (A2.4) | private mpc2emu reaches in `assemble()` fail loudly, not at convert time | release-run preamble, beside `manual_unbound_names` (same fault class: a rename upstream) |
+| `manual_unbound_names.py` | `NAME.attr` where `NAME` is bound nowhere | already named in the release run ("cheap and belongs early"); unchanged |
+| `manual_stdout_capture_isolation.py` (M15) | per-thread stdout capture under the shared pool | Matrix H-adjacent: conversion-harness behaviour, not an option |
+| `manual_xpm_sync_bpm_isolation.py` (M16) | tempo arrives as a parameter, nothing leaks into the next import | H21 (`lfo_sync_bpm`) boundary row |
 
 **History note.** `4d741e0` and `47c1997` carry the same intent and the second
 did not replace the first — a `--amend` during concurrent-agent lock contention
@@ -1276,18 +1309,13 @@ loading the vendored fixture by file path rather than by module name.
 
 ## Still open on this branch
 
-- **H1's other half** — `ui/workers.py`. Every `Worker` that has run is
-  retained for the process lifetime (`setAutoDelete(False)`), and the 16
-  completion lambdas pin their owning pane with it. The one-line `deleteLater`
-  fix does NOT work; that was tested. The direction that does: give the signals
-  bridge a parent in the receiver and let the pool own the runnable.
-- **M13** is done in code but its caveat wording is inherited from M22's
-  rewrite; re-read `_lfo_caveats` when next in `audition/`.
-- **L5-5** needs a `config.py` field (`last_instrument_dir`) which no agent
-  owned; the UI now uses `last_sample_dir` as a stopgap.
-- **L5-28** — `ui/models.py` `remove_root` during an in-flight `fetchMore`.
-  Unresolved: no agent could demonstrate the crash, and it was deliberately
-  left alone rather than "fixed" speculatively.
+Everything else this section once named has landed — the ledger above is the
+record: H1's worker half (`b01a49b` interim + `7fe7ac1` redesign,
+`tests/manual_worker_lifetime.py`), L5-5 (`a5e0aea`), L5-28 (`f502f54`).
+
+- **M13 (deferred, advisory, no behaviour owed)** — done in code, but its
+  caveat wording is inherited from M22's rewrite; re-read `_lfo_caveats` when
+  next in `audition/`.
 - **`vfs/akai.py`'s `_truncated` counter still never resets** — inherited from
   the index agent, which could not edit `vfs/`. M8 stopped the double counting,
   so it now doubles from one listing instead of two.
