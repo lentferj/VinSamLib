@@ -1268,28 +1268,15 @@ class LibraryTreeModel(QAbstractItemModel):
             )
         )  # noqa: B008, RUF100
         worker.signals.error.connect(lambda msg, n=node: self._on_fetch_error(n, msg))
-        worker.signals.finished.connect(
-            lambda *_: (
-                lambda sref=weakref.ref(self): (
-                    sref()._live_workers.remove(worker)
-                    if worker in sref()._live_workers
-                    else None
-                )
-                if sref() is not None
-                else None
-            )()
-        )
-        worker.signals.error.connect(
-            lambda *_: (
-                lambda sref=weakref.ref(self): (
-                    sref()._live_workers.remove(worker)
-                    if worker in sref()._live_workers
-                    else None
-                )
-                if sref() is not None
-                else None
-            )()
-        )
+        _self_ref = weakref.ref(self)
+
+        def _drop(*_, _w=worker, _ref=_self_ref):
+            pane = _ref()
+            if pane is not None and _w in pane._live_workers:
+                pane._live_workers.remove(_w)
+
+        worker.signals.finished.connect(_drop)
+        worker.signals.error.connect(_drop)
         self._live_workers.append(worker)
         workers.run(worker)
 
@@ -1474,28 +1461,15 @@ class LibraryTreeModel(QAbstractItemModel):
         w.signals.error.connect(
             lambda *_a, ps=list(pending): [self._measuring.discard(p) for p in ps]
         )
-        w.signals.finished.connect(
-            lambda *_: (
-                lambda sref=weakref.ref(self): (
-                    sref()._live_workers.remove(w)
-                    if w in sref()._live_workers
-                    else None
-                )
-                if sref() is not None
-                else None
-            )()
-        )
-        w.signals.error.connect(
-            lambda *_: (
-                lambda sref=weakref.ref(self): (
-                    sref()._live_workers.remove(w)
-                    if w in sref()._live_workers
-                    else None
-                )
-                if sref() is not None
-                else None
-            )()
-        )
+        _self_ref = weakref.ref(self)
+
+        def _drop(*_, _w=w, _ref=_self_ref):
+            pane = _ref()
+            if pane is not None and _w in pane._live_workers:
+                pane._live_workers.remove(_w)
+
+        w.signals.finished.connect(_drop)
+        w.signals.error.connect(_drop)
         self._live_workers.append(w)
         workers.run(w)
 
@@ -1576,28 +1550,15 @@ class LibraryTreeModel(QAbstractItemModel):
             )
         )
         w.signals.error.connect(lambda *_a, p=path: self._measuring.discard(p))
-        w.signals.finished.connect(
-            lambda *_: (
-                lambda sref=weakref.ref(self): (
-                    sref()._live_workers.remove(w)
-                    if w in sref()._live_workers
-                    else None
-                )
-                if sref() is not None
-                else None
-            )()
-        )
-        w.signals.error.connect(
-            lambda *_: (
-                lambda sref=weakref.ref(self): (
-                    sref()._live_workers.remove(w)
-                    if w in sref()._live_workers
-                    else None
-                )
-                if sref() is not None
-                else None
-            )()
-        )
+        _self_ref = weakref.ref(self)
+
+        def _drop(*_, _w=w, _ref=_self_ref):
+            pane = _ref()
+            if pane is not None and _w in pane._live_workers:
+                pane._live_workers.remove(_w)
+
+        w.signals.finished.connect(_drop)
+        w.signals.error.connect(_drop)
         self._live_workers.append(w)
         workers.run(w)
 

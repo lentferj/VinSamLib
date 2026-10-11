@@ -918,28 +918,15 @@ class PendingBanksPane(QWidget):
             )
         )
         w.signals.error.connect(self._on_build_error)
-        w.signals.finished.connect(
-            lambda *_: (
-                lambda sref=weakref.ref(self): (
-                    sref()._live_workers.remove(w)
-                    if w in sref()._live_workers
-                    else None
-                )
-                if sref() is not None
-                else None
-            )()
-        )
-        w.signals.error.connect(
-            lambda *_: (
-                lambda sref=weakref.ref(self): (
-                    sref()._live_workers.remove(w)
-                    if w in sref()._live_workers
-                    else None
-                )
-                if sref() is not None
-                else None
-            )()
-        )
+        _self_ref = weakref.ref(self)
+
+        def _drop(*_, _w=w, _ref=_self_ref):
+            pane = _ref()
+            if pane is not None and _w in pane._live_workers:
+                pane._live_workers.remove(_w)
+
+        w.signals.finished.connect(_drop)
+        w.signals.error.connect(_drop)
         self._live_workers.append(w)
         workers.run(w)
 
