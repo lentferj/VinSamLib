@@ -211,9 +211,33 @@ SEARCH_FRAMES = 1200
 
 #: A loop shorter than this is refused by the points-only repairs. Below a few
 #: hundred frames a loop is short enough that moving either end changes its
-#: length by a musically significant fraction — for a single-cycle loop that is
-#: its PITCH, and a repair that retunes the sample is not a repair.
+#: length by a musically significant fraction — for a single-cycle loop that
+#: is its PITCH, and a repair that retunes the sample is not a repair.
 MIN_LOOP_FRAMES = 600
+
+#: What `limit` means, and why it exists. The three repairs below search
+#: SEARCH_FRAMES on either side of a loop point, and the caller's PCM buffer
+#: is not always the sample's own audio: KRZ keeps ONE region shared by every
+#: sample in the file, so a search over the whole buffer walks out of the
+#: sample being repaired and into its neighbour's. Proven on a two-sample
+#: bank where `nudge` moved sample A's loop end from word 1441 to a match it
+#: found in B: the loop tail then played B's audio, and the only check that
+#: ran afterwards (`got_words < n_words`) passed, because A's declared extent
+#: still covered the point. A repair that crosses a sample boundary is worse
+#: than no repair -- it plays audio nobody asked for, in a loop nobody chose.
+#:
+#: `None` (the default) leaves the search unbounded, which is correct for the
+#: two formats that hand in a buffer holding exactly one sample's PCM. An int
+#: is an exclusive upper bound in words; a `(lo, hi)` pair bounds both ends.
+
+
+def _region(limit) -> tuple:
+    """`limit` -> `(lo, hi)`, either of which may be None for "unbounded"."""
+    if limit is None:
+        return (None, None)
+    if isinstance(limit, tuple):
+        return (limit[0], limit[1])
+    return (None, limit)
 
 
 def _slope(pcm: bytes, w: int, big_endian: bool = True) -> int:
@@ -222,12 +246,24 @@ def _slope(pcm: bytes, w: int, big_endian: bool = True) -> int:
 
 
 def _zero_crossings(
-    pcm: bytes, centre: int, want_rising: bool, big_endian: bool = True
+    pcm: bytes,
+    centre: int,
+    want_rising: bool,
+    big_endian: bool = True,
+    limit=None,
 ) -> list[int]:
     """Word offsets near `centre` where the waveform crosses zero with the
-    requested slope, nearest first."""
+    requested slope, nearest first. Bounded by `limit` (see above)."""
+    lo_lim, hi_lim = _region(limit)
     lo = max(0, centre - SEARCH_FRAMES)
-    f = _frames(pcm, lo, SEARCH_FRAMES * 2, big_endian)
+    hi = centre + SEARCH_FRAMES
+    if lo_lim is not None:
+        lo = max(lo, lo_lim)
+    if hi_lim is not None:
+        hi = min(hi, hi_lim)
+    if hi <= lo:
+        return []
+    f = _frames(pcm, lo, hi - lo, big_endian)
     out = []
     for i in range(len(f) - 1):
         a, b = f[i], f[i + 1]
@@ -240,25 +276,40 @@ def _zero_crossings(
     return out
 
 
+def _inside(w: int, limit) -> bool:
+    """Whether one word offset lies in the region `limit` names."""
+    lo, hi = _region(limit)
+    if lo is not None and w < lo:
+        return False
+    return not (hi is not None and w >= hi)
+
+
 def snap_to_zero(
-    pcm: bytes, loop_start: int, loop_end: int, big_endian: bool = True
+    pcm: bytes, loop_start: int, loop_end: int, big_endian: bool = True, limit=None
 ) -> tuple[int, int] | None:
     """Both points to the nearest same-slope zero crossing. Points only."""
     if loop_end - loop_start < MIN_LOOP_FRAMES:
         return None
+    if not _inside(loop_start, limit) or not _inside(loop_end, limit):
+        # The loop as authored already sits outside the region it belongs to
+        # (a KRZ sample whose loop end runs past its own audio). Searching
+        # from there would only find points further out.
+        return None
     rising = _slope(pcm, loop_start, big_endian) >= 0
-    starts = _zero_crossings(pcm, loop_start, rising, big_endian)
-    ends = _zero_crossings(pcm, loop_end, rising, big_endian)
+    starts = _zero_crossings(pcm, loop_start, rising, big_endian, limit)
+    ends = _zero_crossings(pcm, loop_end, rising, big_endian, limit)
     if not starts or not ends:
         return None
     s, e = starts[0], ends[0]
+    if not _inside(s, limit) or not _inside(e, limit):
+        return None
     if e - s < MIN_LOOP_FRAMES:
         return None
     return s, e
 
 
 def nudge_to_match(
-    pcm: bytes, loop_start: int, loop_end: int, big_endian: bool = True
+    pcm: bytes, loop_start: int, loop_end: int, big_endian: bool = True, limit=None
 ) -> tuple[int, int] | None:
     """Move the loop END to where the waveform best matches the START.
 
@@ -268,20 +319,30 @@ def nudge_to_match(
     """
     if loop_end - loop_start < MIN_LOOP_FRAMES:
         return None
+    if not _inside(loop_start, limit) or not _inside(loop_end, limit):
+        return None
     tgt = _frames(pcm, loop_start, 1, big_endian)
     if not tgt:
         return None
     tgt_v, tgt_s = tgt[0], _slope(pcm, loop_start, big_endian)
     lo = max(loop_start + MIN_LOOP_FRAMES, loop_end - SEARCH_FRAMES)
+    hi = loop_end + SEARCH_FRAMES
+    lo_lim, hi_lim = _region(limit)
+    if lo_lim is not None:
+        lo = max(lo, lo_lim)
+    if hi_lim is not None:
+        hi = min(hi, hi_lim)
     best, best_at = None, None
-    for w in range(lo, loop_end + SEARCH_FRAMES):
+    for w in range(lo, hi):
         f = _frames(pcm, w, 2, big_endian)
         if len(f) < 2:
             break
         cost = abs(f[0] - tgt_v) + abs((f[1] - f[0]) - tgt_s)
         if best is None or cost < best:
             best, best_at = cost, w
-    return (loop_start, best_at) if best_at is not None else None
+    if best_at is None or not _inside(best_at, limit):
+        return None
+    return (loop_start, best_at)
 
 
 def crossfade(
@@ -290,6 +351,7 @@ def crossfade(
     loop_end: int,
     fade_frames: int = 256,
     big_endian: bool = True,
+    limit=None,
 ) -> bytes | None:
     """Cross-fade INTO the loop end so the wrap is continuous. REWRITES PCM.
 
@@ -301,6 +363,11 @@ def crossfade(
     what the sample plays. It is lossy: the original frames in the fade window
     are gone. Returns a NEW pcm buffer; the caller decides whether to keep it.
     """
+    if not _inside(loop_start, limit) or not _inside(loop_end, limit):
+        # The fade WINDOW is rewritten in place, so it has to lie inside the
+        # region the sample owns -- a loop end past that would blend this
+        # sample's tail into its neighbour's audio.
+        return None
     n = min(fade_frames, (loop_end - loop_start) // 2)
     if n < 8:
         return None
@@ -331,28 +398,39 @@ REPAIR_LABELS = {
 
 
 def apply_repair(
-    kind: str, pcm: bytes, loop_start: int, loop_end: int, big_endian: bool = True
+    kind: str,
+    pcm: bytes,
+    loop_start: int,
+    loop_end: int,
+    big_endian: bool = True,
+    limit=None,
 ) -> tuple[bytes | None, int, int] | None:
     """Run one named repair. Returns (new_pcm_or_None, start, end), or None.
 
     `new_pcm` is None for the two point-moving repairs — the caller then
     patches only the loop fields — and a full replacement buffer for the
     cross-fade, whose loop points do not move. Returning None at all means
-    the repair could not be applied (too short a loop, no crossing found);
-    the caller must leave the sample exactly as it was rather than guess.
+    the repair could not be applied (too short a loop, no crossing found, or
+    the region bound `limit` refuses the answer); the caller must leave the
+    sample exactly as it was rather than guess.
 
     Every assembler goes through here so that the byte-order argument is
     passed in ONE place. It was previously threaded per call site, and both
     times it was got wrong it failed silently: the detector reported a
     flawless corpus, and `crossfade` used a `big_endian` it never declared.
+
+    `limit` bounds the region the sample owns, in words — an int for an
+    exclusive upper bound or a `(lo, hi)` pair. Only KRZ needs it: E4B and
+    EIII hand in a buffer holding one sample's PCM, so the buffer is its own
+    bound. See the note beside MIN_LOOP_FRAMES for what goes wrong without it.
     """
     if kind not in REPAIRS:
         raise ValueError(f"unknown loop repair: {kind!r}")
     if kind == "fade":
-        out = crossfade(pcm, loop_start, loop_end, big_endian=big_endian)
+        out = crossfade(pcm, loop_start, loop_end, big_endian=big_endian, limit=limit)
         return None if out is None else (out, loop_start, loop_end)
     fn = snap_to_zero if kind == "snap" else nudge_to_match
-    moved = fn(pcm, loop_start, loop_end, big_endian=big_endian)
+    moved = fn(pcm, loop_start, loop_end, big_endian=big_endian, limit=limit)
     if moved is None:
         return None
     s, e = moved

@@ -1109,10 +1109,21 @@ def assemble(
     for key in sample_order:
         samp = sample_lookup[key]
         src = src_by_id[key[0]]
-        # Repair first: in KRZ the loop end IS the sample end, so the extent
-        # below has to be taken from the repaired fields (see the helper).
-        samp, src_pcm = _repair_sample_loops(src, samp, loop_repair)
+        # THE EXTENT IS TAKEN HERE, BEFORE THE REPAIR, AND PASSED DOWN AS A
+        # BOUND. `_all_sample_lengths()` resolves every length out of
+        # `self.samples` -- the bank's ORIGINAL objects -- so it never sees a
+        # repaired value whenever it is called; and the repair's searches walk
+        # the SHARED PCM region, which is every sample's audio at once. So the
+        # region this sample owns has to be known up front and handed to the
+        # repair as its limit, or a search for a better loop end finds a match
+        # in the NEXT sample and writes a loop point past this sample's own
+        # audio -- proven with nudge moving one sample's end from word 1441 to
+        # a match it found in its neighbour.
         old_start, n_words = src.sample_word_extent(samp)
+        limit = (old_start, old_start + n_words)
+        # Repair second, bounded by that extent (see the helper's docstring for
+        # why the order is what it is).
+        samp, src_pcm = _repair_sample_loops(src, samp, loop_repair, limit=limit)
         piece = src_pcm[old_start * 2 : (old_start + n_words) * 2] if n_words else b""
 
         # The key includes a digest of the AUDIO, not just the object header.
@@ -1230,8 +1241,13 @@ def assemble(
     # only when two source banks disagree about what lives at that number.
     fx_order: list[tuple[int, int]] = []
     fx_lookup: dict[tuple[int, int], KrzObject] = {}
+    # Hoisted out of the loop below, which used to rebuild it once per
+    # PROGRAM: a dict over every FX object in the file, per program staged. A
+    # bank with 600 programs carrying its own effects paid for the same dict
+    # 600 times.
+    owned_by_src = {id(s): s.other_by_id() for s, _ in prog_list}
     for src, prog in prog_list:
-        owned = src.other_by_id()
+        owned = owned_by_src[id(src)]
         if warnings_out is not None:
             clash = src.other_id_collisions()
             for fid in src.program_fx_refs(prog):
@@ -1328,7 +1344,23 @@ def assemble(
     )
 
     if warnings_out is not None:
-        n_rom = rom_keymap_refs(parse_bytes(out, "built"))
+        # COUNTED FROM THE REFERENCE GRAPH, NOT BY RE-PARSING THE FILE WE JUST
+        # BUILT. This used to call `rom_keymap_refs(parse_bytes(out, "built"))`
+        # -- a full re-walk of the object table, on every assemble that passes
+        # `warnings_out`, to answer one question the answer to which was
+        # already in hand. A reference the built bank does not contain is one
+        # absent from `keymap_new_id`: either it was carried over (present) or
+        # it passed through as a ROM id (absent), and an id inside the window
+        # this build mints into becomes 0 -- which is not a ROM reference
+        # either, so it is excluded the same way `_repatch_program_refs`
+        # excludes it.
+        keymap_reserved = range(base_id, base_id + len(keymap_objs))
+        n_rom = sum(
+            1
+            for src, prog in prog_list
+            for k in src.program_keymap_refs(prog)
+            if k and (id(src), k) not in keymap_new_id and k not in keymap_reserved
+        )
         if n_rom >= ROM_REF_ADVISORY:
             warnings_out.append(
                 f"makes {n_rom} references to sounds in the K2000's ROM rather "
@@ -1368,6 +1400,7 @@ def _repair_sample_loops(
     src: "KrzFile",  # noqa: UP037
     samp: KrzObject,  # noqa: RUF100, UP037
     loop_repair: dict | None,
+    limit: tuple | None = None,
 ) -> tuple[KrzObject, bytes]:
     """Apply the user's chosen loop repair to one sample.
 
@@ -1379,13 +1412,21 @@ def _repair_sample_loops(
     assemblers use. Applied per sample, so every zone and keymap entry playing
     it moves together — a loop point belongs to the audio, not to one use of it.
 
-    WHY THIS RUNS BEFORE THE EXTENT IS TAKEN. In KRZ the loop end and the
-    sample's end are THE SAME FIELD (Soundfilehead 20), so moving a loop point
-    moves what `sample_word_extent` reports. Repairing first means the extent,
-    the PCM slice and the rebias downstream are all computed from the repaired
-    values and stay consistent; repairing afterwards would leave a loop end
-    pointing past the audio actually copied. `nudge_to_match` can move the end
-    LATER as well as earlier, so this is not a theoretical ordering.
+    WHY THE EXTENT ARRIVES AS A `limit` INSTEAD OF BEING READ HERE. In KRZ the
+    loop end and the sample's end are THE SAME FIELD (Soundfilehead 20), so
+    moving a loop point would move what `sample_word_extent` reports — which
+    is why this used to run BEFORE the extent was taken. But
+    `_all_sample_lengths()` computes every length from `self.samples`, the
+    bank's ORIGINAL objects, so the repaired values were never seen by it and
+    the ordering bought nothing. What it did cost was a bound: the searches
+    below walk `src.pcm`, and in KRZ that ONE region is every sample's audio,
+    so a search for a better loop end could find its match in the next sample
+    and write a loop point past this one's audio. Measured on a two-sample
+    bank: nudge moved sample A's loop end from word 1441 to a match it found
+    in B, and the only check that ran afterwards passed, because A's declared
+    extent still covered the point. So the caller now takes the extent FIRST
+    and hands it in as `limit`, every search is clamped to it, and the values
+    a repair chooses are asserted to lie inside it.
     """
     kind = (loop_repair or {}).get(samp.name.strip())
     if kind is None:
@@ -1396,6 +1437,11 @@ def _repair_sample_loops(
     body = samp.body()
     pcm = src.pcm
     n_headers = struct.unpack_from(">h", body, 2)[0] + 1
+    # Every point a repair actually chose, for the assertion below. Headers
+    # the repair declined are NOT here: a loop as authored may sit past the
+    # sample's own audio in real banks (the gap heuristic over-counts), and
+    # refusing to touch those is not the same as writing one there.
+    chosen: list = []
     for h in range(n_headers):
         hdr = body_start + SAMPLE_HDR + h * SFH_SIZE
         if hdr + SFH_SIZE > len(block):
@@ -1407,16 +1453,37 @@ def _repair_sample_loops(
         end = struct.unpack_from(">i", block, hdr + 20)[0]
         if end <= start:
             continue
-        out = loopcheck.apply_repair(kind, pcm, start, end, big_endian=True)
+        out = loopcheck.apply_repair(
+            kind, pcm, start, end, big_endian=True, limit=limit
+        )
         if out is None:
-            # The repair declined (loop too short, no crossing found). Leave
-            # this header exactly as authored rather than approximate it.
+            # The repair declined (loop too short, no crossing found, or the
+            # limit). Leave this header exactly as authored rather than
+            # approximate it.
             continue
         new_pcm, new_start, new_end = out
         if new_pcm is not None:
             pcm = new_pcm
+        chosen.append((h, new_start, new_end))
         struct.pack_into(">i", block, hdr + 16, new_start)
         struct.pack_into(">i", block, hdr + 20, new_end)
+
+    # POST-REPAIR ASSERTION, and the reason the `limit` is a (lo, hi) pair
+    # rather than one number: a point at or past the sample's own end plays
+    # the NEXT sample's audio for the whole loop tail, and nothing downstream
+    # would notice. `assemble()` copies `n_words` words from `old_start`
+    # regardless, so the loop point is the only thing that says where this
+    # sample's audio stops.
+    if limit is not None and chosen:
+        lo, hi = limit
+        for h, s, e in chosen:
+            if not (0 <= s <= e) or s < lo or e >= hi:
+                raise ValueError(
+                    f"{samp.name!r}: the {kind} repair put a loop point at "
+                    f"({s}, {e}), outside this sample's own audio "
+                    f"[{lo}, {hi}) -- refusing to write a loop that plays "
+                    f"another sample"
+                )
 
     return replace(samp, block=bytes(block)), pcm
 
