@@ -905,7 +905,7 @@ def _loop_offsets(body: bytes) -> tuple[int, int]:
 
 
 def sample_pcm(samp) -> bytes:
-    return samp.body[PCM_START]
+    return samp.body[PCM_START:]
 
 
 #: The sample's own rate, little-endian uint32 at 0x34 of the header -- the
