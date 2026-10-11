@@ -38,6 +38,7 @@ import json
 import os
 import re
 import threading
+from ._compat import accepts_kw
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -436,12 +437,8 @@ def parse_mpc(
     # afterwards, because a GUI parses many programs in one session and a
     # tempo chosen for one import must not leak into the next.
     kw = {}
-    try:
-        names = xpm_parser.parse_xpm.__code__.co_varnames
-    except AttributeError:
-        names = ()
     if chromatic_pads:
-        if "chromatic_pads" not in names:
+        if not accepts_kw(xpm_parser.parse_xpm, "chromatic_pads"):
             raise ValueError(
                 "this mpc2emu checkout cannot lay drum pads out chromatically "
                 "(no `chromatic_pads` in its XPM reader) -- update mpc2emu, or "
@@ -465,7 +462,7 @@ def parse_mpc(
     # default -- exactly the leak the `finally` was written to prevent.
     # Measured (code review 2026-10-09, M16) with A asking 90 and B 128:
     # A's parse read 120.0, B's read 90.0, SYNC_BPM after both = 128.0.
-    if "sync_bpm" in names:
+    if accepts_kw(xpm_parser.parse_xpm, "sync_bpm"):
         kw["sync_bpm"] = None if lfo_sync_bpm is None else float(lfo_sync_bpm)
         return _run_captured(xpm_parser.parse_xpm, path, wav_dir, **kw)
 

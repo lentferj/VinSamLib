@@ -43,6 +43,7 @@ from typing import Any, Callable, Optional  # noqa: UP035
 from . import calllog
 from . import captured_stdout
 from . import firmware_sim
+from ._compat import accepts_kw
 
 from .. import tempdirs
 from ..filenames import safe_filename
@@ -950,11 +951,7 @@ def _akai_parse_kwargs(opts: ConversionOptions) -> dict:
     """
     if not opts.match_device_import:
         return {}
-    try:
-        names = akai_parser.parse_akai_program.__code__.co_varnames
-    except AttributeError:
-        names = ()
-    if "firmware_sim" not in names:
+    if not accepts_kw(akai_parser.parse_akai_program, "firmware_sim"):
         # RAISE, DO NOT RETURN {}. For AKAI->E4B the parser is the ONLY
         # simulating half -- write_e4b has no flag and rides entirely on the
         # neutral voices this builds -- so returning {} here produced an
@@ -991,18 +988,11 @@ def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
         # source -- both halves are set from the same option below.
         "firmware_sim": opts.match_device_import,
     }
-    try:
-        names = krz_writer.write_krz.__code__.co_varnames
-    except AttributeError:
-        # NARROWED FROM `except Exception: return {}`, which swallowed any
-        # failure of the probe and silently dropped the user's layer choice
-        # -- so "keep every layer, as a drum program" could come back fused
-        # and silent on a normal channel with nothing said (external review
-        # 2026-09-20, ER-3). AttributeError is the one honest outcome here:
-        # a callable with no `__code__`, which is what a C function or a
-        # stand-in would be.
-        names = ()
-    missing = [k for k, wanted in ASKED.items() if wanted and k not in names]
+    missing = [
+        k
+        for k, wanted in ASKED.items()
+        if wanted and not accepts_kw(krz_writer.write_krz, k)
+    ]
     if missing:
         # The same rule as `chromatic_pads` in xpm_import: an option the user
         # ticked, that this checkout cannot honour, is an error and not a
@@ -1016,7 +1006,7 @@ def _krz_writer_kwargs(opts: ConversionOptions) -> dict:
         )
     kw = {}
     for k, wanted in ASKED.items():
-        if k in names:
+        if accepts_kw(krz_writer.write_krz, k) and wanted:
             kw[k] = wanted
     return kw
 
@@ -1385,11 +1375,7 @@ def _apply_and_write_pipeline(
         # raises TypeError on a keyword it has never heard of.
         _akai_kw = {}
         if opts.akai_ib304f:
-            try:
-                names = akai_writer.build_akai_volume.__code__.co_varnames
-            except Exception:  # noqa: BLE001
-                names = ()
-            if "ib304f" in names:
+            if accepts_kw(akai_writer.build_akai_volume, "ib304f"):
                 _akai_kw["ib304f"] = True
             else:
                 raise ConvertOpError(

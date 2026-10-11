@@ -864,6 +864,35 @@ class MainWindow(QMainWindow):
         happening followed by a window."""
         from .audition_dialog import AuditionProgress  # noqa: PLC0415, RUF100
 
+        # THE OUTGOING WINDOW GOES FIRST. Assigning `_audition_progress`
+        # unconditionally left the first one shown and orphaned: nothing closes
+        # it, because `_on_audition_ready` returns early for a superseded
+        # generation -- correctly, by its own docstring -- and `_end_audition
+        # #progress` can only close the window the attribute points at, which
+        # is now the new one.
+        #
+        # Measured, with two audition requests while the first render was still
+        # in flight: two AuditionProgress windows alive after both finished,
+        # one of them stuck on "Preparing audition of BIG00..." with a live
+        # Cancel. Clicking it called `_cancel_audition(genA)`, which calls
+        # `_end_audition_progress()` -- closing the window belonging to the
+        # render the user is still waiting for, and reporting "Audition
+        # cancelled" for that one.
+        #
+        # So the superseded window's `cancelled` is disconnected BEFORE it is
+        # closed. `disconnect()` with no argument drops every connection, which
+        # is what a window being discarded wants; the TypeError/RuntimeError are
+        # for a signal with nothing left to disconnect or a C++ side already
+        # gone.
+        stale = getattr(self, "_audition_progress", None)
+        if stale is not None:
+            try:
+                stale.cancelled.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            stale.close()
+            stale.deleteLater()
+
         dialog = AuditionProgress(label, parent=self)
         relay = _ProgressRelay(self)
         relay.tick.connect(

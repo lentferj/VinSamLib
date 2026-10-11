@@ -72,6 +72,7 @@ from typing import Optional
 
 from . import convert as convert_mod
 from . import firmware_sim
+from ._compat import accepts_kw
 from .convert import ConversionOptions, _apply_and_write, _run_captured
 from .sample_names import apply_sample_names, names_from_base
 from .xpm_import import XpmSummary, _preset_samples, summarize_program
@@ -776,7 +777,7 @@ def _disc_parser_takes_firmware_sim() -> bool:
             mpc2emu_bridge.eps_parser.parse_eps_image,
             mpc2emu_bridge.roland_parser.parse_roland_image,
         ):
-            if "firmware_sim" not in fn.__code__.co_varnames:
+            if not accepts_kw(fn, "firmware_sim"):
                 return False
     except Exception:  # noqa: BLE001
         return False
