@@ -339,18 +339,23 @@ class SampleDirImportDialog(FormatConvertDialog):
         for on_done in waiting:
             on_done(bank)
 
+    def _warn_unparseable(self, detail: str) -> None:
+        """The ONE place this dialog says a folder would not parse.
+
+        One raise-site, because `manual_dialog_seam` counts them: a modal
+        reachable from anywhere is one no test can intercept, and a second
+        phrasing of the same news does not earn a second site.
+        """
+        QMessageBox.warning(self, "Adjust Sample Placement", detail)
+
     def _on_preview_failed(self, key: tuple, message: str) -> None:
         self._settle_preview(key)
         self._placement_status.setText("Auto-computed placement (default)")
-        waiting = self._preview_waiting.pop(key, [])
-        if not waiting:
-            QMessageBox.warning(
-                self,
-                "Adjust Sample Placement",
-                "Couldn't parse the folder:\n\n" + workers.last_error_line(message),
-            )
-            return
-        for on_done in waiting:
+        self._warn_unparseable(
+            "Couldn't parse the folder:\n\n" + workers.last_error_line(message)
+        )
+        # The clicks waiting on this parse are told there is nothing to edit.
+        for on_done in self._preview_waiting.pop(key, []):
             on_done(None)
 
     def _on_adjust_placement_clicked(self) -> None:
@@ -368,12 +373,7 @@ class SampleDirImportDialog(FormatConvertDialog):
     def _on_placement_ready(self, bank) -> None:
         if bank is None:
             self._placement_status.setText("Auto-computed placement (default)")
-            QMessageBox.warning(
-                self,
-                "Adjust Sample Placement",
-                "Couldn't parse the folder — nothing to place.",
-            )
-            return
+            return  # _on_preview_failed has already said so
         self._show_placement_editor(bank)
 
     def _show_placement_editor(self, bank) -> None:
