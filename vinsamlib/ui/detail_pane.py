@@ -461,5 +461,13 @@ def zone_stats_lines(zones: list) -> str:
     return "<br>".join(lines)
 
 
-def _escape(text: str) -> str:
-    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+def _escape(text) -> str:
+    """The three characters that would otherwise be read as markup.
+
+    Coerces rather than assuming, because the values that reach here are not
+    all strings: `("Path", node.payload)` on a directory row is a `pathlib.Path`
+    and `_render_kv` used to f-string it. Handing it through `str()` keeps the
+    escape working without every caller having to remember.
+    """
+    value = "" if text is None else str(text)
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
