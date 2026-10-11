@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import dnd, search_resolve
+from . import dnd, search_resolve, workers
 from .detail_pane import DetailPane
 from .models import (
     MPC_FILTER,
@@ -62,6 +62,19 @@ def _format_filters() -> list[str]:
     if foreign_import.available():
         entries.extend(foreign_import.FORMAT_FILTERS)
     return entries
+
+
+def _resolve_hits(hits: list) -> list:
+    """Resolve a whole selection of search hits, off the GUI thread.
+
+    Its own function rather than a lambda so the worker holds the list and
+    `search_resolve.resolve_result` — and the resolve's own container cache —
+    is what pays, so sixty hits out of sixty different banks still cost
+    sixty parses the FIRST time. What this removes is the freeze: the same
+    2.1 s happens on a pool thread while the window keeps repainting, and
+    the menu opens when it is over.
+    """
+    return [search_resolve.resolve_result(hit) for hit in hits]
 
 
 class _ResultsListWidget(QListWidget):
@@ -136,6 +149,13 @@ class ExplorerPane(QWidget):
         super().__init__(parent)
         self._index_db = index_db
         self._current_node: Optional[TreeNode] = None  # noqa: UP045
+        #: The in-flight multi-hit resolve for a right-click, and where its
+        #: menu should open. Held for the reason every other worker in this
+        #: pane is: `setAutoDelete(False)` keeps the C++ side from being
+        #: collected while its signal is still owed a delivery.
+        self._resolve_worker = None
+        self._pending_menu_pos = None
+        self._live_workers: list = []
         #: What format New Bank is locked to right now, or None while it is
         #: empty. Set by MainWindow. A CALLABLE rather than a stored value
         #: because the lock changes as the user fills and clears New Bank,
@@ -499,8 +519,60 @@ class ExplorerPane(QWidget):
         if item not in selected:
             selected = [item]
         hits = [i.data(Qt.ItemDataRole.UserRole) for i in selected]
-        nodes = [search_resolve.resolve_result(hit) for hit in hits if hit is not None]
-        self._show_context_menu(nodes, self._results.viewport().mapToGlobal(pos))
+        hits = [h for h in hits if h is not None]
+        if not hits:
+            return
+        global_pos = self._results.viewport().mapToGlobal(pos)
+        if len(hits) == 1:
+            # One hit is a single 30-40 ms resolve on a 30 MB bank -- the
+            # menu appears as fast as Qt can draw it, and no worker is
+            # warranted for one parse.
+            self._show_context_menu(
+                [search_resolve.resolve_result(h) for h in hits], global_pos
+            )
+            return
+        # EVERY OTHER CASE runs the resolve on a worker. Sixty selected hits
+        # from thirty-megabyte banks measured 2 145 ms with the window frozen
+        # solid -- no repaint, no way to cancel, and the drag path paid the
+        # same 2.1 s BEFORE the drag even started. Queuing it off the GUI
+        # thread moves the wait without shortening it: the menu appears when
+        # the hits are in hand instead of the whole application stopping.
+        #
+        # A second right-click while one is in flight is dropped rather than
+        # queued -- the menu on screen is the answer to the first, and two
+        # menus for one gesture is not a thing the user asked for.
+        if self._resolve_worker is not None:
+            return
+        self._pending_menu_pos = global_pos
+        w = workers.Worker(_resolve_hits, hits)
+        w.signals.finished.connect(self._on_hits_resolved)
+        w.signals.error.connect(self._on_hits_resolve_failed)
+        w.signals.finished.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        w.signals.error.connect(
+            lambda *_: self._live_workers.remove(w) if w in self._live_workers else None
+        )
+        self._live_workers.append(w)
+        self._resolve_worker = w
+        workers.run(w)
+
+    def _on_hits_resolved(self, nodes) -> None:
+        self._resolve_worker = None
+        pos = self._pending_menu_pos
+        self._pending_menu_pos = None
+        # The results list may have been re-populated by a search that
+        # finished while this was running. The hits it resolved are still the
+        # ones the user right-clicked, so the menu is still the right answer;
+        # what must not happen is acting on a node the list no longer shows.
+        self._show_context_menu(nodes, pos)
+
+    def _on_hits_resolve_failed(self, message: str) -> None:
+        self._resolve_worker = None
+        self._pending_menu_pos = None
+        self.statusBar().showMessage(
+            f"Couldn't open the selection: {workers.last_error_line(message)}", 8000
+        )
 
     def _show_context_menu(self, nodes: list[Optional[TreeNode]], global_pos) -> None:  # noqa: UP045
         presets = [n for n in nodes if n is not None and n.kind == "preset"]
@@ -645,7 +717,7 @@ class ExplorerPane(QWidget):
                 else f"{len(rom_only)} of these use"
             )
             menu.addAction(
-                f"{what} only the K2000's own ROM — nothing to convert to " f"{locked}"
+                f"{what} only the K2000's own ROM — nothing to convert to {locked}"
             ).setEnabled(False)
         if len(xpms) == 1 and len(foreigns) < 2:
             import_action = menu.addAction(f'Import "{xpms[0].label}"…')

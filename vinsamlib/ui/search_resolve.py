@@ -4,17 +4,126 @@ parsed bank) back into a real ui.models.TreeNode the existing Detail/Samples
 panes can render unchanged — by re-opening the container and walking the
 stored chain (folder/bank names, preset native ids) back down to the hit,
 exactly as the scanner walked it when building the index.
+
+Re-opening and re-parsing is the expensive thing this module does — a 30 MB
+E4B measures 40 ms per resolve — so the parse is memoised against the
+container's own identity rather than repeated. See `_LEVEL_CACHE`.
 """
 
 from __future__ import annotations  # noqa: I001
 
+from collections import OrderedDict
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+from collections.abc import Callable
 
 from .models import TreeNode
 from ..banks import e4b, eiii, krz
 from ..index.db import SearchResult
 from ..vfs.detect import open_volume, sniff
+
+#: How many CONTAINERS stay parsed at once. Bounded on purpose, and small:
+#: one entry is one whole parsed bank held in RAM — the 30 MB E4B measured
+#: here costs ~30 MB of that once resolved — so an unbounded map would be a
+#: second leak to find in a year. Eight is what a working session touches
+#: (the bank being dragged from, the bank being auditioned, a couple the user
+#: keeps returning to), and it covers the case that actually hurt: sixty
+#: presets of ONE bank, which is one entry.
+#:
+#: LRU by use: a container the user keeps coming back to stays, and one seen
+#: once in passing is gone after eight others have arrived.
+_MAX_CONTAINERS = 8
+
+#: (container fingerprint, prefix signature) -> the TreeNode that prefix names.
+#:
+#: KEYED ON THE PREFIX, NOT ON THE HIT. The hit names one preset; the parse
+#: produces the BANK it lives in, and the last step from bank to preset is a
+#: dict lookup. Keying on the whole hit would cache sixty separate copies of
+#: one 30 MB parse and still evict all but eight of them, which is the exact
+#: freeze this exists to remove.
+#:
+#: The fingerprint is (st_mtime_ns, st_size) rather than a path string, so an
+#: edited container re-parses instead of serving what it used to be.
+_LEVEL_CACHE: OrderedDict[tuple, TreeNode | None] = OrderedDict()
+
+#: How many times a container was actually READ AND PARSED since the last
+#: `reset_cache()`. Not a cache entry count: it is the number that describes
+#: the freeze, so it is what the measurement and the test both read.
+_PARSE_COUNT = 0
+
+
+def reset_cache() -> None:
+    """Forget every parsed container, and the count of how many there were.
+
+    Tests use both; nothing in the app has a reason to.
+    """
+    global _PARSE_COUNT
+    _LEVEL_CACHE.clear()
+    _PARSE_COUNT = 0
+
+
+def cache_stats() -> tuple:
+    """`(containers held, parses since the last reset)`."""
+    return len(_LEVEL_CACHE), _PARSE_COUNT
+
+
+def _fingerprint(path: Path) -> Optional[tuple]:  # noqa: UP045
+    """(mtime_ns, size), or None when the container cannot be stated at all.
+
+    None disables caching for that lookup rather than poisoning it: a
+    container whose stat fails has no identity to key on, and re-parsing it
+    every time is the honest answer.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _prefix_signature(prefix) -> tuple:
+    """Which chain entries the cached node stands for.
+
+    The index's own `native_id` is the scanner's handle for that entry, so it
+    identifies the entry across re-parses — and two entries with the same name
+    at the same place are the same entry.
+    """
+    return tuple((e.kind, e.native_id) for e in prefix)
+
+
+def _container_key(container_path: str, prefix) -> Optional[tuple]:  # noqa: UP045
+    fp = _fingerprint(Path(container_path))
+    if fp is None:
+        return None
+    return (container_path, fp, _prefix_signature(prefix))
+
+
+def _cached(key: Optional[tuple], build: Callable[[], Any]) -> Any:  # noqa: UP045
+    """`build()` once per key, with a remembered result.
+
+    LRU by use: a container the user keeps coming back to stays, and one
+    seen once in passing is gone after eight others have arrived.
+    """
+    global _PARSE_COUNT
+    if key is not None and key in _LEVEL_CACHE:
+        _LEVEL_CACHE.move_to_end(key)
+        return _LEVEL_CACHE[key]
+    _PARSE_COUNT += 1
+    value = build()
+    if key is not None:
+        _LEVEL_CACHE[key] = value
+        while len(_LEVEL_CACHE) > _MAX_CONTAINERS:
+            _LEVEL_CACHE.popitem(last=False)
+    return value
+
+
+#: How far down the chain the cached node reaches: the last entry that is NOT
+#: the hit itself. A preset hit stops below its bank, so the bank is shared.
+def _cache_prefix_len(chain) -> int:
+    n = len(chain)
+    while n > 0 and chain[n - 1].kind == "preset":
+        n -= 1
+    return n
 
 
 def resolve_result(result: SearchResult) -> Optional[TreeNode]:  # noqa: UP045
@@ -111,28 +220,34 @@ def _resolve_akai_dir(container_path: str, result: SearchResult) -> Optional[Tre
     The only container here that is a DIRECTORY rather than a file, so it
     needs its own branch: everything else either sniffs as an image or reads
     as a bank file, and a directory does neither -- `read_bytes()` on one
-    raises, which is how this used to return None and drop the hit."""
+    raises, which is how this used to return None and drop the hit.
+
+    The folder holds every program, so the whole parse is one cache entry
+    and finding the hit's program is a dict lookup on top of it."""
     from ..banks import akai as vs_akai
 
-    try:
-        bank = vs_akai.parse_dir(container_path)
-    except Exception:  # noqa: BLE001
-        return None
-    bank_node = TreeNode(
-        "bank",
-        Path(container_path).name,
-        None,
-        (None, Path(container_path)),
-        handle=bank,
-        format_label="AKAI",
-    )
-    if result.kind == "bank":
+    def _build():
+        try:
+            bank = vs_akai.parse_dir(container_path)
+        except Exception:  # noqa: BLE001
+            return None
+        return TreeNode(
+            "bank",
+            Path(container_path).name,
+            None,
+            (None, Path(container_path)),
+            handle=bank,
+            format_label="AKAI",
+        )
+
+    bank_node = _cached(_container_key(container_path, ()), _build)
+    if result.kind == "bank" or bank_node is None:
         return bank_node
     native_id = result.chain[-1].native_id if result.chain else None
-    prog = _find_preset(bank, "AKAI", native_id)
+    prog = _find_preset(bank_node.handle, "AKAI", native_id)
     if prog is None:
         return bank_node
-    return TreeNode("preset", result.name, bank_node, (bank, prog))
+    return TreeNode("preset", result.name, bank_node, (bank_node.handle, prog))
 
 
 def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:  # noqa: UP045
@@ -144,25 +259,37 @@ def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:  # noq
     that holds no samples. So the project is expanded exactly as the tree
     expands it (same code, same caching, same row labels) and the row is
     found by name. If it is not there, the project row itself is the honest
-    answer: that is where the user can see what it does hold."""
+    answer: that is where the user can see what it does hold.
+
+    The EXPANSION is what costs — `xpm_import.parse_mpc` loads every WAV the
+    project references — so the expanded project is the cache entry and the
+    name walk runs fresh against it per hit, which is the only part that
+    differs from one hit to the next.
+    """
     from .models import (  # noqa: I001
         TreeNode as _TreeNode,
         _fetch_mpc_project,
     )  # circular at import time  # noqa: I001, RUF100
 
-    project = _TreeNode(
-        "mpc_project",
-        Path(result.container_path).name,
-        None,
-        Path(result.container_path),
-        format_label=result.format or "XPJ",
-    )
-    try:
-        rows = _fetch_mpc_project(project)
-    except Exception:  # noqa: BLE001
-        return project
+    def _build():
+        project = _TreeNode(
+            "mpc_project",
+            Path(result.container_path).name,
+            None,
+            Path(result.container_path),
+            format_label=result.format or "XPJ",
+        )
+        try:
+            rows = _fetch_mpc_project(project)
+        except Exception:  # noqa: BLE001
+            rows = None  # the unexpanded project row is the honest answer below
+        # The rows are held WITH the project, not re-derived per hit: the
+        # expansion is the whole cost, and the labels come out of the parse.
+        return project, rows
+
+    project, rows = _cached(_container_key(result.container_path, ()), _build)
     wanted = result.name.strip()
-    for row in rows:
+    for row in rows or ():
         # A row is labelled with the program's own name; the preset inside it
         # carries a 16-character version of the same, and for an MPC 3
         # project that shortened form is what the row shows.
@@ -174,32 +301,75 @@ def _resolve_project_program(result: SearchResult) -> Optional[TreeNode]:  # noq
 def _resolve_loose_bank(
     container_path: str, result: SearchResult
 ) -> Optional[TreeNode]:  # noqa: UP045
-    try:
-        data = Path(container_path).read_bytes()
-    except OSError:
-        return None
-    fmt, bank = _parse_bank_bytes(data, container_path)
-    if bank is None:
-        return None
-    bank_node = TreeNode(
-        "bank", Path(container_path).name, None, None, handle=bank, format_label=fmt
-    )
-    if result.kind == "bank":
+    """The .e4b/.krz/.e3x case: read the file, parse it, find the hit in it.
+
+    The read and the parse are one cache entry; the hit's own preset is found
+    in the parsed bank per call, so every preset of one bank costs one parse
+    rather than one parse each.
+    """
+
+    def _build():
+        try:
+            data = Path(container_path).read_bytes()
+        except OSError:
+            return None
+        fmt, bank = _parse_bank_bytes(data, container_path)
+        if bank is None:
+            return None
+        return TreeNode(
+            "bank", Path(container_path).name, None, None, handle=bank, format_label=fmt
+        )
+
+    bank_node = _cached(_container_key(container_path, ()), _build)
+    if result.kind == "bank" or bank_node is None:
         return bank_node
     preset_native_id = result.chain[-1].native_id if result.chain else None
-    preset_obj = _find_preset(bank, fmt, preset_native_id)
+    preset_obj = _find_preset(
+        bank_node.handle, bank_node.format_label, preset_native_id
+    )
     if preset_obj is None:
         return bank_node
-    return TreeNode("preset", result.name, bank_node, (bank, preset_obj))
+    return TreeNode("preset", result.name, bank_node, (bank_node.handle, preset_obj))
 
 
 def _resolve_in_image(container_path: str, result: SearchResult) -> Optional[TreeNode]:  # noqa: UP045
+    """The same walk, inside a volume: open it, list down the chain, read the
+    bank, find the hit's preset in it.
+
+    Split at `_cache_prefix_len()`: everything down to and including the BANK
+    is the cache entry, because `open_volume` + `vol.list` + `vol.read` +
+    parse is the whole cost and none of it depends on which preset was hit.
+    The descent from bank to preset then runs per call against the shared
+    bank, exactly as for a loose file.
+    """
+    chain = list(result.chain or ())
+    n = _cache_prefix_len(chain)
+    head = _cached(
+        _container_key(container_path, chain[:n]),
+        lambda: _walk_in_image(container_path, chain[:n]),
+    )
+    if head is None:
+        return None
+    for entry in chain[n:]:
+        if entry.kind != "preset" or head.handle is None:
+            # A chain that stops at a folder, or a bank whose parse never
+            # produced a handle: the node reached is the honest answer.
+            break
+        preset_obj = _find_preset(head.handle, head.format_label, entry.native_id)
+        if preset_obj is None:
+            break
+        head = TreeNode("preset", entry.name, head, (head.handle, preset_obj))
+    return head
+
+
+def _walk_in_image(container_path: str, prefix) -> Optional[TreeNode]:  # noqa: UP045
+    """Open the volume and walk `prefix` down it, or None if it won't open."""
     vol = open_volume(container_path)
     if vol is None:
         return None
     current_entry = None
     node: Optional[TreeNode] = None  # noqa: UP045
-    for chain_entry in result.chain:
+    for chain_entry in prefix:
         if chain_entry.kind in ("folder", "bank"):
             found = next(
                 (e for e in vol.list(current_entry) if e.name == chain_entry.native_id),
@@ -229,17 +399,6 @@ def _resolve_in_image(container_path: str, result: SearchResult) -> Optional[Tre
                 if bank is not None:
                     node.handle = bank
                     node.format_label = fmt
-        elif (
-            chain_entry.kind == "preset"
-            and node is not None
-            and node.handle is not None
-        ):
-            preset_obj = _find_preset(
-                node.handle, node.format_label, chain_entry.native_id
-            )
-            if preset_obj is None:
-                return node
-            node = TreeNode("preset", chain_entry.name, node, (node.handle, preset_obj))
     return node
 
 
