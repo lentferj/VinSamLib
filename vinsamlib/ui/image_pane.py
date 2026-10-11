@@ -204,6 +204,103 @@ def _kind_label(kind: Optional[str], vol: Volume, path: str, fmt: Optional[str])
     return "Unknown"
 
 
+def _read_image(path: str, known_kind: Optional[str] = None):  # noqa: UP045
+    """Open `path`, list everything on it, and return `(error, snapshot)`.
+
+    A SNAPSHOT, NOT A PAINT. This is the whole point of the split: the entries
+    and the four capability flags are data, so they can be produced on a worker
+    thread, while every line that touches a label or a list belongs on the GUI
+    thread and lives in `ImagePane._apply_image`. A re-read that has to happen
+    after an in-place mutation therefore no longer opens the image on the
+    caller's thread -- `_mutate_then_read` puts it at the tail of the very
+    worker that did the mutating.
+
+    Error first, so a file that will not open is reported rather than half
+    applied: `_open_image` said `f"Couldn't open {name}: {ex}"` and that
+    sentence has to survive the move.
+    """
+    try:
+        vol = open_volume(path)
+    except Exception as ex:  # noqa: BLE001
+        return f"Couldn't open {Path(path).name}: {ex}", None
+    if vol is None:
+        return f"{Path(path).name}: not a recognised image", None
+
+    entries: list[Entry] = []
+    akai_volumes = False
+
+    def _walk(folder: Optional[Entry] = None) -> None:  # noqa: UP045
+        nonlocal akai_volumes
+        for e in vol.list(folder):
+            if e.meta.get("akai_volume"):
+                # THE UNIT ON AN AKAI DISC IS THE VOLUME. Recursing into
+                # it listed every .P3 and .S3 inside as though each were a
+                # bank, so a disc holding three volumes reported "33
+                # banks" and showed the programs of one of them. A volume
+                # is what gets appended, renamed, deleted and loaded; its
+                # files are its contents.
+                entries.append(e)
+                akai_volumes = True
+                continue
+            if e.kind == EntryKind.FOLDER:
+                _walk(e)
+            elif e.kind == EntryKind.BANK:
+                entries.append(e)
+
+    fmt: Optional[str] = None  # noqa: UP045
+    try:
+        _walk()
+        if akai_volumes:
+            # Read off the volumes themselves; there is no first bank to
+            # sniff, and the disc said what it was before this asked.
+            fmt = "AKAI"
+        elif entries:
+            data = vol.read(entries[0])
+            if data[:4] == b"FORM" and data[8:12] == b"E4B0":
+                fmt = "E4B"
+            elif data[:4] == b"PRAM":
+                fmt = "KRZ"
+            elif len(data) >= 16 and eiii.detect_format(data[:16]) is not None:
+                fmt = "EIII"
+    finally:
+        vol.close()
+
+    snapshot = {
+        "path": path,
+        "format": fmt,
+        "entries": entries,
+        "akai_volumes": akai_volumes,
+        "mutable": isinstance(vol, WritableVolume),
+        "known_kind": known_kind,
+        "is_akai": isinstance(vol, AkaiVolume),
+        "media_kind": vol.media_kind() if isinstance(vol, AkaiVolume) else None,
+        "type_label": _kind_label(
+            _AKAI_MEDIA_KIND.get(vol.media_kind())
+            if isinstance(vol, AkaiVolume)
+            else known_kind,
+            vol,
+            path,
+            fmt,
+        ),
+    }
+    return None, snapshot
+
+
+def _mutate_then_read(mutate, path: str, known_kind: Optional[str] = None):  # noqa: UP045
+    """`mutate()`, then read the image back. BOTH, on a worker's thread.
+
+    An in-place mutation ends with the pane showing what the image now holds,
+    and that read used to happen in the finished slot -- on the GUI thread,
+    measured 16 ms for a 537 MB / 300-bank EMU3 HD. Sleeping, in other words:
+    latent rather than felt today, and the shape the rest of the application
+    pointedly avoids. Putting it at the tail of the same worker means the
+    pane's buttons stay disabled through the re-read too, instead of flicking
+    live for 16 ms and then going grey again.
+    """
+    mutate()
+    return _read_image(path, known_kind)
+
+
 class ImagePane(QWidget):
     statusMessage = Signal(str)
 
@@ -233,8 +330,7 @@ class ImagePane(QWidget):
 
         self._head = QLabel("Image")
         self._head.setStyleSheet(
-            "font-weight: 600; padding: 6px 10px;"
-            "border-bottom: 1px solid palette(mid);"
+            "font-weight: 600; padding: 6px 10px;border-bottom: 1px solid palette(mid);"
         )
         layout.addWidget(self._head)
 
@@ -258,8 +354,7 @@ class ImagePane(QWidget):
         box_layout = QVBoxLayout(box)
         box_layout.addStretch()
         hint = QLabel(
-            "Drop a bank here to start a new image with it,\n"
-            "or create/open one below."
+            "Drop a bank here to start a new image with it,\nor create/open one below."
         )
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setStyleSheet("color: palette(placeholdertext);")
@@ -339,7 +434,7 @@ class ImagePane(QWidget):
         # here.
         new_btn = QPushButton("New…")
         new_btn.setToolTip(
-            "Build a new, empty image. The one open here is " "left untouched on disk."
+            "Build a new, empty image. The one open here is left untouched on disk."
         )
         # Seeded from what is OPEN. Reached from an AKAI hard disk, the
         # dialog used to come up offering an EMU3 CD holding E4B banks and
@@ -514,61 +609,42 @@ class ImagePane(QWidget):
             self._open_image(path)
 
     def _open_image(self, path: str, known_kind: Optional[str] = None) -> None:  # noqa: UP045
-        try:
-            vol = open_volume(path)
-        except Exception as ex:  # noqa: BLE001
-            self.statusMessage.emit(f"Couldn't open {Path(path).name}: {ex}")
+        """Read `path` and show it.
+
+        The read happens on the caller's thread. That is right for the Open…
+        path, which is the user opening a file they chose, and the reason
+        `_read_image` exists as a separate function is so that a re-read that
+        belongs to a background operation can run on that operation's worker
+        instead -- see `_mutate_then_read`.
+        """
+        error, snapshot = _read_image(path, known_kind)
+        if error:
+            self.statusMessage.emit(error)
             return
-        if vol is None:
-            self.statusMessage.emit(f"{Path(path).name}: not a recognised image")
+        self._apply_image(snapshot)
+
+    def _apply_image(self, payload) -> None:
+        """Show what `_read_image` produced. GUI thread only.
+
+        No disk access, no volume open, no walk: everything below is a field
+        assignment off the snapshot and one `_refresh()`. That is what makes
+        the tail of a background operation affordable.
+
+        `payload` is the `(error, snapshot)` pair, because this is also the
+        finished slot for every in-place mutation and a file that will not
+        re-open after one has has to be said rather than half-applied: the
+        error sentence `_open_image` always used survives the move.
+        """
+        error, snapshot = payload if isinstance(payload, tuple) else (None, payload)
+        if error:
+            self.statusMessage.emit(error)
             return
-
-        entries: list[Entry] = []
-
-        akai_volumes = False
-
-        def _walk(folder: Optional[Entry] = None) -> None:  # noqa: UP045
-            nonlocal akai_volumes
-            for e in vol.list(folder):
-                if e.meta.get("akai_volume"):
-                    # THE UNIT ON AN AKAI DISC IS THE VOLUME. Recursing into
-                    # it listed every .P3 and .S3 inside as though each were a
-                    # bank, so a disc holding three volumes reported "33
-                    # banks" and showed the programs of one of them. A volume
-                    # is what gets appended, renamed, deleted and loaded; its
-                    # files are its contents.
-                    entries.append(e)
-                    akai_volumes = True
-                    continue
-                if e.kind == EntryKind.FOLDER:
-                    _walk(e)
-                elif e.kind == EntryKind.BANK:
-                    entries.append(e)
-
-        fmt: Optional[str] = None  # noqa: UP045
-        try:
-            _walk()
-            if akai_volumes:
-                # Read off the volumes themselves; there is no first bank to
-                # sniff, and the disc said what it was before this asked.
-                fmt = "AKAI"
-            elif entries:
-                data = vol.read(entries[0])
-                if data[:4] == b"FORM" and data[8:12] == b"E4B0":
-                    fmt = "E4B"
-                elif data[:4] == b"PRAM":
-                    fmt = "KRZ"
-                elif len(data) >= 16 and eiii.detect_format(data[:16]) is not None:
-                    fmt = "EIII"
-        finally:
-            vol.close()
-
-        self._path = path
-        self._format = fmt
+        self._path = snapshot["path"]
+        self._format = snapshot["format"]
         # known_kind is only passed by _new_image() (which knows exactly what
-        # it just built) -- a refresh after append/rename/delete calls
-        # _open_image(self._path) with no known_kind and must not clobber
-        # whatever kind was already established.
+        # it just built) -- a refresh after append/rename/delete reads the
+        # image back with no known_kind and must not clobber whatever kind was
+        # already established.
         #
         # ASK THE VOLUME when neither knows. Opening an AKAI image off disk
         # left _kind at None, so it showed as "Unknown" and, worse, the
@@ -576,10 +652,10 @@ class ImagePane(QWidget):
         # disabled the Append button on a disc that appends perfectly well.
         # Only images built in this session could append, which is a
         # difference nothing about the disc justifies.
-        if known_kind is not None:
-            self._kind = known_kind
-        elif self._kind is None and isinstance(vol, AkaiVolume):
-            self._kind = _AKAI_MEDIA_KIND.get(vol.media_kind())
+        if snapshot["known_kind"] is not None:
+            self._kind = snapshot["known_kind"]
+        elif self._kind is None and snapshot["is_akai"]:
+            self._kind = _AKAI_MEDIA_KIND.get(snapshot["media_kind"])
 
         # TWO capabilities, not one. Appending to an AKAI disc goes through
         # mpc2emu's image writer; renaming and deleting go through the VFS,
@@ -588,9 +664,9 @@ class ImagePane(QWidget):
         # "This cannot be undone" -- before failing with 'AkaiVolume' object
         # has no attribute 'delete'. A button that asks you to confirm
         # something irreversible had better be able to do it.
-        self._mutable = isinstance(vol, WritableVolume)
+        self._mutable = snapshot["mutable"]
         self._appendable = self._mutable or (
-            akai_volumes and self._kind in akai_image.AKAI_APPENDABLE
+            snapshot["akai_volumes"] and self._kind in akai_image.AKAI_APPENDABLE
         )
         # THREE capabilities now, because the three really do differ on an
         # AKAI disc: append goes through mpc2emu's image writer, delete
@@ -600,13 +676,16 @@ class ImagePane(QWidget):
         # 16-byte slot, and a rename that half-works is worse than a button
         # that is off.
         self._deletable = self._mutable or (
-            akai_volumes and self._kind in akai_image.AKAI_DELETABLE
+            snapshot["akai_volumes"] and self._kind in akai_image.AKAI_DELETABLE
         )
-        self._entries = entries
-        self._type_label_text = _kind_label(self._kind, vol, path, fmt)
+        self._entries = snapshot["entries"]
+        self._type_label_text = snapshot["type_label"]
         self._refresh()
-        noun = "volume" if akai_volumes else "bank"
-        self.statusMessage.emit(f"Opened {Path(path).name} ({len(entries)} {noun}(s))")
+        noun = "volume" if snapshot["akai_volumes"] else "bank"
+        self.statusMessage.emit(
+            f"Opened {Path(snapshot['path']).name} "
+            f"({len(snapshot['entries'])} {noun}(s))"
+        )
 
     def _new_image(
         self,
@@ -634,18 +713,20 @@ class ImagePane(QWidget):
         self._run_confirmed_op(
             f"Building {Path(spec['output_path']).name}…",
             workers.Worker(
-                images.create_image,
-                spec["kind"],
+                _mutate_then_read,
+                lambda: images.create_image(
+                    spec["kind"],
+                    spec["output_path"],
+                    spec["bank_paths"],
+                    spec["volume_label"],
+                    spec["size_mb"],
+                    spec["floppy_kind"],
+                    spec.get("partitions"),
+                ),
                 spec["output_path"],
-                spec["bank_paths"],
-                spec["volume_label"],
-                spec["size_mb"],
-                spec["floppy_kind"],
-                spec.get("partitions"),
+                spec["kind"],
             ),
-            on_done=lambda _log,
-            p=spec["output_path"],
-            k=spec["kind"]: self._open_image(p, known_kind=k),
+            on_done=self._apply_image,
         )
 
     def _close_image(self) -> None:
@@ -774,8 +855,8 @@ class ImagePane(QWidget):
         self._retry_format = fmt
         self._run_confirmed_op(
             f"Appending to {image_name}…",
-            workers.Worker(images.append_banks, self._path, fmt, paths),
-            on_done=lambda _result: self._open_image(self._path),
+            workers.Worker(self._append_then_read, fmt, paths),
+            on_done=self._apply_image,
         )
 
     # -- rename / delete / export -----------------------------------------------
@@ -798,8 +879,8 @@ class ImagePane(QWidget):
             return
         self._run_confirmed_op(
             f"Renaming in {image_name}…",
-            workers.Worker(images.rename_entry, self._path, entry, new_name.strip()),
-            on_done=lambda _result: self._open_image(self._path),
+            workers.Worker(self._rename_then_read, entry, new_name.strip()),
+            on_done=self._apply_image,
         )
 
     def _delete_selected(self) -> None:
@@ -815,8 +896,8 @@ class ImagePane(QWidget):
             return
         self._run_confirmed_op(
             f"Deleting from {image_name}…",
-            workers.Worker(images.delete_entry, self._path, entry),
-            on_done=lambda _result: self._open_image(self._path),
+            workers.Worker(self._delete_then_read, entry),
+            on_done=self._apply_image,
         )
 
     def _export_selected(self) -> None:
@@ -909,6 +990,41 @@ class ImagePane(QWidget):
         )
         return True
 
+    # -- the three in-place mutations ------------------------------------------
+    #
+    # Each is `images.<op>()` followed by a re-read, both on the worker. The
+    # re-read used to be the finished slot's first act, which put it on the GUI
+    # thread: 16 ms for a 537 MB / 300-bank EMU3 HD, which is not a freeze
+    # anybody has complained about yet and is the shape every other parse in
+    # this application avoids. It is also why the buttons stay disabled through
+    # the re-read rather than flicking live for 16 ms and going grey again.
+    def _open_path(self) -> str:
+        """The open image's path, asserted rather than silently defaulted.
+
+        Every caller is behind a button that is disabled until an image is
+        open, so None is unreachable -- but a worker that ran against "" would
+        write to the process's working directory, which is not a mistake worth
+        leaving available.
+        """
+        path = self._path
+        assert path is not None, "an image operation was started with no image open"
+        return path
+
+    def _append_then_read(self, fmt: str, paths: list) -> tuple:
+        path = self._open_path()
+        images.append_banks(path, fmt, paths)
+        return _read_image(path)
+
+    def _rename_then_read(self, entry, new_name: str) -> tuple:
+        path = self._open_path()
+        images.rename_entry(path, entry, new_name)
+        return _read_image(path)
+
+    def _delete_then_read(self, entry) -> tuple:
+        path = self._open_path()
+        images.delete_entry(path, entry)
+        return _read_image(path)
+
     def _run_confirmed_op(
         self, busy_message: str, worker: workers.Worker, on_done
     ) -> None:
@@ -948,14 +1064,18 @@ class ImagePane(QWidget):
         worker.signals.finished.connect(_finished)
         worker.signals.error.connect(_error)
         worker.signals.finished.connect(
-            lambda *_: self._live_workers.remove(worker)
-            if worker in self._live_workers
-            else None
+            lambda *_: (
+                self._live_workers.remove(worker)
+                if worker in self._live_workers
+                else None
+            )
         )
         worker.signals.error.connect(
-            lambda *_: self._live_workers.remove(worker)
-            if worker in self._live_workers
-            else None
+            lambda *_: (
+                self._live_workers.remove(worker)
+                if worker in self._live_workers
+                else None
+            )
         )
         self._live_workers.append(worker)
         workers.run(worker)
