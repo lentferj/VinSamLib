@@ -157,8 +157,15 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".e4b", delete=False) as tmp:
-            tmp.write(data)
+            # BEFORE the write, not after it. A disk that fills mid-write
+            # (a 128 MB assembled bank aimed at a small tmpfs does exactly
+            # that) raised out of `write` with `tmp_path` still None, so the
+            # `finally` below had nothing to unlink: every call then orphaned a
+            # partial file, making the full disk fuller, and the ENOSPC went
+            # on into the callers' `except Exception: return None`, where the
+            # audio figure vanished without a word about why.
             tmp_path = tmp.name
+            tmp.write(data)
         parsed = e4b_parser.parse_e4b(tmp_path)
     finally:
         if tmp_path is not None:
@@ -593,8 +600,10 @@ def summarize_eiii_preset(
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".e3x", delete=False) as tmp:
-            tmp.write(data)
+            # See the E4B path above: the name is claimed before anything can
+            # fail, or a failed write orphans its partial file.
             tmp_path = tmp.name
+            tmp.write(data)
         parsed = eiii_parser.parse_eiii(tmp_path)
     finally:
         if tmp_path is not None:
