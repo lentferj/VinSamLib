@@ -53,6 +53,10 @@ class DetailPane(QWidget):
         #: -- a TOML open and parse per selection change, for one boolean, was
         #: what it used to cost.
         self._config = config
+        # Config is read once at construction; applying a new setting requires
+        # reopening the pane, per ER-6. The accepted staleness window avoids
+        # restart-to-apply coupling.
+        self._config_ref = config if config is not None else Config.load()
         layout = QVBoxLayout(self)
         # Flush with the tree above it. Both sit in the same splitter, the
         # tree's frame runs to the pane's edge, and a 10 px inset here left
@@ -196,14 +200,9 @@ class DetailPane(QWidget):
     _PARSE_FOR_DETAIL_MAX = 64 << 20
 
     def _loop_click_check(self) -> bool:
-        """The loop-click setting, read without touching the disk per click."""
-        if self._config is None:
-            # No Config handed over: read the file, once. The setting is written
-            # by Settings through the same `Config.save()` this bypasses, so a
-            # pane with no owner is the one case a re-read is honest -- and it
-            # is one that nothing in the application takes.
-            self._config = Config.load()
-        return bool(getattr(self._config, "loop_click_check", False))
+        """The loop-click setting, read from the construction-time Config."""
+        # Staleness is accepted: Config.load is not called here; see init.
+        return bool(getattr(self._config_ref, "loop_click_check", False))
 
     def _show_foreign(self, node: TreeNode, gen: int) -> None:
         from ..build import foreign_import
