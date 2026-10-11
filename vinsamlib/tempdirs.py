@@ -108,12 +108,27 @@ def forget(path: str | Path) -> None:
     """Remove one session directory early, once its consumer is finished.
 
     Worth doing wherever the last read is known: it keeps a long session
-    from holding every bank it ever converted."""
+    from holding every bank it ever converted.
+
+    ONLY the path that was handed out. This used to fall back to
+    `p.parent` when `p` was no longer a directory, which read as "be helpful
+    about a path that has already gone" and was the opposite: a SECOND
+    forget() for an already-removed staging directory then `rmtree`d its
+    PARENT -- the temp root, holding every other session's staging and
+    every other conversion's result. Found on 2026-10-10 by the agent that
+    added M20's reclaim, which had to place its `forget()` so it ran exactly
+    once to avoid it.
+
+    The fallback also destroyed the only signal there was: `rmtree` on a path
+    that is already gone is a no-op, so the correct behaviour for "already
+    cleaned" is to do nothing at all. `_session` is still tidied, so the
+    registry never keeps an entry for a directory that no longer exists.
+    """
     p = Path(path)
-    target = p if p.is_dir() else p.parent
-    shutil.rmtree(target, ignore_errors=True)
+    if p.is_dir():
+        shutil.rmtree(p, ignore_errors=True)
     for i, known in enumerate(list(_session)):
-        if known == target:
+        if known == p:
             _session.pop(i)
             break
 
