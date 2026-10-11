@@ -156,6 +156,8 @@ vinsamlib                                # the console script pip installs
 .venv/bin/python -m vinsamlib.app        # the same program, no activation needed
 ```
 
+![VinSamLib's main window: the library tree and search on the left, the New Bank column and Detail pane on the right](docs/screenshots/01_overview.png)
+
 **Then, in the app:**
 
 1. **Point it at your samplers' content.** Drag folders onto the window, or
@@ -198,11 +200,16 @@ working audio that Qt cannot see — in which case VinSamLib plays through an
 external player instead, and Settings says which route you are on. See
 [Playback takes whichever of two routes works](#playback-takes-whichever-of-two-routes-works).
 
-**The test suite is not in the repository.** `tests/` is deliberately
-untracked: every test here is driven by hand against the author's own library
-of real sampler media, which cannot be published. Where this README cites a
-test by name, that is a statement about how a claim was checked, not a file
-you can run after cloning.
+**Help ▸ About VinSamLib** states version-level facts: how many input
+formats it reads, which capabilities need mpc2emu here, and which Audition
+render path is in use.
+
+**The test suite is not in the repository.** `tests/` is excluded by
+`.gitignore`, and only one hand-run harness file is tracked; the bulk of the
+suite is not. Every test here is driven by hand against the author's own
+library of real sampler media, which cannot be published. Where this README
+cites a test by name, that is a statement about how a claim was checked, not a
+file you can run after cloning.
 
 ---
 
@@ -214,7 +221,7 @@ VinSamLib is a **GUI librarian**, not a batch converter — it sits on
 top of [mpc2emu](https://github.com/lentferj/mpc2emu) (a separate,
 sibling project) for every disk-*image* writer and every DSP routine,
 and never edits or vendors mpc2emu's code. **Without mpc2emu installed
-or configured, VinSamLib is still a full E4B/KRZ bank builder and
+or configured, VinSamLib is still a full E4B/KRZ/AKAI bank builder and
 library browser**, not just a viewer: parsing, assembling, and saving
 banks (New Bank → Save as…) needs no mpc2emu at all —
 `banks/e4b.py`/`banks/krz.py` are entirely self-contained — and
@@ -230,21 +237,22 @@ and programs, and building a new AKAI volume in New Bank all work with
 no mpc2emu; only *converting* an AKAI program to another format does,
 and only then. What genuinely needs mpc2emu: **creating or
 appending to any disk image** (every image kind's writer lives there,
-E4B/EIII and KRZ alike), **E4B/EIII** preset-level zone/velocity/
-bit-depth detail in the Detail pane (KRZ's own detail view is
-self-contained), building an EIII bank at all, XPM import, sample-folder
-import, **browsing or importing the soft-sampler formats (SF2, SFZ,
+E4B/EIII and KRZ alike), building an EIII bank at all, XPM import,
+sample-folder import, **browsing or importing the soft-sampler formats (SF2, SFZ,
 EXS24, TAL-Sampler, GIG) and the Ensoniq EPS/ASR and Roland S-7xx discs —
 without mpc2emu those do not appear in the Explorer at all**, converting an
 AKAI program, vintage conversion, and **Audition**, which renders from
 mpc2emu's parsed model rather than from our own readers.
-Settings shows exactly which of these is unavailable and why if mpc2emu
-isn't configured.
+Settings states whether that checkout is usable and whether the
+conversion, trim and Audition pieces are present; the other capabilities
+are named in a greyed-out menu entry's tooltip and under **Help ▸ About
+VinSamLib**.
 
 ### Browse your whole library at once
 
-Point VinSamLib at any number of folders — loose `.e4b`/`.KRZ` files,
-EMU3 CD/HD images, ISO 9660 discs, FAT12/16/32 floppy or hard-disk
+Point VinSamLib at any number of folders — loose `.e4b`/`.KRZ` files (the
+older `.k25`/`.k26` KRZ variants and the read-only `.e3b` EIII variant
+included), EMU3 CD/HD images, ISO 9660 discs, FAT12/16/32 floppy or hard-disk
 images, Akai sampler discs, Ensoniq EPS/ASR and Roland S-7xx discs,
 SoundFont/SFZ/EXS24/TAL/GIG instruments, folders of Akai MPC programs
 and projects — and it lazily walks
@@ -275,6 +283,11 @@ A folder added while a scan is already running is **queued, not dropped**:
 it is walked when the running scan finishes, and the status message says it
 is waiting rather than leaving the new rows permanently unindexed.
 
+**File ▸ Rescan Library** re-walks every library root and updates the
+search index, for content added or changed outside the app. **File ▸
+Remove Library Folder…** drops a root through a picker; the context menu
+on a root row does the same in place.
+
 ### Audition a preset before you carry it
 
 Every defect this project found by ear needed media carried to a machine
@@ -294,31 +307,35 @@ cache and what is deliberately not modelled:
 
 ### The six hardware formats, and what each one needs
 
-**Every format here is read by VinSamLib's own code.** Opening a disc,
-listing its banks and expanding one into its presets never involves
-mpc2emu, for any of the six. What each format needs *beyond* that is
-where they differ — and since the differences are not the ones you would
-guess, they are a table rather than a sentence:
+**Every bank format here is read by VinSamLib's own code — E4B,
+EIII/ESI-32, KRZ and AKAI.** Opening one and expanding it into its presets
+never involves mpc2emu. The two disc formats are the exception: an Ensoniq
+EPS/ASR or Roland S-7xx disc is parsed by mpc2emu, and only appears when
+that parser is present. What each format needs *beyond* that is where they
+differ — and since the differences are not the ones you would guess, they
+are a table rather than a sentence:
 
 | | Browse a disc / bank | Detail pane | Assemble a bank | Write a disk image | Played on real hardware |
 |---|---|---|---|---|---|
-| **E-mu E4B** (Emulator IV / E4XT / EOS) | ours | mpc2emu | ours | mpc2emu | ✅ 2026-07-28, E4XT |
-| **E-mu EIII / ESI-32** | ours | mpc2emu | mpc2emu's empty-bank skeleton | mpc2emu | ✅ 2026-07-28, E4XT |
+| **E-mu E4B** (Emulator IV / E4XT / EOS) | ours | ours | ours | mpc2emu | ✅ 2026-07-28, E4XT |
+| **E-mu EIII / ESI-32** | ours | ours | mpc2emu's empty-bank skeleton | mpc2emu | ✅ 2026-07-28, E4XT |
 | **Kurzweil KRZ** (K2000 series) | ours | ours | ours | mpc2emu | ✅ 2026-09-18, K2000R |
 | **Akai S1000 / S3000** | ours | ours | ours | mpc2emu | ✅ 2026-09-13, S3000XL |
-| **Ensoniq EPS / ASR** | ours | mpc2emu | mpc2emu | — | ❌ no hardware here |
-| **Roland S-7xx** (S-750 / S-760 / S-770) | ours | mpc2emu | mpc2emu | — | ❌ no hardware here |
+| **Ensoniq EPS / ASR** | mpc2emu | mpc2emu | — | — | ❌ no hardware here |
+| **Roland S-7xx** (S-750 / S-760 / S-770) | mpc2emu | mpc2emu | — | — | ❌ no hardware here |
 
-Converting **between** them — any of the six as the source, any as the
-target — always needs mpc2emu, and is what Explorer's "Import via
-mpc2emu…" does.
+Converting **between** the four bank formats — E4B, EIII, KRZ and AKAI,
+any as the source and any as the target — always needs mpc2emu, and is
+what Explorer's "Import via mpc2emu…" does. An Ensoniq or Roland disc can
+only ever be a *source*, and only to E4B or KRZ.
 
 Four of the six carry a provenance worth stating, because neither
 format was ever published:
 
 - **Akai S1000/S3000.** An Akai sampler disc — a SCSI/ZuluSCSI hard disk
   (`.hda`/`.img`), a CD3000 CD-ROM (`.iso`), an 800 KB / 1.6 MB floppy, or
-  a folder of loose `.P3`/`.S3` files — lists every volume as a bank, its
+  a folder of loose `.P3`/`.S3` files (`.P1`/`.A3P`/`.S3P` programs and
+  `.S1` samples read too) — lists every volume as a bank, its
   programs as presets, and its keygroups, velocity zones, loops and rates
   in the Detail and Samples panes. Every byte of that is reconstructed
   from Hiroyuki Ohsaki's binary analysis, cross-checked against `akaiutil`
@@ -426,8 +443,9 @@ so you can pull a single sound out of a 1 GB soundfont without importing
 the rest. The others hold one instrument each and import as a single row.
 
 **These are import sources only.** VinSamLib reads them and writes the
-hardware bank you choose — E4B, KRZ or EIII. It never writes a SoundFont
-or an SFZ, and New Bank will refuse to build one.
+hardware bank you choose — E4B, KRZ, EIII, or AKAI where this checkout can
+write it. It never writes a SoundFont or an SFZ, and New Bank will refuse
+to build one.
 
 Expanding a soundfont does **not** read its audio: the instrument names
 come out of the file header, so a 985 MB `.gig` opens in milliseconds.
@@ -477,9 +495,10 @@ same way it reports the other capabilities.
 
 ### Convert as the firmware would
 
-For an AKAI source the import dialog offers a choice of two, in mpc2emu's
-own words: **convert as good as possible**, or **convert as the firmware
-would**.
+For an AKAI source the import dialog offers a choice of two under an
+**Import method:** row, in mpc2emu's own words: **convert as good as
+possible**, or **convert as the firmware would** — the latter carrying an
+*(experimental)* suffix.
 
 The second writes what the sampler's own disk importer would have written,
 byte for byte. It is **deliberately lower fidelity** — its value is that the
@@ -563,20 +582,20 @@ Where a path is not ready, the option is **disabled with mpc2emu's own
 reason**, never left out — someone who asks to convert as the firmware would
 and silently receives an ordinary conversion has no way to tell.
 
-(`All`/`E4B`/`KRZ`/`EIII`/`AKAI`/`MPC`, plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`/`EPS`/`Roland`
-when mpc2emu is available) filters both the live tree and search results
-to just that format. `MPC` covers all three Akai containers at once —
-`.xpm` programs, `.xty` tracks and `.xpj` projects — because they are
-three wrappers around one keygroup program. The five soft-sampler
-formats get an entry each: they are unrelated ecosystems, and someone
-hunting a SoundFont is not hunting an EXS24 instrument.
-
 ### Explorer
 
 The Explorer pane shows either the lazy folder/bank tree (search box
 empty) or a flat list of index-backed search hits (search box non-
 empty) — both funnel into the same Detail pane and the same drag/context-
 menu actions, so it doesn't matter which view you're using.
+
+Above the tree, a **format filter** — `All`/`E4B`/`KRZ`/`EIII`/`AKAI`/`MPC`,
+plus `SF2`/`SFZ`/`EXS24`/`TAL`/`GIG`/`EPS`/`Roland` when mpc2emu is available —
+filters both the live tree and search results to just that format. `MPC` covers
+all three Akai containers at once — `.xpm` programs, `.xty` tracks and `.xpj`
+projects — because they are three wrappers around one keygroup program. The five
+soft-sampler formats get an entry each: they are unrelated ecosystems, and
+someone hunting a SoundFont is not hunting an EXS24 instrument.
 
 Right-click (or double-click) behavior depends on what you've selected:
 
@@ -912,7 +931,8 @@ each of six volumes would otherwise give six sounds answering the same
 program change, with nothing on the machine to explain it. The byte is
 0-based and the sampler's panel displays it 1-based, so program 0 here
 shows as `1` there. Past 128 programs the numbers run out and the
-extras are left alone rather than wrapped.
+extras are clamped onto program 127 — so they share it — rather than
+wrapped onto program 0.
 
 **Adding a preset that pushes you over the limit** shows a warning
 dialog with up to three choices:
@@ -1043,7 +1063,8 @@ different object again. Each is its own piece of work.
 > [Known Limitations](#️-editing-where-a-sample-plays--placement-and-velocity--experimental-not-hardware-confirmed).
 
 **Check Loops…** ⚠️ *the repairs are experimental* looks for loops that
-*click*, and offers to repair them. Reporting is safe and changes nothing;
+*click*, and offers to repair them in the **Clicking Loops** window.
+Reporting is safe and changes nothing;
 no sampler has yet played a **repaired** loop — see [Repairing a clicking
 loop](#️-repairing-a-clicking-loop--experimental-not-hardware-confirmed). A
 looped sample plays to its last frame and jumps back to the loop start; if
@@ -1066,8 +1087,8 @@ clicks on purpose. Three choices, in increasing order of what they cost:
 
 | | what it does | audio | cleared the click in |
 |---|---|---|---|
-| **Snap to zero crossings** | moves both loop points to the nearest zero crossing of the same slope | untouched | ~64% |
-| **Nudge the loop end to match** | searches back for where the waveform best matches the loop start, and moves the loop *end* there; the loop gets slightly shorter | untouched | ~99% |
+| **Snap both points to zero crossings** | moves both loop points to the nearest zero crossing of the same slope | untouched | ~64% |
+| **Nudge the loop end to match the start** | searches back for where the waveform best matches the loop start, and moves the loop *end* there; the loop gets slightly shorter | untouched | ~99% |
 | **Cross-fade the wrap** | blends the frames approaching the loop end into the frames before the loop start | **rewritten** | always continuous |
 
 (measured on 101 clicking loops from real K2000 banks.)
@@ -1181,9 +1202,10 @@ name is yours, and silently changing it would surprise you later on the
 machine with no way back to what you typed.
 
 > **Volume names come from here, not from the New Image dialog.** That
-> dialog's "Volume label" sets the *floppy's* volume name or the
-> *CD3000's* disc label, and for an AKAI hard disk it sets nothing at
-> all — which is why it is hidden for that kind.
+> dialog's label field reads **"Volume name:"** for an AKAI floppy and
+> **"Disc label:"** for the CD3000 (and **"Volume label:"** for the
+> EMU3/K2000 kinds); for an AKAI hard disk it sets nothing at all, which
+> is why it is hidden for that kind.
 
 Right-click an entry for **Rename…**, **Delete**, or **Send to New Bank**
 — the last one puts the recipe back in New Bank for editing, the same thing
@@ -1274,7 +1296,7 @@ above the collapsible sections:
   header 0 = left), so an older checkout will still downmix it — the
   capability arrives when you pull mpc2emu, not when you update
   VinSamLib.
-- **Reduce to Mono — Mix / Left channel only / Right channel only** —
+- **Reduce to Mono — Mix (average both sides) / Left channel only / Right channel only** —
   a deliberate size reduction (it halves every stereo sample), in the
   same spirit as the vintage-fit options below it.
 
@@ -1876,6 +1898,7 @@ no rebuild, no external tools — except floppy images, which aren't
 appendable and must be built whole each time. **Append File(s)…** does the
 same for banks that aren't in your library: pick them from anywhere on disk,
 several at once. It greys out on the image kinds that can't be appended.
+**Close** unloads the image from the column without touching the file.
 
 Right-click an entry for **Rename…**, **Delete**, or **Export…** (write
 just that one bank back out to a standalone file) — all in-place
@@ -1912,13 +1935,20 @@ imported one at a time or all at once. Here the filename is the *shared*
 part and the program names are what distinguish them, so those are what
 New Bank shows.
 
+![An MPC project expanded in the Explorer, one program per keygroup track as its own row](docs/screenshots/10_mpc_project.png)
+
+**File ▸ Import MPC Program…** is the picker route to the same dialog,
+greyed out with the reason when mpc2emu is absent.
+
 Two consequences worth knowing:
 
 - **Expanding a project parses it**, which means reading every WAV it
   references (a real one can pull tens of MB). That happens once per
   project, on expansion, and never during a background library scan —
-  the index records projects by filename only, so search finds the
-  project but not its programs by name.
+  the index never reads a project's audio; an MPC 3 project's program
+  names are indexed from its container, so search finds them by name,
+  while an MPC 2.x project's programs are found as the separate `.xpm`
+  files they are.
 - Programs are **converted, not added** — but they still drag. A real
   preset dropped on New Bank is added immediately, because it already is
   E4B/KRZ/EIII content; an MPC program only becomes one by going through
@@ -1931,9 +1961,10 @@ Two consequences worth knowing:
 Five formats from software samplers, all **read-only sources**: SoundFont 2
 (`.sf2`), SFZ, Logic EXS24 (`.exs`), TAL-Sampler (`.talsmpl`) and
 GigaSampler (`.gig`). Every one of them is browsed, indexed and searched
-like a bank, and every import leaves as E4B, KRZ or EIII. Nothing here is
-ever written in these formats, and New Bank refuses to build one — the
-target-format picker only ever offers the three hardware formats.
+like a bank, and every import leaves as a hardware bank (E4B, KRZ, EIII,
+or AKAI where this checkout can write it). Nothing here is ever written in
+these formats, and New Bank refuses to build one — the target-format
+picker only ever offers the hardware formats.
 
 They appear **only when mpc2emu is available**. Without it there is no
 reader for any of them, so the rows, the index entries and the five format
@@ -2090,7 +2121,7 @@ importable thing" — you pick a folder and decide about it case by case.
 The dialog is the [Convert Options dialog](#convert-options-dialog):
 the same target-format picker, and the same Trim Silence,
 Constant-Power Pan Compensation, Stereo Samples, Vintage Resample and
-reduction sections, all behaving identically — plus two controls that
+reduction sections, all behaving identically — plus three controls that
 only make sense for a bare WAV folder.
 
 **Which WAVs are readable** widened on 2026-08-02 (mpc2emu `07aea81`,
@@ -2110,6 +2141,13 @@ just text until something decides which octave numbering wrote it.
 **Adjust Sample Placement…** opens the editor described below; the label
 beside it reads *Auto-computed placement (default)* until you accept an
 override, then *Custom placement set for N sample(s)*.
+
+A checkable **Sample names** section sits below it: give one base name and
+every sample is renamed `<base>-<key>` after the key it plays — the same
+scheme **Rename Samples…** offers — with the **Add the key each sample
+plays (Rhodes-C3)** box clearing the key part off. Unticked (the default)
+keeps the names the conversion gave them, and the preview warns when a name
+would run past the 16-character field.
 
 The editor grows **Vel lo / Vel hi** columns when — and only when — the folder
 actually carries velocity layers, which it does when the filenames name one
@@ -2166,7 +2204,7 @@ separately whether the specific modules the conversion feature needs
 are present (a checkout could exist but be an incompatible or partial
 version). Changing the path needs a restart to take effect.
 
-**New Bank size-warning thresholds** (bottom of the dialog, pictured
+**New Bank size-warning thresholds** (pictured
 above) — one editable field in MB each for E4B and KRZ, defaulting to
 **64 MB / 32 MB** (an EIII New Bank reuses the E4B field: EIII banks load
 on the same E4XT hardware, via its backward-compatibility loader, so a
@@ -2186,7 +2224,7 @@ field above cannot express, so a bank can sit comfortably inside your
 size threshold and still be too big to load. A K2000 keeps its objects —
 programs, keymaps and sample headers — in PRAM, separately from the
 sample RAM the audio uses. An object costs roughly its own size: a plain
-keymap about 430 bytes, a velocity-layered one three times that, a
+keymap about 430 bytes, a larger velocity-layered one up to about 690, a
 program 210–280, a sample header 84.
 
 The default **110 KB** is a stock machine's ~116 KB usable less headroom
@@ -2228,8 +2266,9 @@ Loops…** in New Bank.
 **Autosave staged work every** — the crash-recovery interval, 60 seconds
 by default, **0** to switch it off. See [Crash recovery](#crash-recovery).
 
-**Record every mpc2emu call in the project file** — a diagnostic switch,
-**off by default**. With it on, every call into mpc2emu is recorded: the
+**Record every mpc2emu call in the project file** — a diagnostic switch
+under the **Diagnostics:** row, **off by default**. With it on, every call
+into mpc2emu is recorded: the
 importers and parsers, each processor in the conversion pipeline, the
 bank writers, and the image writers — with the **resolved** options it
 ran with (after defaults, which is the part nobody can reconstruct
@@ -2257,6 +2296,8 @@ noticed in.
 **Delete** removes the current selection wherever a "Remove"-style
 action exists: New Bank's list, the Image column's list, and both the
 main queue and the per-bank contents list in Pending for Image.
+
+**Ctrl+Q** quits VinSamLib. (Closing the window does the same.)
 
 ---
 
@@ -2341,7 +2382,7 @@ match), per-zone level and pan, tuning from root key, coarse and fine tune,
 alternating loops baked as the sampler would play them, the amp envelope
 including velocity-to-volume and both curve laws, the resonant filter with its
 own envelope, filter keytracking and velocity-to-filter at both ends of its
-range, and an **LFO** routed to cutoff, resonance, pan or volume.
+range, and an **LFO** routed to cutoff, resonance, pan, volume or pitch.
 
 **Not modelled:** the machines' own converters, output stages and anti-alias
 filters; chorus, delay and every other effect; polyphony limits and voice
@@ -2383,7 +2424,8 @@ list of presets and only want to hear one of them.
 The window itself carries the honesty header, the report, a **Play / Replay /
 Stop** transport and **Save as WAV…**. Once you are familiar with a format
 that window is in the way of the thing you came for, so it can be switched off
-— in the window itself, or from **View ▸ Show Audition Report**. With it off an
+— with its **Show this report every time** checkbox, or from **View ▸ Show
+Audition Report**. With it off an
 audition plays behind a small *"Auditioning <preset>"* notice that closes
 itself when the sound ends.
 
@@ -2551,7 +2593,9 @@ one produced files that parse cleanly, re-read correctly and look
 entirely normal, so nothing will tell you which of your own files are
 affected — that is the whole reason this section exists. None of them
 can be repaired in place; the fix is always to rebuild from the source
-material with a current mpc2emu and VinSamLib.
+material with a current mpc2emu and VinSamLib — the clicking-loop repair
+is the one exception, since its fix is simply to run the repair again
+(see its entry below).
 
 **Newest first.** If you have kept up with releases, the entries below
 your last update are the ones that can still be sitting in your files.
@@ -3101,9 +3145,10 @@ has yet played a loop repaired this way.** Keep the original file.
 and the *sample's own end* are the **same field** (offset 20). Everything
 downstream — how many words of PCM get copied, where the next sample starts —
 is derived from it, so moving a loop point in KRZ moves the sample's declared
-extent too. This program keeps that consistent: the repair is applied before
-the extent is taken, so the copy, the rebias and the loop all agree, and a
-re-read of the built bank confirms it. What no test here can tell you is
+extent too. This program keeps that consistent: the sample's own extent is
+taken **first** and handed to the repair as a bound, so the copy, the rebias
+and the loop all agree, and a re-read of the built bank confirms it. What no
+test here can tell you is
 whether a K2000 agrees with our reading of that field in the first place.
 
 That last sentence is the whole caveat, and it is the same one the rename
@@ -3334,7 +3379,7 @@ libraries before a fifth publisher's disc surfaced it.
 
 | Feature | Status |
 |---|---|
-| EIII / ESI-32 bank format | ✅ readable and buildable (`.e3x`/`.esi`) — browse, summarize, combine into a New Bank, Save as…, and convert to/from E4B and KRZ. No reference implementation existed anywhere, so this is a from-scratch RE effort, corpus-verified by round-tripping 600 real banks out of the author's own discs |
+| EIII / ESI-32 bank format | ✅ readable and buildable (`.e3x`/`.esi`; the older `.e3b` reads but is not written) — browse, summarize, combine into a New Bank, Save as…, and convert to/from E4B and KRZ. No reference implementation existed anywhere, so this is a from-scratch RE effort, corpus-verified by round-tripping 600 real banks out of the author's own discs |
 | EIII banks on a disk image | ✅ EIII banks can now be sent to Pending for Image and built onto a real EMU3 CD/HD image the same way E4B banks are (mpc2emu's EIII writer/`iso_builder` fix, hardware-confirmed 2026-07-28, made this possible — see `build/images.py`'s `append_banks()`). Per-bank "Process before building…" isn't wired up for EIII yet, same scope decision as KRZ (see below) |
 | Writing the `.esi` (ESI-32) variant | ⚠️ `banks/eiii.py`'s `assemble()` supports it, but nothing in the UI exposes the choice — Save as… always writes the `.e3x` variant (which the E4XT's backward-compatibility loader also reads) |
 | EIII banks with shared preset link-chains | ⚠️ an EIII preset stacks layers by link-chaining preset slots, and several presets can share one chain tail. Assembling gives each its own copy, so selecting *every* preset of a few unusually dense commercial banks can exceed the 256-slot format ceiling even though the source bank fit — 2 of 600 corpus banks. Save as… reports it rather than writing a corrupt bank; drop a few presets to get under it |
@@ -3418,6 +3463,8 @@ vinsamlib/
 │   ├── refaudio.py             # What a row costs a sampler, deduped per source bank
 │   ├── project.py              # .vslproj save/load, references vs carried bytes
 │   ├── calllog.py              # The opt-in record of every mpc2emu call
+│   ├── _compat.py              # Capability probes for mpc2emu checkout compatibility
+│   ├── captured_stdout.py      # A per-thread capture of mpc2emu's printed output
 │   ├── firmware_sim.py         # Whether a source->target path converts the way the DEVICE would
 │   ├── akai_image.py           # AKAI media: partition planning, RAM and object budgets
 │   └── images.py               # create_image()/append_banks() over mpc2emu's writers
@@ -3444,7 +3491,7 @@ vinsamlib/
     ├── image_pane.py             # Image column
     ├── favourites_dialog.py     # Paste hardware preset numbers, preview what they resolve to
     ├── sample_rename_dialog.py  # Rename the samples inside a staged bank
-    ├── sample_names_widget.py   # The naming-scheme row both dialogs share
+    ├── sample_names_widget.py   # The base-name/key naming row the sample-folder import offers
     ├── audition_dialog.py       # The report, the transport, the auto-closing notice, Save as WAV
     ├── audition_player.py       # Qt audio output, the external-player fallback, the volume trim
     ├── loop_repair_dialog.py    # Clicking loops, worst first, and the repair choice
@@ -3456,7 +3503,7 @@ vinsamlib/
     ├── note_naming.py            # MIDI number <-> note name, per octave convention
     ├── dnd.py                    # The preset drag payload shared by tree and results
     ├── workers.py                # One thread pool, one signal bridge, for all background work
-    └── settings_dialog.py        # mpc2emu path configuration
+    └── settings_dialog.py        # mpc2emu path, size/PRAM/object budgets, autosave, audition, diagnostics
 
 tools/
 ├── check_krz_banks.py          # Scans built KRZ banks for the two silent defects
@@ -3464,21 +3511,33 @@ tools/
 ├── matrix_coverage.py          # Which release-matrix cells any test actually claims
 ├── matrix_grid.py              # The same, rendered as a grid
 ├── suggest_coverage.py         # Cells with no test, ranked by what they would catch
-├── backup_tests.py             # Snapshots tests/, which is untracked by design
+├── backup_tests.py             # Snapshots the test suite, which .gitignore excludes
 └── make_screenshots.py         # Regenerates the README screenshots from a synthetic
                                  # demo library — no real (or commercial) content
+
+docs/
+├── CODE_REVIEW_2026-10-09.md   # The 2026-10-09 whole-repo review and its fix ledger
+├── RELEASE_TEST_MATRIX.md      # The hardware release-matrix cells
+└── TEST_AUTOMATION_PLAN.md     # The test-automation plan, and what each test claims
 ```
+
+Two modules double as small command-line tools: `python -m vinsamlib.vfs.detect <path>`
+sniffs a file or disc image's format, and `python -m vinsamlib.banks.summary` summarises a
+bank. `VINSAMLIB_NO_NUMPY=1` forces the pure-Python render path (see "Speed" under Audition);
+`VINSAMLIB_ALLOW_REAL_STATE=1` is the opt-in a script must set to touch your real config and
+index — the app sets it for itself.
 
 ---
 
 ## What needs mpc2emu, at a glance
 
 The prose version is [above](#what-it-is-and-what-needs-mpc2emu); this is the
-lookup table. **Settings ▸ shows which of these is unavailable and why**, so
-the last column names the check that reports it rather than leaving you to
-guess from a greyed-out menu.
+lookup table. **Settings ▸ shows the mpc2emu path and the conversion, trim
+and Audition capabilities**; the other checks surface as a greyed-out menu
+entry's tooltip and under **Help ▸ About VinSamLib**, which is why the last
+column still names the check rather than leaving you to guess.
 
-Without mpc2emu, VinSamLib is still a complete E4B/KRZ bank builder and
+Without mpc2emu, VinSamLib is still a complete E4B/KRZ/AKAI bank builder and
 library browser — the whole left half of this table is its own code.
 
 | Feature | Needs mpc2emu | What for |
@@ -3486,16 +3545,16 @@ library browser — the whole left half of this table is its own code.
 | Browse loose `.e4b` / `.KRZ` / EIII banks | **no** | `banks/*.py` are self-contained readers |
 | Browse EMU3 discs & HD images, ISO 9660, FAT12/16/32 | **no** | `vfs/` reads all of them from scratch |
 | **Browse AKAI discs, CD-ROMs and floppies** | **no** | `vfs/akai.py` and `banks/akai.py` are ours |
-| **AKAI Detail and Samples panes** — keygroups, zones, loops, rates | **no** | same; the only format whose detail view needs nothing |
+| **AKAI Detail and Samples panes** — keygroups, zones, loops, rates | **no** | same; our own container reader needs nothing |
 | **New Bank: assemble an AKAI volume, Save as…** | **no** | writes the `.P3`/`.S3` files itself |
-| Converting **to or from** AKAI | **yes** | `check_akai_write_support`, and the shared conversion pipeline |
+| Converting **to or from** AKAI | **yes** | `check_akai_read_support` (from), `check_akai_write_support` (to), and the shared conversion pipeline |
 | Index & search the library | **no** | |
 | New Bank: assemble E4B or KRZ, **Save as…** | **no** | |
 | Rename samples inside a bank | **no** | patched in our own container layer |
 | Adjust Placement… — key range, root, velocity | **no** | same |
 | Add favourites from a hardware list | **no** | positions into a bank we already parsed |
 | KRZ Detail pane | **no** | KRZ's detail view is self-contained |
-| **E4B / EIII Detail pane** — zones, velocity, bit depth | **yes** | `parsers.e4b_parser`, `parsers.eiii_parser` |
+| **E4B / EIII Detail pane** — zones, velocity, bit depth | **no** | `banks/summary.py` reads the container directly |
 | **Building an EIII bank at all** | **yes** | `writers.eiii_writer`'s empty-bank skeleton |
 | An E4B whose source lacked its `E4MA`/`EMST` chunks | **yes** | `e4b_writer`'s defaults, for a few real commercial banks |
 | **Creating or appending to any disk image** | **yes** | every image writer lives there — `iso_builder`, `hda_builder`, `fat12/16/32` |
@@ -3505,7 +3564,7 @@ library browser — the whole left half of this table is its own code.
 | MPC import — `.xpm`, `.xty`, `.xpj` | **yes** | `check_xpm_import_support` |
 | Import Sample Folder… | **yes** | `check_sample_dir_import_support` |
 | **SF2 / SFZ / EXS24 / TAL / GIG** — browse, index, search, import | **yes** | `check_foreign_import_support` — without it these rows are absent from the Explorer entirely, rather than present and broken |
-| **Ensoniq EPS/ASR and Roland S-7xx discs** — browse, index, search, import | **yes** | the parsers are derived from the samplers' own firmware and live on an mpc2emu *branch*; without them these discs are absent from the Explorer entirely |
+| **Ensoniq EPS/ASR and Roland S-7xx discs** — browse, index, search, import | **yes** | the parsers are derived from the samplers' own firmware and live on an mpc2emu *branch* (`check_firmware_import_support`); without them these discs are absent from the Explorer entirely |
 | **Audition** a preset (render + play) | **yes** | `check_audition_support` — the model, parsers and processors; the audio device is probed separately and only gates playback, not rendering |
 
 Two entries are easy to misread, so they are spelled out:
