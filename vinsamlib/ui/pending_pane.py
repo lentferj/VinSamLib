@@ -384,6 +384,10 @@ class PendingBanksPane(QWidget):
     # -- list management --------------------------------------------------------
 
     def _refresh(self) -> None:
+        # FIRST, not last: the queue is being rebuilt and a bank that has left
+        # it must not leave its summary behind under an address that is about
+        # to be reusable (see _prune_audio_memo).
+        self._prune_audio_memo()
         self._list.clear()
         for row, entry in enumerate(self._pending):
             item = self._make_item(entry)
@@ -504,8 +508,22 @@ class PendingBanksPane(QWidget):
             (dupes if key in seen else seen).add(key)
         return dupes
 
-    def _preset_audio(self, bank, preset) -> Optional[int]:  # noqa: UP045
-        """One staged preset's own audio, memoised per queue entry."""
+    def _summarise(self, bank, preset):
+        """One preset's summary, memoised per (bank, preset).
+
+        THE BANK JOINS THE KEY by id(), and that is only safe because every
+        entry in the queue holds a strong reference to the bank its presets
+        came from -- an address cannot be recycled while a memo entry naming it
+        can still be read. `_prune_audio_memo` is what makes that true: it
+        drops every entry whose bank has left the queue, before an address can
+        be reused by a different one.
+
+        Without a memo the queue re-summarised every preset of every bank on
+        every `_refresh()` -- which runs on every add, rename, delete, reorder
+        and partition-break toggle. Measured with 5 queued banks, one rename
+        froze the window 410 ms to answer a question no part of the data had
+        changed.
+        """
         key = (
             id(bank),
             getattr(preset, "id", None),
@@ -518,11 +536,35 @@ class PendingBanksPane(QWidget):
         try:
             from ..banks import summary
 
-            value = summary.summarize_preset(bank, preset).total_sample_bytes
+            value = summary.summarize_preset(bank, preset)
         except Exception:  # noqa: BLE001
+            # None means "unknown", which the rows render as no figure at all
+            # -- distinct from 0, which means a preset that needs no audio.
+            # A summary that raises must not take the whole list with it.
             value = None
         self._audio_memo[key] = value
         return value
+
+    def _preset_audio(self, bank, preset) -> Optional[int]:  # noqa: UP045
+        """One staged preset's own audio -- the Contents list's own row."""
+        summary = self._summarise(bank, preset)
+        return None if summary is None else summary.total_sample_bytes
+
+    def _prune_audio_memo(self) -> None:
+        """Forget summaries for banks no longer in the queue.
+
+        The memo is keyed on `id(bank)`, and an address is reusable the moment
+        nothing else references it -- a queued bank deleted from the queue is
+        the moment that happens. `bank_pane._prune_audio_memo` exists for
+        exactly this hazard; until now this pane had no pruner at all, so the
+        memo grew once per distinct preset for the life of the session and a
+        reused address answered with the FIRST bank's figure.
+        """
+        live: set = set()
+        for entry in self._pending:
+            for item in entry.get("items", []):
+                live.add(id(item[0]))
+        self._audio_memo = {k: v for k, v in self._audio_memo.items() if k[0] in live}
 
     def _entry_audio(self, entry: dict) -> Optional[int]:  # noqa: UP045
         """What this queued bank costs to LOAD -- deduped across its presets.
@@ -553,7 +595,13 @@ class PendingBanksPane(QWidget):
             from ..banks import summary
 
             for bank, preset, _name, *_ in entry.get("items", []):
-                ps = summary.summarize_preset(bank, preset)
+                # The memoised summary, which is what MAKES this affordable:
+                # everything below is arithmetic over what it already holds.
+                # un-summarisable (a summary that raised) -- the total is
+                # still well defined from the samples that did summarise.
+                ps = self._summarise(bank, preset)
+                if ps is None:
+                    continue
                 for nm, size in ps.sample_sizes.items():
                     shared[(nm, size)] = size
                 if ps.sample_keys:
@@ -628,11 +676,24 @@ class PendingBanksPane(QWidget):
         self._update_contents_preview()
 
     def _update_contents_preview(self) -> None:
+        """The selected queued bank's presets, with each one's own audio.
+
+        Read from `self._pending` BY ROW rather than from the widget item's
+        UserRole. Two reasons, and the second one is a live fault: a dict that
+        crosses QVariant storage comes back as a COPY, so a contents reorder
+        that wrote into `self._pending[row]["items"]` left the widget item
+        holding the OLD list and this preview showed the previous order until
+        something else refreshed it. And `QListWidget.clear()` leaves
+        `currentItem()` readable until Qt processes the deletion, so a queue
+        that had just been emptied answered for a row that no longer existed --
+        which re-summarised a bank no longer in the queue, straight into an
+        `id(bank)`-keyed memo whose address is about to be reusable.
+        """
         self._contents_list.clear()
-        item = self._list.currentItem()
-        entry = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-        if entry is None:
+        row = self._list.currentRow()
+        if row < 0 or row >= len(self._pending):
             return
+        entry = self._pending[row]
         for preset_tuple in entry["items"]:
             bank, preset, name = preset_tuple[0], preset_tuple[1], preset_tuple[2]
             audio = self._preset_audio(bank, preset)
@@ -804,6 +865,7 @@ class PendingBanksPane(QWidget):
         self._pending = []
         self._partition_breaks.clear()
         self._format = None
+        self._audio_memo = {}
         self._refresh()
 
     # -- conversion options -------------------------------------------------------
