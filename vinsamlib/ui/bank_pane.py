@@ -554,8 +554,14 @@ class BankPane(QWidget):
         _added, dupes = self._add_items(items)
         # A drop is a plain add like any other, and was the one route that
         # would still have gone unchecked.
+        #
+        # THE ADDED SLICE, BY POSITION -- exactly as add_presets above does
+        # it. It used to report the WHOLE drop, including the items
+        # `_add_items` had just skipped as duplicates, so re-dropping the same
+        # presets warned about presets that had not been added: a box about a
+        # zone the bank is not being given, on every repeat.
         if _added and self._format == "E4B":
-            self._report_ceiling_zones(items)
+            self._report_ceiling_zones(self._items[-len(_added) :])
         if dupes:
             self.statusMessage.emit(f"Already in New Bank, skipped: {', '.join(dupes)}")
 
