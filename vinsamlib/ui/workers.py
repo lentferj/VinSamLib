@@ -1,9 +1,11 @@
 """
-Shared background-work idiom for the whole UI: anything that touches disk or
-parses a bank (opening a directory/image, parsing an E4B/KRZ file, building a
-summary) runs off the GUI thread through one shared thread pool, and reports
-back via a signal — the standard `QRunnable` + `QObject`-signals-bridge
-pattern, needed because `QRunnable` itself cannot emit signals.
+Shared background-work idiom for the whole UI. A Worker's signal source
+(WorkerSignals) is owned by the receiver pane (passed as Qt parent), while
+the runnable (Worker) is owned by the QThreadPool (autoDelete=True). This
+removes the old manual `self._live_workers` lifetime dance: the pane keeps
+the QObject alive until torn down, and the pool drops the QRunnable after
+run() delivers its signal. The shiboken6.isValid() guard stays, because a
+pane can still be collected between `run()` finishing and `.emit()` running.
 """
 
 from __future__ import annotations  # noqa: I001
@@ -30,6 +32,9 @@ def last_error_line(message: str) -> str:
 
 
 class WorkerSignals(QObject):
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+
     finished = Signal(object)  # the callable's return value
     error = Signal(str)
 
@@ -52,22 +57,21 @@ class Worker(QRunnable):
     yourself.
     """
 
-    def __init__(self, fn: Callable[..., Any], *args, **kwargs):
+    def __init__(
+        self, fn: Callable[..., Any], *args, parent: QObject | None = None, **kwargs
+    ):
         super().__init__()
         self._fn = fn
         self._args = args
         self._kwargs = kwargs
-        self.signals = WorkerSignals()
-        # Qt's thread pool auto-deletes a QRunnable's C++ side as soon as
-        # run() returns (QRunnable.autoDelete() defaults to True). Every
-        # caller in this codebase already manages a Worker's lifetime itself
-        # (a `self._live_workers` list, or a plain `self._scan_worker`
-        # attribute) specifically so it survives long enough to deliver its
-        # signal — under PySide6/Shiboken that race turns into a hard
-        # "Signal source has been deleted" RuntimeError from run() itself
-        # (not reliably hit under PyQt5's looser ownership handling), so
-        # ownership needs to be Python's alone, never Qt's.
-        self.setAutoDelete(False)
+        # The receiver pane (the parent QObject) owns the signal source; the
+        # pool owns the runnable. The parent keeps the C++ side alive until
+        # the pane is torn down, and setAutoDelete(True) lets Qt clean up the
+        # QRunnable once run() finishes. See docstring above for the contract.
+        self.signals = WorkerSignals(parent)
+        # Pool owns the runnable; parent owns the signal source.
+        # No manual lifetime management needed — the pane's parent keeps the
+        # QObject alive and the pool drops the QRunnable after delivery.
 
     def run(self) -> None:
         try:
