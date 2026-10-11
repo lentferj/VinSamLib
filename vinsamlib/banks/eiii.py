@@ -526,11 +526,18 @@ def _repair_body_loops(body: bytes, kind: str) -> bytes:
     """Apply one loop repair to an EIII sample body, returning a new body.
 
     Header+PCM in one buffer, so a cross-fade rewrites from PCM_START and the
-    point repairs rewrite the loop fields at 36 and 44. Unlike E4B there is no
-    off-by-one convention here: both fields are plain byte offsets from the
-    start of the header, so the value written back is `frame * 2 + PCM_START`.
+    point repairs rewrite the loop fields the reader chose. Unlike E4B there
+    is no off-by-one convention here: both fields are plain byte offsets from
+    the start of the header, so the value written back is `frame * 2 +
+    PCM_START`.
+
+    AND THE PAIR IS THE ONE THAT WAS READ. 36/44 are the left channel's; a
+    right-channel-only object's real points are at 40/48 (see
+    _EIII_OPT_HAS_LEFT), and patching the left pair would leave the loop
+    exactly where it was while reporting the repair as applied.
     """
     out = bytearray(body)
+    start_off, end_off = _loop_offsets(bytes(out))
     for start, end in sample_loops(_BodyOnly(bytes(out))):
         pcm = bytes(out[PCM_START:])
         got = loopcheck.apply_repair(kind, pcm, start, end, big_endian=PCM_BIG_ENDIAN)
@@ -539,8 +546,8 @@ def _repair_body_loops(body: bytes, kind: str) -> bytes:
         new_pcm, new_start, new_end = got
         if new_pcm is not None:
             out[PCM_START:] = new_pcm
-        struct.pack_into("<I", out, 36, new_start * 2 + PCM_START)
-        struct.pack_into("<I", out, 44, new_end * 2 + PCM_START)
+        struct.pack_into("<I", out, start_off, new_start * 2 + PCM_START)
+        struct.pack_into("<I", out, end_off, new_end * 2 + PCM_START)
     return bytes(out)
 
 
@@ -736,6 +743,42 @@ PCM_BIG_ENDIAN = False
 
 _EIII_OPT_LOOP = 0x0001
 
+#: `options` bit that marks the sample object as holding the LEFT channel.
+#: The EIII header stores every position TWICE, once per channel, four bytes
+#: apart throughout: start 20/24, end 28/32, loop start 36/40, loop end
+#: 44/48. An object holding only its RIGHT channel keeps its real positions
+#: in the SECOND field of each pair, and the first holds a stale value from
+#: whatever that pair used to address.
+#:
+#: MEASURED over the real EIII corpus here (2 banks, 311 samples): 70
+#: right-channel-only samples, 63 of them looped, and for every one of those
+#: 63 the RIGHT end field equals the sample's own PCM length minus one,
+#: against 9 of 63 for the left -- and those 9 are exactly the ones where the
+#: two pairs agree. So the left pair is stale rather than merely redundant,
+#: and the loop pair must be chosen by the same bit: 17 of the 63 read a loop
+#: start below the 92-byte header under the unconditional left read -- which
+#: the guard below turned into a silent skip -- and another 34 read a
+#: plausible loop 46 frames early. E4B has the identical structure and
+#: mpc2emu branches on the same bit there; see e4b._OPT_HAS_LEFT.
+_EIII_OPT_HAS_LEFT = 0x0020
+
+_EIII_LOOP_OFFS_LEFT = (36, 44)
+_EIII_LOOP_OFFS_RIGHT = (40, 48)
+
+
+def _loop_offsets(body: bytes) -> tuple[int, int]:
+    """The (loop_start, loop_end) FIELD OFFSETS this sample's options name.
+
+    Not always 36/44: see _EIII_OPT_HAS_LEFT for the corpus measurement. A
+    right-channel-only object's real loop points live in the 40/48 pair and
+    its 36/44 pair holds a stale value, so which pair is read is decided by
+    the same bit E4B branches on.
+    """
+    opts = struct.unpack_from("<H", body, 58)[0]
+    return (
+        _EIII_LOOP_OFFS_LEFT if (opts & _EIII_OPT_HAS_LEFT) else _EIII_LOOP_OFFS_RIGHT
+    )
+
 
 def sample_pcm(samp) -> bytes:
     return samp.body[PCM_START:]
@@ -744,11 +787,13 @@ def sample_pcm(samp) -> bytes:
 def sample_loops(samp) -> list[tuple[int, int]]:
     """[(loop_start_frame, loop_end_frame)] for a looped EIII sample.
 
-    Per EIII_FORMAT.md's sample header: loop start of the left channel at 36,
-    loop end of the left channel at 44, both u32 byte offsets from the start
-    of the 92-byte header, and 0x0001 in the options word at 58 marks a loop. Only the LEFT channel is read — the two
-    channels of a stereo sample are stored as separate blocks and share their
-    loop positions.
+    Per EIII_FORMAT.md's sample header: loop start at 36 and loop end at 44
+    for a sample holding the LEFT channel, both u32 byte offsets from the
+    start of the 92-byte header, and 0x0001 in the options word at 58 marks
+    a loop. A sample holding only its RIGHT channel carries the same pair
+    four bytes further on, at 40/48 -- the header stores every position
+    twice, once per channel, and the left pair of a right-only object is
+    stale (see _EIII_OPT_HAS_LEFT for the measurement).
     """
     b = getattr(samp, "body", b"")
     if len(b) < 60:
@@ -762,8 +807,9 @@ def sample_loops(samp) -> list[tuple[int, int]]:
         return []
     if not (opts & _EIII_OPT_LOOP):
         return []
-    ls_b = struct.unpack_from("<I", b, 36)[0]
-    le_b = struct.unpack_from("<I", b, 44)[0]
+    start_off, end_off = _loop_offsets(b)
+    ls_b = struct.unpack_from("<I", b, start_off)[0]
+    le_b = struct.unpack_from("<I", b, end_off)[0]
     if ls_b < PCM_START or le_b < PCM_START:
         return []
     frames = max(0, (len(b) - PCM_START) // 2)

@@ -194,6 +194,39 @@ PCM_BIG_ENDIAN = False
 #: `options` bit that marks a forward loop (0x0031 = MONO_L | LOOP).
 _OPT_LOOP = 0x0001
 
+#: `options` bit that marks the sample object as holding the LEFT channel.
+#: The Emulator III's sample struct stores every position TWICE, once per
+#: channel (start/end/loop-start/loop-end at 22/30/38/46 for the left and
+#: 26/34/42/50 for the right), and an object holding only its RIGHT channel
+#: keeps its real positions in the SECOND field of each pair, leaving the
+#: first with a stale value that does not address this sample at all.
+#:
+#: MEASURED over this project's 141-bank E4B corpus: 88 right-channel-only
+#: samples, 73 of them looped, and reading the left pair unconditionally is
+#: WRONG FOR ALL 73 -- 6 have a loop_start of 12..16 bytes, which the
+#: `< PCM_OFFSET` guard below turned into a silent skip, and the other 67
+#: read a plausible-looking loop 46 frames early. Cross-checked against
+#: mpc2emu's own `parsers/e4b_parser.py` (which makes the same branch): the
+#: right pair agrees with it on 73 of 73, the left pair on 0 of 73.
+_OPT_HAS_LEFT = 0x0020
+
+#: The two loop field pairs, in the order (start, end): the left channel's at
+#: 38/46 and the right channel's at 42/50.
+_LOOP_OFFS_LEFT = (38, 46)
+_LOOP_OFFS_RIGHT = (42, 50)
+
+
+def _loop_offsets(body: bytes) -> tuple[int, int]:
+    """The (loop_start, loop_end) FIELD OFFSETS this sample's options name.
+
+    Not always 38/46: see _OPT_HAS_LEFT. A right-channel-only object's real
+    loop points live in the second pair, and its first pair holds a stale
+    value from whatever the channel pair used to hold -- so which pair is
+    read is decided by the same bit mpc2emu branches on, not by assuming.
+    """
+    opts = struct.unpack_from("<H", body, 60)[0]
+    return _LOOP_OFFS_LEFT if (opts & _OPT_HAS_LEFT) else _LOOP_OFFS_RIGHT
+
 
 def sample_pcm(samp: "E4BSample") -> bytes:  # noqa: UP037
     """The sample's PCM, without the header. For a stereo sample this is the
@@ -216,6 +249,13 @@ def sample_loops(samp: "E4BSample") -> list[tuple[int, int]]:  # noqa: UP037
     the +1 raised the clean-seam share from 78% to 95%. mpc2emu encodes and
     decodes it consistently, so it matters only when reading a third-party
     bank -- which is exactly what this program does.
+
+    WHICH FIELD PAIR IS READ IS NOT A GUESS EITHER: an object holding only
+    its RIGHT channel keeps its loop points in the 42/50 pair and its 38/46
+    pair holds a stale value. See _OPT_HAS_LEFT for the corpus measurement
+    and the cross-check against mpc2emu. Reading the left pair for one of
+    those is not a near miss: 6 of 73 real samples read a loop_start of 12
+    bytes, and the guard below then skipped them with nothing saying so.
     """
     b = samp.body
     if len(b) < 62:
@@ -223,8 +263,9 @@ def sample_loops(samp: "E4BSample") -> list[tuple[int, int]]:  # noqa: UP037
     opts = struct.unpack_from("<H", b, 60)[0]
     if not (opts & _OPT_LOOP):
         return []
-    start_b = struct.unpack_from("<I", b, 38)[0]
-    end_b = struct.unpack_from("<I", b, 46)[0]
+    start_off, end_off = _loop_offsets(b)
+    start_b = struct.unpack_from("<I", b, start_off)[0]
+    end_b = struct.unpack_from("<I", b, end_off)[0]
     if start_b < PCM_OFFSET or end_b < PCM_OFFSET:
         return []
     frames = max(0, (len(b) - PCM_START) // 2)
@@ -244,8 +285,14 @@ def _repair_body_loops(body: bytes, kind: str) -> bytes:
     end written here is `(end - 1) * 2 + PCM_OFFSET`. Reading and writing
     through different conventions would move every repaired loop by one frame
     — small enough to look like success and audible on a short loop.
+
+    AND THE PAIR IS THE ONE THAT WAS READ. Offsets 38/46 are the LEFT
+    channel's; a right-channel-only object's real points are at 42/50 (see
+    _OPT_HAS_LEFT), and patching the left pair would leave the loop exactly
+    where it was while reporting the repair as applied.
     """
     out = bytearray(body)
+    start_off, end_off = _loop_offsets(bytes(out))
     for start, end in sample_loops_of_body(bytes(out)):
         pcm = bytes(out[PCM_START:])
         got = loopcheck.apply_repair(kind, pcm, start, end, big_endian=PCM_BIG_ENDIAN)
@@ -254,8 +301,8 @@ def _repair_body_loops(body: bytes, kind: str) -> bytes:
         new_pcm, new_start, new_end = got
         if new_pcm is not None:
             out[PCM_START:] = new_pcm
-        struct.pack_into("<I", out, 38, new_start * 2 + PCM_OFFSET)
-        struct.pack_into("<I", out, 46, (new_end - 1) * 2 + PCM_OFFSET)
+        struct.pack_into("<I", out, start_off, new_start * 2 + PCM_OFFSET)
+        struct.pack_into("<I", out, end_off, (new_end - 1) * 2 + PCM_OFFSET)
     return bytes(out)
 
 
