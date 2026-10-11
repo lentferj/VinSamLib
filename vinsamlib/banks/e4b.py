@@ -345,9 +345,9 @@ VOICE_COARSE_TUNE, VOICE_FINE_TUNE = 35, 36
 #: (2026-07-26) and not a guess of ours.
 ZONE_FINE_TUNE = 12
 
-#: The rate above which an E4XT stops playing a sample and runs off its end
-#: into neighbouring sample RAM. NOT a limit in semitones -- that is only how
-#: it looks on 44.1 kHz material.
+#: The rate above which an E4XT stops playing a sample the way it was
+#: authored and runs off its end into neighbouring sample RAM. NOT a limit in
+#: semitones -- that is only how it looks on 44.1 kHz material.
 #:
 #: MEASURED on Jan's E4XT 2026-09-20, four presets over identical PCM:
 #: root 48/60/72 at 44100 Hz all clean to +45 and broken at +46, and root 60
@@ -356,6 +356,31 @@ ZONE_FINE_TUNE = 12
 #: bracket and this is a deliberate COPY of it, not a second opinion: the
 #: check has to run with no mpc2emu (a plain Add needs none), and a test
 #: asserts the two constants are equal whenever mpc2emu is importable.
+#:
+#: REFUTED AS A CEILING THE NEXT WEEK, ON HARDWARE (mpc2emu's section E4BBANDS,
+#: 2026-09-29), and recorded here because a constant's comment is the only
+#: place it can live without changing behaviour. Sweeping EVERY semitone 100..127
+#: on one unlooped 44100 Hz sample at root 60 gives TWO FOUR-SEMITONE BANDS,
+#: with normal playback between and ABOVE them:
+#:
+#:     +40..+45  normal        110..117  (+50..+57)  normal
+#:     +46..+49  FREE-RUNS     118..121  (+58..+61)  FREE-RUNS
+#:                             122..127  (+62..+67)  normal
+#:
+#: Root-relative, twelve apart, each spanning [exact octave - 2, octave + 1].
+#: So 625000 is the LOWER EDGE of the first band, not a ceiling: every
+#: measurement that produced the bracket above stopped at note 110, inside the
+#: normal gap, so nobody saw the band close again.
+#:
+#: THE VALUE IS LEFT UNCHANGED ON PURPOSE, which is also mpc2emu's decision and
+#: for the same reason: as a first-edge predictor it is still correct, so every
+#: `highest_safe_key` this module publishes is right about where trouble STARTS
+#: and wrong to imply everything above it is unsafe. Changing the SHAPE of what
+#: is warned -- narrowing it to the bands -- is a product decision about what a
+#: user is told, not a bug fix, and is a TODO row rather than a silent edit.
+#: What IS corrected here is the CLAIM: `zones_above_playback_ceiling` says it
+#: reports the first edge, and each record carries `edge` so a reader of the
+#: dict cannot assume a single limit either.
 E4XT_MAX_PLAYBACK_RATE_HZ = 625000.0
 
 
@@ -387,6 +412,17 @@ def zones_above_playback_ceiling(bank: "E4BFile", preset: "E4BPreset") -> list: 
     offsets above: the shift is the voice's coarse tune plus the zone's own
     fine tune, and ignoring it puts the answer a key or two out -- on the
     preset that prompted this, two voices give 118 and the third 117.
+
+    WHAT THE NUMBER MEANS, which is weaker than the field name suggests. That
+    name is `highest_safe_key` and it is KEPT, because the UI that acts on this
+    record reads exactly that key -- but the value is the FIRST EDGE of a band
+    and not the last safe key. The sweep behind E4XT_MAX_PLAYBACK_RATE_HZ
+    measured free-run at +46..+49 and +58..+61 with NORMAL playback at
+    +50..+57 and again at +62..+67, so a zone above the edge is a zone whose
+    trouble STARTS there and not necessarily one that misbehaves: every zone in
+    the +50..+127 band is reported here even where the machine plays normally.
+    Each record carries `"edge": "first"` for a reader that cannot see this
+    comment, and `keys_over` counts from the edge rather than from a hard stop.
     """
     out: list = []
     body = getattr(preset, "body", None)
@@ -430,6 +466,13 @@ def zones_above_playback_ceiling(bank: "E4BFile", preset: "E4BPreset") -> list: 
                         "sample_rate": rate,
                         "keys_over": hi - safe,
                         "zones_over": 1,
+                        # Not a limit -- the first edge of a band. See the
+                        # docstring: the sweep that measured this found normal
+                        # playback again above +62, so a zone past the edge is
+                        # a zone where trouble STARTS, not one that certainly
+                        # misbehaves. Carried in the record because its author
+                        # is not always the one reading it.
+                        "edge": "first",
                     }
                 )
     return out
