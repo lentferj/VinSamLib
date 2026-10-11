@@ -87,6 +87,7 @@ from __future__ import annotations  # noqa: I001
 import struct
 
 from . import loopcheck
+from ..config import Config
 from dataclasses import dataclass, field
 
 NAME_LENGTH = 16
@@ -804,9 +805,20 @@ def _build_bank(
     # dependency on mpc2emu being on disk — parse_bytes() above needs none.
     from ..mpc2emu_bridge import eiii_writer
 
-    skeleton = eiii_writer._create_empty_bank(
-        eiii_writer.BANK_FORMATS["e3x" if fmt is EMULATOR_3X else "esi"], bank_name
+    skeleton = (
+        eiii_writer._create_empty_bank(
+            eiii_writer.BANK_FORMATS["e3x" if fmt is EMULATOR_3X else "esi"], bank_name
+        )
+        if Config.check_assemble_support("eiii_writer._create_empty_bank")
+        and Config.check_assemble_support("eiii_writer.BANK_FORMATS")
+        else None
     )
+    if skeleton is None:
+        raise RuntimeError(
+            "Refusing to call private eiii_writer reaches "
+            "(_create_empty_bank / BANK_FORMATS) without explicit "
+            "assemble_support approval — see docs/CODE_REVIEW_2026-10-09.md (A2.4)"
+        )
 
     preset_area_size = sum(len(b) for b in preset_segments)
     sample_area_size = sum(len(b) for b in sample_bodies)

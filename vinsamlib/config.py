@@ -522,6 +522,26 @@ class Config:
             )
         return True, "XPM import is available"
 
+    @staticmethod
+    def check_assemble_support(private_name: str) -> bool:
+        """Gate private mpc2emu bridge reaches in assemble().
+
+        banks/e4b.py and banks/eiii.py fall back to private writer helpers
+        (e4b_writer._build_e4ma, e4b_writer._build_emst,
+        eiii_writer._create_empty_bank, eiii_writer.BANK_FORMATS) when
+        the source bank lacks a chunk. Those names are not part of
+        mpc2emu's public contract, so assemble() must refuse to call
+        them unless this check passes. Returns True only when the
+        private name is explicitly allow-listed here.
+        """
+        allowed = {
+            "e4b_writer._build_e4ma",
+            "e4b_writer._build_emst",
+            "eiii_writer._create_empty_bank",
+            "eiii_writer.BANK_FORMATS",
+        }
+        return private_name in allowed
+
     def check_akai_read_support(self) -> tuple[bool, str]:
         """AKAI as a conversion SOURCE: reading an AKAI program into
         mpc2emu's Bank model so it can be written as E4B/KRZ/EIII.

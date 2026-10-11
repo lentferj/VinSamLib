@@ -49,6 +49,7 @@ import re
 import struct
 
 from . import loopcheck
+from ..config import Config
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -1070,6 +1071,19 @@ def assemble(
         # than writing an empty/short chunk a real E4XT wouldn't expect.
         from ..mpc2emu_bridge import e4b_writer
 
+        if not Config.check_assemble_support("e4b_writer._build_e4ma"):
+            raise RuntimeError(
+                "Refusing to fall back to e4b_writer._build_e4ma(): "
+                "this private mpc2emu bridge name is not part of the "
+                "public mpc2emu contract — assemble() will not call "
+                "private reaches across the bridge boundary. "
+                "See docs/CODE_REVIEW_2026-10-09.md (A2.4)."
+            )
+        if not Config.check_assemble_support("e4b_writer._build_emst"):
+            raise RuntimeError(
+                "Refusing to fall back to e4b_writer._build_emst(): "
+                "same gating as _build_e4ma above."
+            )
         e4ma_body = e4ma_body or e4b_writer._build_e4ma()
         emst_body = emst_body or e4b_writer._build_emst()
 
