@@ -118,6 +118,18 @@ VOICE_LO_KEY, VOICE_HI_KEY = 14, 17
 #: been a coin toss dressed as a measurement.
 VOICE_LO_VEL, VOICE_HI_VEL = 18, 21
 
+#: A ZONE's own velocity window, at the two offsets mpc2emu intersects with
+#: the voice's above (`entry[6]`/`entry[9]` in its parser). The zone's KEY
+#: bytes mostly read 0-127 on real banks -- commercial material splits keys at
+#: the voice level and leaves the entry wide open -- but the velocity bytes do
+#: vary, and `banks/summary.py` intersects both the same way mpc2emu does.
+ZONE_LO_VEL, ZONE_HI_VEL = 6, 9
+
+#: A zone entry's 2-byte BE sample index, spelled as a bare literal at every
+#: other use in this module and named here because `banks/summary.py` reads
+#: it too -- a second spelling of one offset is how the two drift.
+ZONE_SAMPLE_INDEX = 10
+
 # Bank limits from writers/bank_splitter.py (_MAX_SAMPLES_PER_BANK / _MAX_PRESETS_PER_BANK)
 MAX_PRESETS = 1000
 MAX_SAMPLES = 1000
@@ -148,6 +160,22 @@ class E4BPreset:
     @property
     def num_zones(self) -> int:
         return len(self.zone_refs)
+
+    def voice_zones(self):
+        """(voice_start, zone_table_start, n_zones) for every voice block in
+        this preset body -- `_walk_voices`, published as a method on the object
+        that owns the body it walks.
+
+        Exists for `banks/summary.py`, which reads the zone model (key and
+        velocity window, root, sample, loop) straight out of the container
+        instead of rebuilding the bank and re-parsing it once per preset. It
+        needs each zone together with the voice that owns it, which is what
+        this walk yields and `zone_refs` alone does not. `ui/bank_pane.py` and
+        `audition/params.py` still reach for `e4b._walk_voices` themselves;
+        both spellings are correct, and a second public name in this module
+        for one walk is not worth the churn.
+        """
+        return _walk_voices(self.body, self.num_voices)
 
 
 @dataclass

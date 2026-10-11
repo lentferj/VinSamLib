@@ -106,6 +106,26 @@ UNUSED = 0xFF  # "no zone" marker in a note zone's primary/secondary field
 ZONE_SAMPLE_INDEX = 1  # LE u16 at zone offset + 1
 ZONE_SAMPLE_INDEX_MASK = 0x3FFF  # low 14 bits are the real sample number
 
+#: Preset-slot layout, for `banks/summary.py`'s direct zone read -- the same
+#: walk mpc2emu's `parsers/eiii_parser._parse_layers` performs, checked against
+#: `writers/eiii_writer.py`'s own constants. A preset slot is PRESET_SIZE bytes,
+#: then `num_note_zones` 4-byte note zones, then the zone table those note
+#: zones index into. A linked preset (PRESET_LINK) repeats the whole slot.
+PRESET_KEY_MAPPINGS = 0x36  # NUM_KEYS bytes: MIDI key -> note zone index
+#: (low, high) velocity bytes per LAYER: the primary layer's window and the
+#: secondary layer's. `banks/summary.py` reads them the way mpc2emu does --
+#: applied only when the range is restricted, left at (0, 127) otherwise.
+PRESET_VELOCITY_PRIMARY = (0x2D, 0x2E)
+PRESET_VELOCITY_SECONDARY = (0x2F, 0x30)
+#: An E-mu key number is MIDI minus this: key 0 is A-1, note 21.
+KEY_OFFSET = 21
+NUM_KEYS = 88
+#: A zone's root key, in E-mu key numbers -- add KEY_OFFSET for the MIDI one.
+ZONE_ORIGINAL_KEY = 0
+ZONE_FLAGS = 47
+#: A zone opting out of a loop its sample otherwise has.
+ZONE_FLAG_DISABLE_LOOP = 0x20
+
 BANK_NAME = 0x10
 BANK_OBJECTS = 0x20
 BANK_NEXT_PRESET = 0x30
@@ -512,6 +532,110 @@ def parse(path: str) -> EIIIFile:
     return parse_bytes(data, path)
 
 
+# ── the zone model, straight out of the container ───────────────────────────
+
+
+@dataclass
+class PresetZone:
+    """One zone as a preset's own tables describe it.
+
+    Format fields only -- no sample lookup, no loop reading. `banks/summary.py`
+    turns these into display rows, and keeping the walk here means the layout
+    lives beside `_zone_refs_in_chain`, which walks the same tables for the
+    assembler.
+    """
+
+    sample_index: int  # the stored index, masked with ZONE_SAMPLE_INDEX_MASK
+    lo_key: int  # MIDI
+    hi_key: int
+    lo_vel: int
+    hi_vel: int
+    root_key: int  # MIDI
+    loop_disabled: bool  # the zone opts out of a loop its sample has
+
+
+def preset_zone_layers(preset: EIIIPreset) -> list[list[PresetZone]]:
+    """One list per VOICE, each holding that voice's zones, in note-zone order.
+
+    The nesting is the format's: a preset slot holds a key-mapping table and a
+    note-zone table, and each note zone names TWO zone slots -- a primary and a
+    secondary. mpc2emu's `parsers/eiii_parser._parse_layers` turns those into
+    one VoiceLayer per (linked segment, layer) that has any zone at all, which
+    is what this returns, one list per such layer.
+
+    Only zone slots the note-zone table actually names are walked, for the
+    reason `_zone_refs_in_chain` gives at length: a zone table's physical
+    extent can be larger than the preset's live zone count, and reading the
+    whole thing picks up stale entries with leftover garbage index bytes.
+
+    The same two guards mpc2emu applies are applied here: a note zone no key
+    maps to is dropped, and a zone whose index is out of range is dropped.
+    """
+    out: list[list[PresetZone]] = []
+    seg = 0
+    for seg_len in preset.segment_lengths:
+        body = preset.body[seg : seg + seg_len]
+        seg += seg_len
+        if len(body) < PRESET_SIZE + 1:
+            continue
+        num_note_zones = body[PRESET_NUM_NOTE_ZONES]
+        note_zone_off = PRESET_SIZE
+        zone_table_off = note_zone_off + num_note_zones * NOTE_ZONE_SIZE
+        n_zones_avail = max(0, (len(body) - zone_table_off) // ZONE_SIZE)
+        for layer, field_off, (v_lo_off, v_hi_off) in (
+            (0, NOTE_ZONE_PRIMARY, PRESET_VELOCITY_PRIMARY),
+            (1, NOTE_ZONE_SECONDARY, PRESET_VELOCITY_SECONDARY),
+        ):
+            found: list[PresetZone] = []
+            for nzi in range(num_note_zones):
+                nz_off = note_zone_off + nzi * NOTE_ZONE_SIZE
+                if nz_off + NOTE_ZONE_SIZE > len(body):
+                    break
+                zone_idx = body[nz_off + field_off]
+                if zone_idx == UNUSED or zone_idx >= n_zones_avail:
+                    continue
+                lo_key = hi_key = None
+                for key in range(NUM_KEYS):
+                    if body[PRESET_KEY_MAPPINGS + key] == nzi:
+                        if lo_key is None:
+                            lo_key = key
+                        hi_key = key
+                if lo_key is None:
+                    continue  # a note zone no key maps to plays nothing
+                zo = zone_table_off + zone_idx * ZONE_SIZE
+                if zo + ZONE_SIZE > len(body):
+                    continue
+                raw = _u16(body, zo + ZONE_SAMPLE_INDEX)
+                idx = raw & ZONE_SAMPLE_INDEX_MASK
+                if not idx:
+                    continue
+                # Per-layer velocity window, applied only when restricted --
+                # an unrestricted range is the default (0, 127), and a stray
+                # leftover byte must not invent a window the preset does not
+                # have (mpc2emu applies exactly this test).
+                v_lo, v_hi = body[v_lo_off], body[v_hi_off]
+                if v_hi == 0 or v_hi > 127 or v_lo > v_hi:
+                    lo_vel, hi_vel = 0, 127
+                else:
+                    lo_vel, hi_vel = max(1, v_lo), v_hi
+                found.append(
+                    PresetZone(
+                        sample_index=idx,
+                        lo_key=lo_key + KEY_OFFSET,
+                        hi_key=hi_key + KEY_OFFSET,
+                        lo_vel=lo_vel,
+                        hi_vel=hi_vel,
+                        root_key=body[zo + ZONE_ORIGINAL_KEY] + KEY_OFFSET,
+                        loop_disabled=bool(
+                            body[zo + ZONE_FLAGS] & ZONE_FLAG_DISABLE_LOOP
+                        ),
+                    )
+                )
+            if found:
+                out.append(found)
+    return out
+
+
 # ── assembly ─────────────────────────────────────────────────────────────────
 
 
@@ -781,7 +905,22 @@ def _loop_offsets(body: bytes) -> tuple[int, int]:
 
 
 def sample_pcm(samp) -> bytes:
-    return samp.body[PCM_START:]
+    return samp.body[PCM_START]
+
+
+#: The sample's own rate, little-endian uint32 at 0x34 of the header -- the
+#: same field `e4b.sample_rate` reads in the E4B header, so the two formats'
+#: rates are read by one convention. Named here because `banks/summary.py`
+#: reads it out of the container rather than going through mpc2emu.
+SAMPLE_RATE_OFF = 0x34
+
+
+def sample_rate(samp) -> int:
+    """The sample's own rate in Hz, or 0 when the header is too short."""
+    b = getattr(samp, "body", b"") or b""
+    if len(b) < SAMPLE_RATE_OFF + 4:
+        return 0
+    return struct.unpack_from("<I", b, SAMPLE_RATE_OFF)[0]
 
 
 def sample_loops(samp) -> list[tuple[int, int]]:

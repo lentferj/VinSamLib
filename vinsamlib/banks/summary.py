@@ -5,15 +5,18 @@ No Qt, no printing/ANSI — just dataclasses the UI renders directly. Two very
 different strategies per format, because only some of them have an existing
 semantic reader to lean on:
 
-- **E4B** and **EIII**: neither `banks/e4b.py`'s nor `banks/eiii.py`'s own
-  container objects carry zone semantics (key/vel range, root, loop) — only
-  what's needed for byte-level assembly. Rather than re-deriving that from
-  raw bytes a second time, this reuses `banks.e4b.assemble()`/
-  `banks.eiii.assemble()` to build a throwaway one-preset bank file, then
-  hands it to mpc2emu's own `parsers.e4b_parser.parse_e4b()`/
-  `parsers.eiii_parser.parse_eiii()` for the rich, hardware-accurate
-  `models.common` zone model — the same reuse-not-reinvent approach the rest
-  of this project takes toward mpc2emu.
+- **E4B** and **EIII**: the container already carries every field the zone
+  model needs — `preset.body` holds the voice blocks and their zone entries,
+  `bank.samples[idx]` holds the audio, its rate and its loop points — so this
+  reads them out directly, the same way the KRZ and AKAI paths below do. It
+  used to rebuild the whole bank with `assemble()`, write a temp file and hand
+  it to mpc2emu's own `parse_e4b()`/`parse_eiii()`, once PER PRESET: measured
+  on a 12.6 MB / 120-preset E4B that was 0.45 s and 188 MB of audio touched,
+  15x the bank's own, 120 temp files created, parsed and deleted — for one
+  column. Extrapolated to a real 75.8 MB / 700-preset bank it is ~1.1 GB of
+  temp-file writes and parses per scan. The offsets this reads are the SAME
+  ones mpc2emu's parser reads (and the ones `e4b.py`/`eiii.py` already
+  document), so the numbers do not change; only the route to them does.
 - **KRZ** and **AKAI**: walks `banks/krz.py`'s / `banks/akai.py`'s own model
   directly, so that
   browsing a K2000 library needs no mpc2emu checkout at all (mpc2emu has had
@@ -29,17 +32,12 @@ semantic reader to lean on:
   whichever branch the configured checkout happens to be on.
 """
 
-from __future__ import annotations  # noqa: I001
+from __future__ import annotations
 
 import struct
-import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from . import akai, e4b, eiii, krz, loopcheck
-from ..mpc2emu_bridge import e4b_parser, eiii_parser
-
-_LOOP_NAMES = {0: "none", 1: "forward", 2: "alternating", 3: "forward (release)"}
 
 #: The K2000's own playback rates, the same table mpc2emu snaps against
 #: (`parsers/krz_parser.py:95-99`, itself taken from ConvertWithMoss).
@@ -176,59 +174,96 @@ def summarize_e4b_bank(bank: e4b.E4BFile) -> BankSummary:
 
 
 def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSummary:
-    data = e4b.assemble([(bank, preset)])
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".e4b", delete=False) as tmp:
-            # BEFORE the write, not after it. A disk that fills mid-write
-            # (a 128 MB assembled bank aimed at a small tmpfs does exactly
-            # that) raised out of `write` with `tmp_path` still None, so the
-            # `finally` below had nothing to unlink: every call then orphaned a
-            # partial file, making the full disk fuller, and the ENOSPC went
-            # on into the callers' `except Exception: return None`, where the
-            # audio figure vanished without a word about why.
-            tmp_path = tmp.name
-            tmp.write(data)
-        parsed = e4b_parser.parse_e4b(tmp_path)
-    finally:
-        if tmp_path is not None:
-            Path(tmp_path).unlink(missing_ok=True)
+    """One E4B preset's zones, read straight out of the container.
 
-    mpc_preset = parsed.presets[0] if parsed.presets else None
+    Every field here lives in bytes this module already parsed: the voice
+    blocks at `preset.body[82:]` carry the voice-level key and velocity windows,
+    and the 22-byte zone entries after each of them carry the zone's own
+    windows, its root key and the sample index it plays. `bank.samples` holds
+    the audio, the rate and the loop fields. The offsets are the ones
+    `e4b.py` documents and mpc2emu's own parser reads, so this is the same
+    reading by a shorter route — no rebuild, no temp file, no re-parse.
+
+    THREE THINGS THE OLD ROUTE DID THAT ARE KEPT ON PURPOSE:
+
+    * The voice window INTERSECTS the zone's: `lo = max(voice_lo, zone_lo)`.
+      Real commercial banks commonly leave the zone entry wide open at 0-127
+      and do the actual split at the voice level, and mpc2emu's parser makes
+      the same intersection (76 057 zones behind that comment).
+    * A zone whose windows do not overlap after the intersection is DEAD — a
+      leftover entry — and is dropped, exactly as mpc2emu's guard drops it.
+    * A zone naming a sample this bank does not hold (a ROM sample, a dangling
+      reference, or one of the empty-zone sentinels 3FFFh/3FFEh that real
+      hardware leaves behind) is dropped, which is what the old route did by
+      reading `sample_name == ''`. Dropped rather than shown as
+      `<sample NNNN>` noise, for the same reason the KRZ path drops an
+      unresolvable keymap entry: this is a librarian, not a hex editor.
+
+    WHAT IS DIFFERENT, and only on material where the old route was wrong:
+    the loop now comes from this module's own `sample_loops`, which reads the
+    RIGHT field pair for a right-channel-only sample (see e4b._OPT_HAS_LEFT),
+    where mpc2emu's parser read the left one. The sample name is the
+    container's own 16-byte name rather than mpc2emu's display name with the
+    `_NoteOctave` suffix stripped off, which is also what the KRZ and AKAI
+    paths below report — one convention in this module rather than two.
+    """
+    body = preset.body
     zones: list[ZoneSummary] = []
     voice_count = 0
-    sample_sizes: dict[str, int] = {}  # dedupe -- a preset's zones can share one sample
-    if mpc_preset is not None:
-        voice_count = len(mpc_preset.voices)
-        for voice in mpc_preset.voices:
-            for z in voice.zones:
-                if not z.sample_name:
-                    # A placeholder/dummy voice with no real sample assigned
-                    # — seen even in real commercial banks (often the very
-                    # first "preset" in a bank, matching the bank's own
-                    # name, carries no actual content). Not real playable
-                    # content, so it's dropped here for the same reason
-                    # unresolvable KRZ keymap entries are (see
-                    # _keymap_zone_runs).
-                    continue
-                sample = parsed.find_sample(z.sample_name)
-                if sample is not None and z.sample_name not in sample_sizes:
-                    sample_sizes[z.sample_name] = len(sample.data)
-                zones.append(
-                    ZoneSummary(
-                        sample_name=z.sample_name,
-                        lo_key=z.lo_key,
-                        hi_key=z.hi_key,
-                        lo_vel=z.lo_vel,
-                        hi_vel=z.hi_vel,
-                        root_key=z.root_key,
-                        loop=_LOOP_NAMES.get(int(sample.loop_type), "?")
-                        if sample
-                        else "?",
-                        sample_rate=sample.sample_rate if sample else None,
-                        bit_depth=sample.bit_depth if sample else None,
-                    )
+    # Deduped by sample OBJECT, not by name. A name is 16 bytes and two real
+    # samples can share one -- measured on this corpus, 12 of 336 presets hold
+    # several samples under one display name -- and counting by name alone
+    # would then report the audio once. Keyed by name for the caller, which
+    # only ever has the name, but accumulated per object so nothing is lost.
+    sample_sizes: dict[str, int] = {}
+    seen_samples: set[int] = set()
+    for v_start, table_start, n in preset.voice_zones():
+        voice_count += 1
+        v_lo_key = body[v_start + e4b.VOICE_LO_KEY]
+        v_hi_key = body[v_start + e4b.VOICE_HI_KEY]
+        v_lo_vel = body[v_start + e4b.VOICE_LO_VEL]
+        v_hi_vel = body[v_start + e4b.VOICE_HI_VEL]
+        for k in range(n):
+            eo = table_start + k * e4b.ZONE_ENTRY
+            if eo + e4b.ZONE_ENTRY > len(body):
+                break
+            idx = struct.unpack_from(">H", body, eo + e4b.ZONE_SAMPLE_INDEX)[0]
+            samp = bank.samples.get(idx)
+            if samp is None:
+                continue
+            lo_key = max(v_lo_key, body[eo + e4b.ZONE_LO_KEY])
+            hi_key = min(v_hi_key, body[eo + e4b.ZONE_HI_KEY])
+            lo_vel = max(v_lo_vel, body[eo + e4b.ZONE_LO_VEL])
+            hi_vel = min(v_hi_vel, body[eo + e4b.ZONE_HI_VEL])
+            if lo_key > hi_key or lo_vel > hi_vel:
+                continue  # dead zone: the windows do not overlap at all
+            name = samp.name
+            if idx not in seen_samples:
+                seen_samples.add(idx)
+                # The audio, not the chunk: an E3S1 body is a 94-byte header
+                # plus PCM, and every other format's figure here is the audio
+                # alone (see the AKAI path below).
+                sample_sizes[name] = sample_sizes.get(name, 0) + len(samp.pcm)
+            zones.append(
+                ZoneSummary(
+                    sample_name=name,
+                    lo_key=lo_key,
+                    hi_key=hi_key,
+                    lo_vel=lo_vel,
+                    hi_vel=hi_vel,
+                    root_key=body[eo + e4b.ZONE_ROOT_KEY],
+                    # The module's own loop accessor, so the Detail pane's loop
+                    # column and its loop-click note can never disagree: 0x0001
+                    # in the options word is a forward loop, everything else is
+                    # not, and a right-channel-only sample's points are read
+                    # from the field pair its options name.
+                    loop="forward" if e4b.sample_loops(samp) else "none",
+                    sample_rate=e4b.sample_rate(samp),
+                    # The format carries 16-bit PCM and no bit-depth field,
+                    # because there is nothing else it could be.
+                    bit_depth=16,
                 )
+            )
     return PresetSummary(
         name=preset.name.strip(),
         format="E4B",
@@ -619,47 +654,74 @@ def summarize_eiii_bank(bank: eiii.EIIIFile) -> BankSummary:
 def summarize_eiii_preset(
     bank: eiii.EIIIFile, preset: eiii.EIIIPreset
 ) -> PresetSummary:
-    data = eiii.assemble([(bank, preset)])
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".e3x", delete=False) as tmp:
-            # See the E4B path above: the name is claimed before anything can
-            # fail, or a failed write orphans its partial file.
-            tmp_path = tmp.name
-            tmp.write(data)
-        parsed = eiii_parser.parse_eiii(tmp_path)
-    finally:
-        if tmp_path is not None:
-            Path(tmp_path).unlink(missing_ok=True)
+    """One EIII preset's zones, read straight out of the container.
 
-    mpc_preset = parsed.presets[0] if parsed.presets else None
+    `eiii.preset_zone_layers()` does the walk -- the preset's own key-mapping
+    table, its note-zone table and the zone slots those name, per linked
+    segment and per layer -- and this turns each into a display row. As with
+    the E4B path above, no rebuild, no temp file, no re-parse, and the layout
+    is read by the same offsets mpc2emu's own parser reads.
+
+    TWO THINGS THE OLD ROUTE DID THAT ARE KEPT ON PURPOSE:
+
+    * A zone naming a sample this bank does not hold is dropped, which is what
+      the old route did by reading `sample_name == ''`. Dangling indices are
+      ordinary in real material: several library CD-ROMs were mastered through
+      an 8-bit tool chain that wrote a zone's 16-bit sample index with the low
+      byte only, so a preset whose samples sit above slot 256 plays unrelated
+      material unless something maps the index back (mpc2emu's own
+      "truncated 8-bit repair" pass, which this route never ran -- it read
+      whatever the stored index held).
+    * A layer with no zones is not a voice, matching mpc2emu's
+      `VoiceLayer`-per-non-empty-layer shape.
+
+    WHAT IS DIFFERENT: the loop column now reports what the zone will PLAY --
+    the sample's own loop, unless the zone's flags opt out of it
+    (`ZONE_FLAG_DISABLE_LOOP`) -- rather than the sample's loop alone. mpc2emu
+    models that override by synthesising a second sample named
+    `<name> NL<index>`, so the old route showed a zone named "PIANO NL12"
+    playing nothing looped; this shows the sample's real name and the honest
+    answer. The sample size is the audio rather than the object.
+    """
     zones: list[ZoneSummary] = []
     voice_count = 0
-    sample_sizes: dict[str, int] = {}  # dedupe -- a preset's zones can share one sample
-    if mpc_preset is not None:
-        voice_count = len(mpc_preset.voices)
-        for voice in mpc_preset.voices:
-            for z in voice.zones:
-                if not z.sample_name:
-                    continue
-                sample = parsed.find_sample(z.sample_name)
-                if sample is not None and z.sample_name not in sample_sizes:
-                    sample_sizes[z.sample_name] = len(sample.data)
-                zones.append(
-                    ZoneSummary(
-                        sample_name=z.sample_name,
-                        lo_key=z.lo_key,
-                        hi_key=z.hi_key,
-                        lo_vel=z.lo_vel,
-                        hi_vel=z.hi_vel,
-                        root_key=z.root_key,
-                        loop=_LOOP_NAMES.get(int(sample.loop_type), "?")
-                        if sample
-                        else "?",
-                        sample_rate=sample.sample_rate if sample else None,
-                        bit_depth=sample.bit_depth if sample else None,
-                    )
+    # Deduped by sample object, summed by name -- see the E4B path above for
+    # why the two are not the same question.
+    sample_sizes: dict[str, int] = {}
+    seen_samples: set[int] = set()
+    for voice in eiii.preset_zone_layers(preset):
+        voice_count += 1
+        for z in voice:
+            samp = bank.samples.get(z.sample_index)
+            if samp is None:
+                continue
+            name = samp.name
+            if z.sample_index not in seen_samples:
+                seen_samples.add(z.sample_index)
+                # The audio, not the object: an EIII sample body is a 92-byte
+                # header plus PCM.
+                sample_sizes[name] = sample_sizes.get(name, 0) + len(samp.pcm)
+            zones.append(
+                ZoneSummary(
+                    sample_name=name,
+                    lo_key=z.lo_key,
+                    hi_key=z.hi_key,
+                    lo_vel=z.lo_vel,
+                    hi_vel=z.hi_vel,
+                    root_key=z.root_key,
+                    loop=(
+                        "none"
+                        if z.loop_disabled
+                        else ("forward" if eiii.sample_loops(samp) else "none")
+                    ),
+                    # The EIII sample header carries the rate at 0x34, the
+                    # same field the E4B path reads from its own header -- and
+                    # the right field pair for a right-channel-only sample's
+                    # loop points (see eiii._EIII_OPT_HAS_LEFT).
+                    sample_rate=eiii.sample_rate(samp),
+                    bit_depth=16,
                 )
+            )
     return PresetSummary(
         name=preset.name.strip(),
         format="EIII",
