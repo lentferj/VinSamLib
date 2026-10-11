@@ -41,6 +41,29 @@ from ..mpc2emu_bridge import e4b_parser, eiii_parser
 
 _LOOP_NAMES = {0: "none", 1: "forward", 2: "alternating", 3: "forward (release)"}
 
+#: The K2000's own playback rates, the same table mpc2emu snaps against
+#: (`parsers/krz_parser.py:95-99`, itself taken from ConvertWithMoss).
+#: `samplePeriod` is round(1e9 / rate), so inverting it does not give the
+#: round number back: a 44100 Hz sample stores 22676 ns, which inverts to
+#: 44100.98 Hz and `round()` reported as **44101** in the Detail pane. A hertz
+#: is inaudible, but a rate column that reads 44101 where the file says 44100
+#: looks like a defect rather than a rounding, and the two readers of the same
+#: field disagreed by one. Now they snap the same way.
+KRZ_STANDARD_RATES = (8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 96000)
+
+
+def _snap_sample_rate(hz: float) -> int:
+    """Nearest standard rate within ±2 Hz, else the rounded value.
+
+    Same rule as mpc2emu's `_snap_sample_rate`: the ±2 window is what a
+    period rounded to a whole nanosecond can be out by, so nothing real lands
+    outside it and a genuinely odd rate is still reported as itself.
+    """
+    for std in KRZ_STANDARD_RATES:
+        if abs(hz - std) <= 2:
+            return std
+    return round(hz)
+
 
 @dataclass
 class ZoneSummary:
@@ -554,7 +577,7 @@ def _krz_zone(
         # unlike maxPitch (derived from rootkey too, lossy to invert).
         period = struct.unpack_from(">I", b, krz.SAMPLE_HDR + 28)[0]
         if period:
-            sample_rate = round(1e9 / period)
+            sample_rate = _snap_sample_rate(1e9 / period)
         # The K2000's own PCM is always raw 16-bit (KRZ_FORMAT.md §2/3.1)
         # -- no per-sample bit-depth field exists because there's nothing
         # else it could be.
@@ -709,19 +732,24 @@ def summarize_akai_program(
                 # little large and, summed over a queue of volumes, put the
                 # Pending column visibly out of step with New Bank's meter,
                 # which measures what the sampler loads.
-                # SAMPLE_HEADER_BYTES (150), not header_len. They are
-                # different quantities that happen to share a number on the
-                # S1000: header_len is where the PCM starts in the record
-                # (0xC0 = 192 on an S3000), while 150 is the measured
-                # difference between a file's size and the SLNGTH the machine
-                # reports for it. The RAM figure New Bank's meter shows uses
-                # the measured one, so this must too or the two drift by 42
-                # bytes per S3000 sample. There is a note about this exact
-                # confusion beside the constant; I still reached for the
-                # wrong one.
-                sample_sizes[z.sample_name] = max(
-                    0, samp.size - akai.AkaiBank.SAMPLE_HEADER_BYTES
-                )
+                #
+                # `len(samp.pcm)` and NOT `samp.size - SAMPLE_HEADER_BYTES`.
+                # For an S3000 sample `samp.size` is 192 header bytes plus
+                # PCM padded out to a file block, so `size - 150` is 42 bytes
+                # of header residue plus the PADDED audio -- overstating the
+                # real audio by 42 bytes plus the block padding, on every
+                # sample, in a figure labelled "sample size". `AkaiSample.pcm`
+                # is the audio the header declares, from `header_len` to
+                # `header_len + frame_count * 2`: no header, no padding.
+                #
+                # This is deliberately NOT the RAM figure. AkaiBank.ram_words()
+                # uses the measured 150 against the file size on purpose,
+                # because that is what the machine's own SLNGTH reports and
+                # what it was validated against (16 424 982 words predicted,
+                # 16 424 982 loaded). A size column and a RAM meter answer
+                # different questions and only one of them is "how much audio
+                # is this".
+                sample_sizes[z.sample_name] = len(samp.pcm)
                 if samp.rate_is_unplayable:
                     unplayable[z.sample_name] = samp.rate_cents_off
             zones.append(
