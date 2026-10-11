@@ -34,6 +34,7 @@ semantic reader to lean on:
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass, field
 
@@ -61,6 +62,34 @@ def _snap_sample_rate(hz: float) -> int:
         if abs(hz - std) <= 2:
             return std
     return round(hz)
+
+
+#: The E4B writer's `_NoteOctave` display suffix (`writers/e4b_writer.py:
+#: `_sample_display_name`), mirrored from mpc2emu's own inversion
+#: (`parsers/e4b_parser.py: _NOTE_RE`). The 16-byte container name always
+#: carries it -- `<base>_<note><octave>`, the note with a raw `#` -- while
+#: the zone model must report the base, which the import path already
+#: sanitised (`#` -> `s`). Read the field whole and the `#` leaks into every
+#: zone row; strip the suffix and the rows match mpc2emu's own reading.
+_E4B_DISPLAY_SUFFIX_RE = re.compile(r"_([A-G]#?)(-?\d+)$")
+
+
+def _e4b_base_name(display_name: str) -> str:
+    """Undo the writer's display suffix, the way mpc2emu's parser does.
+
+    Only when the suffix decodes to a real MIDI note (0-127); anything else
+    is a base name that merely looks suffixed, and is left alone.
+    """
+    m = _E4B_DISPLAY_SUFFIX_RE.search(display_name)
+    if m:
+        notes = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+        try:
+            root = (int(m.group(2)) + 2) * 12 + notes.index(m.group(1))
+        except (ValueError, IndexError):
+            root = -1
+        if 0 <= root <= 127:
+            return display_name[: m.start()]
+    return display_name
 
 
 @dataclass
@@ -203,9 +232,11 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
     the loop now comes from this module's own `sample_loops`, which reads the
     RIGHT field pair for a right-channel-only sample (see e4b._OPT_HAS_LEFT),
     where mpc2emu's parser read the left one. The sample name is the
-    container's own 16-byte name rather than mpc2emu's display name with the
-    `_NoteOctave` suffix stripped off, which is also what the KRZ and AKAI
-    paths below report — one convention in this module rather than two.
+    container's own 16-byte name with the writer's `_NoteOctave` display
+    suffix stripped (see `_e4b_base_name`), which is what mpc2emu's own
+    reading reports -- not the raw field, whose suffix carries a `#` the
+    import path sanitised out of the base. The KRZ and AKAI paths report
+    their own plain names as before.
     """
     body = preset.body
     zones: list[ZoneSummary] = []
@@ -237,7 +268,7 @@ def summarize_e4b_preset(bank: e4b.E4BFile, preset: e4b.E4BPreset) -> PresetSumm
             hi_vel = min(v_hi_vel, body[eo + e4b.ZONE_HI_VEL])
             if lo_key > hi_key or lo_vel > hi_vel:
                 continue  # dead zone: the windows do not overlap at all
-            name = samp.name
+            name = _e4b_base_name(samp.name)
             if idx not in seen_samples:
                 seen_samples.add(idx)
                 # The audio, not the chunk: an E3S1 body is a 94-byte header
