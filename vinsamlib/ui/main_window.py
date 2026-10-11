@@ -1374,7 +1374,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_ceiling_zones_added(self, findings: list) -> None:
-        """A plain Add found zones past the E4XT's rate ceiling.
+        """A plain Add found zones past the E4XT's first free-run edge.
 
         The same box and the same Narrow button an IMPORT gets, because it is
         the same fact about the same bytes -- only the route differed, and
@@ -1407,17 +1407,7 @@ class MainWindow(QMainWindow):
             else:
                 cur["zone_count"] = cur.get("zone_count", 1) + 1
         worst = sorted(grouped.values(), key=lambda d: -int(d.get("keys_over") or 0))
-        lines = []
-        for d in worst[:5]:
-            n = int(d.get("zone_count") or 1)
-            zones = "" if n == 1 else f" in {n} of its voices"
-            lines.append(
-                f"'{(d.get('sample_name') or '?').strip()}'{zones} plays keys "
-                f"{int(d['highest_safe_key']) + 1}–{d['hi_key']} past the "
-                f"E4XT's rate ceiling ({d['sample_rate']} Hz, root "
-                f"{d['root_key']}); the highest key that plays correctly is "
-                f"{d['highest_safe_key']}."
-            )
+        lines = [_ceiling_line(d) for d in worst[:5]]
         extra = len(grouped) - len(lines)
         detail = "\n\n".join(lines)
         if extra > 0:
@@ -1432,14 +1422,19 @@ class MainWindow(QMainWindow):
             # reassurance were both true and both belong in the README, not
             # in a box somebody is reading in order to get on with something
             # else. Jan, 2026-09-28: "this is too much for a warning window".
-            "Above that rate the voice runs past the end of its sample into "
-            "neighbouring sample RAM. The keys it affects are at the very top "
-            "of the keyboard, above where such a preset is normally played, "
-            "which is why it often goes unnoticed."
+            "PAST THE EDGE IS NOT THE SAME AS PAST A LIMIT. The measurement "
+            "behind this number stopped at clean-45 / broken-46; the sweep "
+            "mpc2emu ran afterwards found the E4XT runs off a sample's end in "
+            "two four-semitone bands that CLOSE AGAIN, with normal playback "
+            "between them and above. So a key past this edge is where "
+            "trouble STARTS, and several keys above it play perfectly "
+            "normally. The keys affected are at the very top of the keyboard, "
+            "above where such a preset is normally played, which is why that "
+            "so often goes unnoticed."
         )
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Zones above the E4XT's rate ceiling")
+        box.setWindowTitle("Zones past the E4XT's first free-run edge")
         box.setText(detail)
         # The button counts SAMPLES, because that is what a placement edit
         # moves -- one per sample, at its strictest safe key.
@@ -2712,6 +2707,36 @@ class MainWindow(QMainWindow):
         self._scan_worker = None
         last_line = workers.last_error_line(message)
         self.statusBar().showMessage(f"Scan failed: {last_line}", 8000)
+
+
+def _ceiling_line(d) -> str:
+    """One line of the over-edge warning, in the user's terms.
+
+    Module-level so the wording can be asserted without opening a modal box.
+
+    THE EDGE IS NOT A CEILING, and the sentence used to say it was: "the
+    highest key that plays correctly is N" is a claim about every key above N,
+    and it is false. mpc2emu swept every semitone past it on hardware and found
+    the E4XT free-runs in two four-semitone bands with NORMAL playback between
+    and above -- their own note says every value they ship is "right about
+    where trouble STARTS and wrong to imply everything above it is unsafe".
+    So this names N as where trouble starts and says so, rather than drawing a
+    line the machine does not draw.
+
+    The number is still worth reporting: it is the top of the zone the remedy
+    moves, and narrowing to it never plays off the end.
+    """
+    edge = int(d["highest_safe_key"])
+    n = int(d.get("zone_count") or 1)
+    zones = "" if n == 1 else f" in {n} of its voices"
+    return (
+        f"'{d.get('sample_name', '?').strip()}'{zones} plays keys "
+        f"{edge + 1}–{d['hi_key']}, which is past the first edge of the "
+        f"E4XT's playback-rate band ({d['sample_rate']} Hz, root "
+        f"{d['root_key']}). Above key {edge} the voice can run past the end "
+        "of its sample into neighbouring sample RAM; keys further up than "
+        "that are not automatically affected."
+    )
 
 
 def _program_number(preset_index: Optional[int], position: int) -> int:  # noqa: UP045
