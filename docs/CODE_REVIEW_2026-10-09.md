@@ -1221,3 +1221,73 @@ Recorded so the next review does not repeat the work.
 7. **M5, M6, M9, M10, M23** — the GUI-thread and duplicated-work items, all cheap and independent.
 8. **M15, M16** — both are the same root cause (process-global state + a shared 12-thread pool) and both corrupt the debug log that exists to explain exactly these conversions. Fix together; they are the only findings whose blast radius includes *other* conversions.
 9. **M17, M18** — make the verification able to fail honestly.
+
+
+---
+
+## Fix ledger — branch `fix/code-review-2026-10-09`
+
+Updated as the findings are worked. Commits are local; nothing has been
+pushed. Each entry names the finding, the commit, and the verification.
+
+| Finding | Commit | Verification |
+|---|---|---|
+| C1 | `273412d` | `tests/manual_index_begin_container.py`: 8 of 9 checks fail on the old code, 9 of 9 pass on the new |
+| H4 | `b73b705` | both EMU3 HD kinds create at auto size where both previously raised |
+| H2 | `8a4d330` | `tests/manual_e4b_truncated_tails.py`: 4 of 9 fail on the old; real-corpus parse snapshot byte-identical before/after; `roundtrip_e4b_corpus` 105/238 both |
+| H3 + M4(attack) | `9222cf4` | `tests/manual_audition_attack_polarity.py`: 42 of 34 fail on the old, 0 on the new; audition family 21 PASS |
+| M11 | `6fa2712` | `tests/manual_index_symlink_cycle.py`: 3 of 5 fail on the old; genuine symlinks still indexed in both |
+| M1+M2 | `396cdcf` | `tests/manual_audition_fork_sizing.py`: 10 of 14 fail on the old |
+| M3+M4(perf) | `776d61a` | `tests/manual_audition_render_cost.py`: 2 of 8 fail on the old; numpy/pure delta 133.174 dB / 1 LSB unchanged before and after |
+| H1 (fatvol half) | `50c5647` | `tests/manual_fat_fat_cache.py`: 1 of 11 fail on the old |
+| M17+M18+M19 | `286a47c` | `tests/manual_convert_verify_accuracy.py`: 2 of 7 fail on the old. Also fixes a bug in its own M18 work — the broad except restated the byte check's refusal as "the check could not run" |
+| M15 | `657c5af` | `tests/manual_stdout_capture_isolation.py`: 2 of 4 fail on the old `redirect_stdout` shape, with A's buffer empty and B's holding A's output |
+| M16 | `d8cfffa` | `tests/manual_xpm_sync_bpm_isolation.py` |
+| M20 | `f32db36` | `tests/manual_tempdir_akai_staging.py`: AKAI retention drops from 2x the E4B path to parity |
+| M21 | `676a1fb` | `tests/manual_mono_side_capped.py`: 9.26 s -> 0.06 s on 212 MB |
+| L5-12 | `a74a127` | `tests/manual_image_tempdir_prefix_registry.py`: a package-wide guard, now green; the stale exemption was removed the same day |
+| `forget()` | `2743550` | `tests/manual_tempdir_forget_parent.py`: a second `forget()` deleted the temp root and a sibling before the fix |
+| L5-13, L5-14, L5-18, is_noop | `019c574`, `be13da4`, `9b053c4`, `410216a` | five new tests, all failing on the old code |
+| M5 | `92ce73d` | `tests/manual_ui_search_resolve_cache.py`: fails on the old code at the finding itself — "6 presets of 1 bank cost 6 parses, not 1" |
+| drag-warm | `b75ce62` | same test asserts the warm-up runs off the GUI thread |
+| L5-16, L5-17 | `b911d96`, `204de36` | `tests/manual_aki_staged_classification.py`, `tests/manual_aki_volume_write_failure.py` |
+| L4 | `5f8fa6f` | KRZ loop repair bounded to the sample being repaired |
+| L3 | `4bddc56` | KRZ rate snap, AKAI size figure, byte 0x01 mask |
+| L2 | `a794621` | E4B/EIII read the loop pair the sample's own options name |
+| M14b | `f45db1b` | `tests/manual_summary_tempfile_leak.py` |
+| M22 (both halves) | `2001f86`, `e5c4349` | `tests/manual_ceiling_check_agrees.py` still green; the record now names an EDGE |
+| M14 | `47c1997` | `roundtrip_e4b_corpus.py` 105/238 before and after |
+| eiii `sample_pcm` | `3540e5d` | a one-character bug found while working L2: it returned `body[PCM_START]`, one byte, not the PCM |
+| M9 + M12 | `4d741e0` (superseded, see below) | ui_smoke_pending, audition_dialog_render, audition_worker_generation, favourites_list |
+| M10 + M23 | `fabebf3` | convert_dialog_clicks, ui_smoke_sampledir_import, convert_option_additions |
+| L5-7 | `f56e25e` | a drop warns about the presets it actually added |
+
+**History note.** `4d741e0` and `47c1997` carry the same intent and the second
+did not replace the first — a `--amend` during concurrent-agent lock contention
+landed as a child rather than a rewrite. The trees are correct and the tests
+pass; only the history is redundant, and squashing it mid-flight would risk
+the concurrent agents. Left as-is deliberately.
+
+**Suite baseline.** 182 PASS / 2 FAIL / 0 CRASH / 0 TIMEOUT, taken before the
+Tier 5 and Tier 6 work landed. Both FAILs are accounted for:
+`manual_audition_filter_response` is the documented open finding (see R2), and
+`manual_fat_fat_cache` was an order-dependence in its own test, since fixed by
+loading the vendored fixture by file path rather than by module name.
+
+## Still open on this branch
+
+- **H1's other half** — `ui/workers.py`. Every `Worker` that has run is
+  retained for the process lifetime (`setAutoDelete(False)`), and the 16
+  completion lambdas pin their owning pane with it. The one-line `deleteLater`
+  fix does NOT work; that was tested. The direction that does: give the signals
+  bridge a parent in the receiver and let the pool own the runnable.
+- **M13** is done in code but its caveat wording is inherited from M22's
+  rewrite; re-read `_lfo_caveats` when next in `audition/`.
+- **L5-5** needs a `config.py` field (`last_instrument_dir`) which no agent
+  owned; the UI now uses `last_sample_dir` as a stopgap.
+- **L5-28** — `ui/models.py` `remove_root` during an in-flight `fetchMore`.
+  Unresolved: no agent could demonstrate the crash, and it was deliberately
+  left alone rather than "fixed" speculatively.
+- **`vfs/akai.py`'s `_truncated` counter still never resets** — inherited from
+  the index agent, which could not edit `vfs/`. M8 stopped the double counting,
+  so it now doubles from one listing instead of two.
