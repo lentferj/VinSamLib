@@ -1620,6 +1620,10 @@ class MainWindow(QMainWindow):
                     path, octave
                 ),
                 source_text=source_text or path,
+                # The folder itself, so the dialog can parse it on a worker as
+                # soon as it opens instead of on the click that asks for it --
+                # see SampleDirImportDialog._prefill_preview (M23).
+                preview_path=path,
             )
         )
 
