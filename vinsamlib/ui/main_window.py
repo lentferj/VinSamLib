@@ -150,6 +150,11 @@ class MainWindow(QMainWindow):
         # right-click during a render cannot deliver the first one's audio.
         self._audition_worker: workers.Worker | None = None
         self._audition_gen: int = 0
+        #: Library folders asked to be indexed while a scan was already
+        #: running. They go into the tree at once -- that is what the user just
+        #: asked for -- and are walked when the running scan finishes, which is
+        #: the part that used to be dropped on the floor with no message.
+        self._queued_scan: list[Path] = []
         #: The most recent dialog (kept for tests and for the common case) and
         #: every live one. A non-modal dialog is parented to this window, but
         #: its Python wrapper still has to stay alive or its QAudioSink's
@@ -584,17 +589,28 @@ class MainWindow(QMainWindow):
             self._config.library_roots.append(p)
             real[rp] = p
             added.append(p)
+        started = True
         if added:
             self._config.last_library_dir = added[-1].parent
             self._config.save()
             for p in added:
                 self._model.add_root(p)
-            self._start_scan(added)
+            started = self._start_scan(added)
         what = (
             f"Added {len(added)} folder(s) to the library" if added else "Nothing added"
         )
         if notes:
             what += " — " + "; ".join(notes)
+        if added and not started:
+            # The sentence that makes the difference between a library that is
+            # listed and a library nobody can search. It goes on the SAME
+            # message that announces the addition: _start_scan's own status line
+            # is written twelve seconds earlier in the same call, and the
+            # addition's message would overwrite it anyway.
+            what += (
+                " — indexing them when the scan already running finishes "
+                "(search will not find them until it does)"
+            )
         self.statusBar().showMessage(what, 12000)
         return len(added)
 
@@ -2670,17 +2686,38 @@ class MainWindow(QMainWindow):
 
     # -- background indexing ---------------------------------------------------
 
-    def _start_scan(self, roots: list[Path]) -> None:
-        if not roots or self._scan_worker is not None:
-            return
+    def _start_scan(self, roots: list[Path]) -> bool:
+        """Index `roots` in the background. True if a scan started.
+
+        WHEN ONE IS ALREADY RUNNING the folders are QUEUED, not dropped. Used
+        to return with nothing said at all, which produced exactly the report
+        this fixes: "Add Library Folder..." adds the roots to the tree and to
+        the config -- the user can see them arrive -- and then nothing is
+        indexed for the rest of the session. Search says "No matches" over a
+        library that is plainly listed, and there is not one line anywhere
+        saying why. So the wait is now named in the same status message that
+        announces the addition, and the queued folders really are walked the
+        moment the running scan finishes.
+
+        Returning a flag rather than raising, because the caller that has to
+        phrase the wait is the one that knows what it just added.
+        """
+        roots = [Path(r) for r in roots]
+        if not roots:
+            return False
+        if self._scan_worker is not None:
+            known = {p for p in self._queued_scan}
+            self._queued_scan.extend(p for p in roots if p not in known)
+            return False
         self.statusBar().showMessage(
-            f"Scanning {len(roots)} librar{'y' if len(roots)==1 else 'ies'}…"
+            f"Scanning {len(roots)} librar{'y' if len(roots) == 1 else 'ies'}…"
         )
         w = workers.Worker(self._run_scan, roots)
         w.signals.finished.connect(self._on_scan_finished)
         w.signals.error.connect(self._on_scan_error)
         self._scan_worker = w
         workers.run(w)
+        return True
 
     def _run_scan(self, roots: list[Path]) -> dict:
         # Runs on a worker thread: Python's sqlite3 connections are bound
@@ -2702,11 +2739,26 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Indexed {stats['containers']} file(s), {stats['items']} item(s)", 8000
         )
+        self._drain_queued_scan()
 
     def _on_scan_error(self, message: str) -> None:
         self._scan_worker = None
         last_line = workers.last_error_line(message)
         self.statusBar().showMessage(f"Scan failed: {last_line}", 8000)
+        # A failed scan does not take the rest of the library down with it:
+        # the folders queued behind it are still waiting to be indexed.
+        self._drain_queued_scan()
+
+    def _drain_queued_scan(self) -> None:
+        """Walk the folders asked for while a scan was already running."""
+        queued, self._queued_scan = self._queued_scan, []
+        if queued:
+            self.statusBar().showMessage(
+                f"Now indexing the {len(queued)} folder(s) added while the "
+                f"library was still being scanned…",
+                8000,
+            )
+            self._start_scan(queued)
 
 
 def _ceiling_line(d) -> str:
