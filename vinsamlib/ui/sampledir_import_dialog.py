@@ -456,6 +456,7 @@ class SampleDirImportDialog(FormatConvertDialog):
         sample_loader: Optional[Callable[[Optional[int]], list]] = None,  # noqa: UP045
         placement_loader: Optional[Callable[[Optional[int]], Any]] = None,  # noqa: UP045
         source_text: str = "",
+        preview_path: Optional[str] = None,  # noqa: UP045
     ) -> tuple[
         Optional[ConversionOptions],  # noqa: UP045
         Optional[int],  # noqa: UP045
@@ -481,6 +482,7 @@ class SampleDirImportDialog(FormatConvertDialog):
             sample_loader=sample_loader,
             placement_loader=placement_loader,
             source_text=source_text,
+            preview_path=preview_path,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None, None, None, ("", True, {}), None
